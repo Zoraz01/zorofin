@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Player: Roku Video node with its trickplay bar, Jellyfin progress
+  reporting, Skip intro and Up next. Options (* or Down) opens the player
+  options like Apple TV: Seasons & episodes (or Channels & guide, also on Up
+  during live TV), Audio & subtitles, Quality and Playback info.
+-->
+<component name="PlayerScreen" extends="Group">
+  <interface>
+    <field id="start" type="assocarray" onChange="onStart" />
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="closing" type="boolean" onChange="onClosing" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Quality.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/PlayerScreen.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x000000FF" />
+    <Poster id="cover" width="1920" height="1080" loadWidth="960" loadHeight="540" loadDisplayMode="scaleToZoom" opacity="0.35" />
+    <Video id="video" width="1920" height="1080" enableUI="true" />
+    <Group id="loading">
+      <Label id="loadingTitle" translation="[0,470]" width="1920" horizAlign="center" color="0xF5F7F5FF" />
+      <Label id="loadingText" translation="[0,540]" width="1920" horizAlign="center" color="0xBBC5BDFF" text="Starting…" />
+    </Group>
+    <Group id="skip" visible="false" translation="[1500,880]">
+      <Poster id="skipBg" uri="pkg:/images/pill.9.png" width="320" height="76" blendColor="0xFFFFFFFF" />
+      <Label id="skipText" width="320" height="76" horizAlign="center" vertAlign="center" color="0x111513FF" text="Skip intro" />
+    </Group>
+    <Group id="upNext" visible="false" translation="[1240,660]">
+      <Poster uri="pkg:/images/panel.9.png" width="600" height="320" blendColor="0x1B211EF2" />
+      <Poster id="upNextArt" width="240" height="135" translation="[30,30]" loadDisplayMode="scaleToZoom" />
+      <Label id="upNextLabel" translation="[294,30]" width="280" color="0x72E79BFF" text="Up next" />
+      <Label id="upNextTitle" translation="[294,70]" width="280" wrap="true" maxLines="3" color="0xF5F7F5FF" />
+      <Label id="upNextHint" translation="[30,200]" width="540" wrap="true" maxLines="2" color="0xBBC5BDFF" />
+    </Group>
+    <Group id="errorBox" visible="false">
+      <Label id="errorTitle" translation="[0,440]" width="1920" horizAlign="center" color="0xF5F7F5FF" text="This title can't play right now" />
+      <Label id="errorText" translation="[360,510]" width="1200" horizAlign="center" wrap="true" maxLines="4" color="0xBBC5BDFF" />
+    </Group>
+    <Group id="panelLayer" />
+    <Timer id="progressTimer" duration="10" repeat="true" />
+    <Timer id="tickTimer" duration="1" repeat="true" />
+    <Timer id="startTimer" duration="45" repeat="false" />
+  </children>
+</component>

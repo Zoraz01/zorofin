@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Who's watching: saved accounts on this Roku, plus Add account. -->
+<component name="AccountsScreen" extends="Group">
+  <interface>
+    <field id="accounts" type="array" onChange="build" />
+    <field id="chosen" type="assocarray" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/AccountsScreen.brs" />
+  <children>
+    <Poster uri="pkg:/images/wordmark.png" width="280" height="70" translation="[820,110]" loadDisplayMode="scaleToFit" />
+    <Label id="title" text="Who's watching?" translation="[0,260]" width="1920" horizAlign="center" color="0xF5F7F5FF" />
+    <MarkupGrid id="grid" itemComponentName="AccountItem" numColumns="5" numRows="1" itemSize="[260,340]"
+      itemSpacing="[60,0]" drawFocusFeedback="false" translation="[0,420]" />
+    <Label id="hint" translation="[0,900]" width="1920" horizAlign="center" color="0x8A958DFF"
+      text="Press ✱ on an account to remove it from this Roku." />
+  </children>
+</component>

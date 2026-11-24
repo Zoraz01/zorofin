@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Apple TV notifications popover (RequestsView.swift NotificationInboxView)
+  under the bell: replies from the server's support agent, newest first.
+  Replies count as seen after a moment on screen; seen ones move under
+  "Hidden" the next time. Emits action = { type: close } or
+  { type: unread, count }.
+-->
+<component name="NotificationsPanel" extends="Group">
+  <interface>
+    <field id="action" type="assocarray" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/NotificationsPanel.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x0000002E" />
+    <Group id="card" translation="[1280,114]">
+      <Poster uri="pkg:/images/popover.9.png" width="560" height="650" blendColor="0x1B211EFF" />
+      <Label id="heading" text="Notifications" translation="[24,12]" height="72" vertAlign="center" color="0xF5F7F5FF" />
+      <Rectangle width="560" height="1" translation="[0,96]" color="0x39423CFF" />
+      <Group id="clip" clippingRect="[0,97,560,553]">
+        <Group id="list" translation="[18,114]" />
+      </Group>
+      <Label id="status" translation="[26,130]" width="508" wrap="true" color="0xBBC5BDFF" />
+    </Group>
+    <Timer id="seenTimer" duration="0.9" />
+  </children>
+</component>

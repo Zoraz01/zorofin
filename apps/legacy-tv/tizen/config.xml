@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://zorofin.app/legacy-tv" version="1.5.1" viewmodes="maximized">
+    <tizen:application id="ZrfnLegacy.Zorofin" package="ZrfnLegacy" required_version="2.3"/>
+    <name>Zorofin</name>
+    <description>Zorofin for older Samsung TVs (2017 to 2020). A lightweight Zorofin TV app for your Jellyfin server: Home rows, Live TV, Pick Together and a player built for the remote.</description>
+    <author href="https://zorofin.app">Vitality Labs</author>
+    <license>Proprietary</license>
+    <icon src="icon.png"/>
+    <content src="index.html"/>
+    <feature name="http://tizen.org/feature/screen.size.all"/>
+    <tizen:profile name="tv-samsung"/>
+    <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable"
+                   encryption="disable" install-location="auto" hwkey-event="enable"/>
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+    <!-- The user's own server can live on any origin, LAN address or port. -->
+    <access origin="*" subdomains="true"/>
+    <tizen:allow-navigation>*</tizen:allow-navigation>
+    <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:</tizen:content-security-policy>
+</widget>

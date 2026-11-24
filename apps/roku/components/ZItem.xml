@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- One Jellyfin item (or Live TV channel) as shown on a card or page. -->
+<component name="ZItem" extends="ContentNode">
+  <interface>
+    <field id="itemType" type="string" />
+    <field id="mediaType" type="string" />
+    <field id="collectionType" type="string" />
+    <field id="caption" type="string" />
+    <field id="seriesId" type="string" />
+    <field id="seriesName" type="string" />
+    <field id="seasonId" type="string" />
+    <field id="seasonIndex" type="integer" value="-1" />
+    <field id="episodeIndex" type="integer" value="-1" />
+    <field id="year" type="integer" />
+    <field id="communityRating" type="float" />
+    <field id="officialRating" type="string" />
+    <field id="runtimeTicks" type="longinteger" />
+    <field id="positionTicks" type="longinteger" />
+    <field id="progress" type="float" />
+    <field id="played" type="boolean" />
+    <field id="favorite" type="boolean" />
+    <field id="unplayedCount" type="integer" />
+    <field id="isFolder" type="boolean" />
+    <field id="backdropUrl" type="string" />
+    <field id="thumbUrl" type="string" />
+    <field id="logoUrl" type="string" />
+    <field id="landscapeUrl" type="string" />
+    <field id="badges" type="array" />
+    <field id="contextBadges" type="array" />
+    <field id="genres" type="array" />
+    <field id="channelNumber" type="string" />
+    <field id="programName" type="string" />
+    <field id="programStart" type="integer" />
+    <field id="programEnd" type="integer" />
+    <field id="landscape" type="boolean" />
+    <field id="action" type="string" />
+  </interface>
+</component>

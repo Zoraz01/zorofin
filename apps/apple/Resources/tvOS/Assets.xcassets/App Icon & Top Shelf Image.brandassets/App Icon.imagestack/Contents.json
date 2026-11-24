@@ -1,0 +1,14 @@
+{
+  "info" : {
+    "author" : "org.zorofin.app",
+    "version" : 1
+  },
+  "layers" : [
+    {
+      "filename" : "Foreground.imagestacklayer"
+    },
+    {
+      "filename" : "Background.imagestacklayer"
+    }
+  ]
+}

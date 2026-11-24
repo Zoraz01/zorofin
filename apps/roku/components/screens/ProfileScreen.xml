@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Profile, like the Apple TV ProfileView: who is signed in, then rows for
+  accounts, Quick Connect and each settings page, then Support, Notification
+  settings, Privacy Policy and App Support, and Sign Out.
+-->
+<component name="ProfileScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="action" type="string" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/ProfileScreen.brs" />
+  <children>
+    <Group translation="[102,164]">
+      <Poster id="avatarBg" uri="pkg:/images/circle.png" width="64" height="64" blendColor="0x24543EFF" />
+      <Label id="initial" width="64" height="64" horizAlign="center" vertAlign="center" color="0xF5F7F5FF" />
+      <Poster id="avatar" width="64" height="64" loadWidth="64" loadHeight="64" loadDisplayMode="scaleToZoom" />
+      <Poster id="avatarMask" uri="pkg:/images/circle_mask.png" width="64" height="64" />
+      <Label id="name" translation="[82,-10]" height="54" vertAlign="center" color="0xF5F7F5FF" />
+      <Label id="server" translation="[82,46]" width="1100" color="0xBBC5BDFF" />
+    </Group>
+    <MenuList id="rows" translation="[96,264]" width="920" rowHeight="64" maxHeight="776" />
+  </children>
+</component>

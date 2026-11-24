@@ -1,0 +1,31 @@
+name: TV and Android apps
+on:
+  pull_request:
+    paths: ["apps/tv/**", ".github/workflows/tv.yml"]
+  push:
+    branches: [main]
+    paths: ["apps/tv/**", ".github/workflows/tv.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tv-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/tv
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the Flutter release the LG flutter-webos SDK targets.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.10"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test

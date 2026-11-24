@@ -1,0 +1,16 @@
+# Accepted hits for tools/check-open-source.sh in the public apps repository.
+# Each line is a Perl pattern matched against "path:text". Keep them narrow.
+
+# The public support address shown in the apps and on the store listings.
+zoraz@vitalitylabssolutions\.com
+# The owner's public GitHub login.
+Zoraz01
+# Documentation example LAN addresses (never real hosts).
+192\.168\.(1\.(2|20|50)|2\.3)\b
+172\.16\.0\.1\b
+# Test fixtures: credentials-in-URL rejection, look-alike hosts, a user id.
+:.*user:password@
+image\.tmdb\.org\.evil\.example
+ServerAdministrationTests\.swift:.*/Users/other
+# A guard that asserts no private key is packaged.
+prepare_sideload\.py:.*BEGIN (RSA )?PRIVATE KEY

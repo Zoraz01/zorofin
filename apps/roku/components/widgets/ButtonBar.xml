@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  A row (or column) of buttons with Apple TV styling (see ButtonBar.brs).
+  buttons = [{ id, text?, icon?, style?, tint?, primary?, disabled? }];
+  emits selected = id on OK. Arrow keys move between buttons; edges are left
+  to the parent.
+-->
+<component name="ButtonBar" extends="Group">
+  <interface>
+    <field id="buttons" type="array" onChange="build" />
+    <field id="vertical" type="boolean" value="false" />
+    <field id="buttonHeight" type="integer" value="60" />
+    <field id="minWidth" type="integer" value="0" />
+    <field id="fixedWidth" type="integer" value="0" />
+    <field id="fontSize" type="integer" value="22" />
+    <field id="spacing" type="integer" value="0" />
+    <field id="align" type="string" value="center" />
+    <field id="focusIndex" type="integer" value="0" onChange="paint" />
+    <field id="selected" type="string" alwaysNotify="true" />
+    <field id="focusedId" type="string" />
+    <field id="totalWidth" type="integer" />
+    <function name="setLabel" />
+    <function name="focusButton" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/ButtonBar.brs" />
+</component>

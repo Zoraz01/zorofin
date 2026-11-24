@@ -1,0 +1,21 @@
+# Applied by tools/setup-public-repo.sh in the private monorepo.
+# name | color | description
+- { name: "bug", color: "d73a4a", description: "Something isn't working" }
+- { name: "enhancement", color: "a2eeef", description: "New feature or improvement" }
+- { name: "needs triage", color: "fbca04", description: "Waiting for the maintainer to look" }
+- { name: "good first issue", color: "7057ff", description: "Small, well-described, good for newcomers" }
+- { name: "help wanted", color: "008672", description: "The maintainer would welcome a pull request" }
+- { name: "question", color: "d876e3", description: "Better asked in Discussions" }
+- { name: "duplicate", color: "cfd3d7", description: "Already reported" }
+- { name: "wontfix", color: "ffffff", description: "Out of scope or not planned" }
+- { name: "needs info", color: "fef2c0", description: "Waiting for details from the reporter" }
+- { name: "documentation", color: "0075ca", description: "README, guides or code comments" }
+- { name: "accessibility", color: "1d76db", description: "VoiceOver, TalkBack, focus, contrast, text size" }
+- { name: "playback", color: "5319e7", description: "Players, codecs, subtitles, direct play" }
+- { name: "parity", color: "0e8a16", description: "Bring a feature to another platform" }
+- { name: "platform: apple", color: "bfd4f2", description: "iPhone, iPad, Apple TV" }
+- { name: "platform: android", color: "bfd4f2", description: "Android TV, Google TV, Fire TV, phones" }
+- { name: "platform: lg", color: "bfd4f2", description: "LG webOS" }
+- { name: "platform: samsung", color: "bfd4f2", description: "Samsung Tizen, including older TVs" }
+- { name: "platform: roku", color: "bfd4f2", description: "Roku" }
+- { name: "dependencies", color: "0366d6", description: "Dependency updates" }

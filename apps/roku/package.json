@@ -1,0 +1,20 @@
+{
+  "name": "zorofin-roku",
+  "private": true,
+  "version": "1.0.1",
+  "description": "Zorofin for Roku (BrightScript / SceneGraph)",
+  "scripts": {
+    "validate": "bsc --project bsconfig.json",
+    "lint": "bslint --project bsconfig.json",
+    "test": "node tests/run.js",
+    "build": "node tool/package.js",
+    "sim": "node tool/package.js && brs-cli out/zorofin-roku.zip -e"
+  },
+  "devDependencies": {
+    "@rokucommunity/bslint": "0.8.47",
+    "brighterscript": "0.73.8",
+    "brs-node": "2.6.2",
+    "brs-scenegraph": "0.6.2",
+    "lucide-static": "0.460.0"
+  }
+}

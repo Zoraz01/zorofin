@@ -1,0 +1,169 @@
+<div id="zorofin-player-study" class="viz-carousel viz-dotted-background" aria-label="Zorofin player directions">
+  <section data-variant="Cinematic" aria-label="Cinematic player direction">
+    <div class="zp-stage" data-layout="cinematic"></div>
+  </section>
+  <section data-variant="Quiet controls" aria-label="Quiet controls player direction" hidden>
+    <div class="zp-stage" data-layout="quiet"></div>
+  </section>
+</div>
+<style>
+#zorofin-player-study{--zp-jade:#6ce39d;--zp-paper:#f8faf9;--zp-muted:#bcc4c4;--zp-panel:#121817;--zp-line:#ffffff26;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--zp-paper)}
+#zorofin-player-study *{box-sizing:border-box}
+#zorofin-player-study .zp-stage{padding:18px 0 8px;min-height:468px}
+#zorofin-player-study .zp-screen{position:relative;background:#030607;border-radius:18px;overflow:hidden;height:414px;isolation:isolate;color:var(--zp-paper);font-size:14px;line-height:1.4}
+#zorofin-player-study .zp-scene{position:absolute;inset:0;overflow:hidden;background:radial-gradient(ellipse at 46% 66%,#22433f 0,transparent 58%),linear-gradient(145deg,#152d35,#09131f 55%,#090d12)}
+#zorofin-player-study .zp-scene::before{content:"";position:absolute;width:57%;aspect-ratio:1;left:38%;top:-33%;border-radius:50%;background:radial-gradient(circle at 28% 27%,#c2cfcc,#638685 32%,#284c53 54%,#0d202d 70%);box-shadow:0 0 60px #80b6bc20;transform:rotate(-20deg)}
+#zorofin-player-study .zp-scene::after{content:"";position:absolute;width:110%;height:48%;left:-3%;bottom:-24%;border-radius:50%;background:linear-gradient(#091210,#020705);box-shadow:0 -1px 30px #51ba9918;transform:rotate(-9deg)}
+#zorofin-player-study .zp-stars{position:absolute;inset:0;background:radial-gradient(circle at 13% 22%,#ffffffaa 0 1px,transparent 1.5px),radial-gradient(circle at 76% 41%,#ffffff88 0 1px,transparent 1.5px),radial-gradient(circle at 28% 49%,#ffffff66 0 1px,transparent 1.4px),radial-gradient(circle at 7% 58%,#ffffff44 0 1px,transparent 1.5px)}
+#zorofin-player-study .zp-reveal{position:absolute;inset:0;border:0;background:transparent;padding:0;z-index:1}
+#zorofin-player-study .zp-shade{position:absolute;inset:0;background:linear-gradient(#0009,transparent 34%,transparent 47%,#000d);pointer-events:none;transition:opacity .18s}
+#zorofin-player-study .zp-chrome{position:absolute;inset:0;pointer-events:none;z-index:2;transition:opacity .18s}
+#zorofin-player-study .zp-chrome>*{pointer-events:auto}
+#zorofin-player-study .zp-top{display:flex;align-items:flex-start;gap:12px;padding:20px 24px}
+#zorofin-player-study .zp-context{padding-top:6px;min-width:0}
+#zorofin-player-study .zp-title{font-size:19px;font-weight:600;letter-spacing:-.35px;line-height:1.3}
+#zorofin-player-study .zp-subtitle{font-size:13px;color:#d3dbd9;margin-top:4px}
+#zorofin-player-study .zp-top-trailing{display:flex;gap:8px;margin-left:auto}
+#zorofin-player-study .zp-button{border:0;background:transparent;color:inherit;font:inherit;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:10px;border-radius:8px;text-align:left;touch-action:manipulation}
+#zorofin-player-study .zp-button:active{background:#ffffff20}
+#zorofin-player-study .zp-button svg{width:22px!important;height:22px!important;flex:none;stroke-width:1.8}
+#zorofin-player-study .zp-transport{position:absolute;top:43%;left:50%;transform:translate(-50%,-50%);display:flex;gap:38px;align-items:center}
+#zorofin-player-study .zp-play{width:76px;height:76px;border-radius:50%;background:#030a1073}
+#zorofin-player-study .zp-play svg{width:37px!important;height:37px!important;fill:currentColor;stroke-width:1.3}
+#zorofin-player-study .zp-skip{position:relative;min-width:56px;min-height:56px;border-radius:50%;background:#030a1073}
+#zorofin-player-study .zp-skip svg{width:32px!important;height:32px!important}
+#zorofin-player-study .zp-skip span{font-size:10px;font-weight:600;position:absolute;left:50%;top:51%;transform:translate(-50%,-50%)}
+#zorofin-player-study .zp-bottom{position:absolute;left:30px;right:30px;bottom:18px}
+#zorofin-player-study .zp-time-row{display:flex;justify-content:space-between;color:#e2e6e4;font-size:12px;font-variant-numeric:tabular-nums}
+#zorofin-player-study .zp-scrub{width:100%;margin:0;height:42px;appearance:none;background:transparent;display:block;accent-color:var(--zp-jade);touch-action:none}
+#zorofin-player-study .zp-scrub::-webkit-slider-runnable-track{height:3px;border-radius:3px;background:linear-gradient(to right,var(--zp-jade) 0 var(--zp-progress),#ffffff73 var(--zp-progress) var(--zp-buffer),#ffffff36 var(--zp-buffer) 100%)}
+#zorofin-player-study .zp-scrub::-webkit-slider-thumb{appearance:none;width:12px;height:12px;background:var(--zp-jade);border-radius:50%;margin-top:-4.5px}
+#zorofin-player-study .zp-scrub::-moz-range-track{height:3px;background:#ffffff50}
+#zorofin-player-study .zp-scrub::-moz-range-thumb{width:12px;height:12px;border:0;background:var(--zp-jade);border-radius:50%}
+#zorofin-player-study .zp-tools{display:flex;align-items:center;gap:15px;margin-top:6px;justify-content:space-between}
+#zorofin-player-study .zp-tools .zp-button{font-size:13px;padding:8px 0}
+#zorofin-player-study .zp-tools .zp-button svg{width:19px!important;height:19px!important}
+#zorofin-player-study .zp-status{position:absolute;top:63%;left:50%;transform:translateX(-50%);color:#e0e6e3;font-size:12px;pointer-events:none;white-space:nowrap}
+#zorofin-player-study .zp-caption{color:light-dark(#5c6a66,#b8c8c1);font-size:12px;padding:10px 2px 0;text-align:center}
+#zorofin-player-study .zp-screen[data-hidden="true"] .zp-chrome,#zorofin-player-study .zp-screen[data-hidden="true"] .zp-shade{opacity:0;pointer-events:none;visibility:hidden}
+#zorofin-player-study .zp-panel-wrap{position:absolute;inset:0;background:#0009;z-index:4;display:flex;align-items:flex-end;justify-content:center;padding:18px}
+#zorofin-player-study .zp-panel{width:100%;max-width:600px;background:var(--zp-panel);border:1px solid var(--zp-line);border-radius:15px;padding:16px 20px;max-height:100%;overflow:auto}
+#zorofin-player-study .zp-panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:16px}
+#zorofin-player-study .zp-panel-header h3{font-size:19px;letter-spacing:-.3px;margin:0;font-weight:600}
+#zorofin-player-study .zp-panel button{font:inherit;color:inherit}
+#zorofin-player-study .zp-choices{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px}
+#zorofin-player-study .zp-choice{border:0;border-bottom:1px solid #ffffff12;padding:12px 2px;background:transparent;display:flex;align-items:center;justify-content:space-between;min-height:48px;text-align:left;gap:12px}
+#zorofin-player-study .zp-choice[aria-pressed="true"]{color:var(--zp-jade)}
+#zorofin-player-study .zp-track-heading{color:var(--zp-muted);font-size:12px;margin:8px 0 2px}
+#zorofin-player-study .zp-season{background:#202a27;border:1px solid var(--zp-line);border-radius:8px;color:var(--zp-paper);font:inherit;padding:10px 12px;min-height:44px;margin-bottom:14px;width:100%}
+#zorofin-player-study .zp-episodes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+#zorofin-player-study .zp-episode{border:0;padding:0;background:transparent;color:inherit;text-align:left;min-width:0;position:relative}
+#zorofin-player-study .zp-still{aspect-ratio:16/9;display:block;background:radial-gradient(circle at 65% 20%,#83aaa1 0 12%,transparent 13%),linear-gradient(155deg,#2e5652,#0c222b 65%,#030609);border-radius:8px;margin-bottom:9px;border:1px solid #ffffff20}
+#zorofin-player-study .zp-episode:nth-child(2) .zp-still{background:linear-gradient(25deg,#05141b,#405454 60%,#151b29)}
+#zorofin-player-study .zp-episode:nth-child(3) .zp-still{background:radial-gradient(circle at 36% 50%,#bbbd8b 0 10%,transparent 11%),linear-gradient(10deg,#182c2c,#121d28)}
+#zorofin-player-study .zp-episode strong{font-size:13px;display:block;font-weight:500}
+#zorofin-player-study .zp-episode small{font-size:12px;color:var(--zp-muted)}
+#zorofin-player-study .zp-badge{position:absolute;left:6px;top:6px;background:#081a15dd;color:var(--zp-jade);font-size:10px;padding:3px 6px;border-radius:4px}
+#zorofin-player-study .zp-screen[data-layout="quiet"] .zp-transport{top:auto;left:25px;bottom:148px;transform:none;gap:16px}
+#zorofin-player-study .zp-screen[data-layout="quiet"] .zp-play{width:50px;height:50px;background:transparent}
+#zorofin-player-study .zp-screen[data-layout="quiet"] .zp-play svg{width:28px!important;height:28px!important}
+#zorofin-player-study .zp-screen[data-layout="quiet"] .zp-top .zp-title{font-size:16px}
+#zorofin-player-study .zp-screen[data-layout="quiet"] .zp-status{top:auto;bottom:146px;left:auto;right:30px;transform:none}
+#zorofin-player-study .zp-unlock{position:absolute;z-index:3;bottom:25px;left:50%;transform:translateX(-50%);background:#19251fee;border:1px solid #ffffff40;padding:12px 20px;border-radius:24px}
+#zorofin-player-study [hidden]{display:none!important}
+@media(max-width:520px){
+ #zorofin-player-study .zp-screen{height:530px;border-radius:16px}
+ #zorofin-player-study .zp-stage{min-height:584px}
+ #zorofin-player-study .zp-scene{top:86px;bottom:auto;height:210px}
+ #zorofin-player-study .zp-top{padding:16px 12px;gap:6px}
+ #zorofin-player-study .zp-title{font-size:17px}
+ #zorofin-player-study .zp-top-trailing{gap:0}
+ #zorofin-player-study .zp-route{display:none}
+ #zorofin-player-study .zp-bottom{left:20px;right:20px;bottom:24px}
+ #zorofin-player-study .zp-transport{top:66%;gap:25px}
+ #zorofin-player-study .zp-play{width:64px;height:64px}
+ #zorofin-player-study .zp-tools{gap:8px;flex-wrap:wrap}
+ #zorofin-player-study .zp-tools .zp-button{font-size:12px;gap:6px}
+ #zorofin-player-study .zp-sound-label{display:none}
+ #zorofin-player-study .zp-tools .zp-sound{min-width:44px}
+ #zorofin-player-study .zp-status{top:55%}
+ #zorofin-player-study .zp-panel-wrap{padding:8px}
+ #zorofin-player-study .zp-panel{padding:14px;max-height:96%}
+ #zorofin-player-study .zp-episodes{grid-template-columns:1fr;gap:12px}
+ #zorofin-player-study .zp-episode{display:grid;grid-template-columns:90px 1fr;gap:0 12px;align-items:center}
+ #zorofin-player-study .zp-episode .zp-still{grid-row:1/3;margin:0}
+ #zorofin-player-study .zp-badge{display:none}
+ #zorofin-player-study .zp-screen[data-layout="quiet"] .zp-transport{left:20px;bottom:148px;gap:12px}
+ #zorofin-player-study .zp-screen[data-layout="quiet"] .zp-status{bottom:202px;right:20px;left:20px;text-align:left}
+}
+@media(prefers-reduced-motion:reduce){#zorofin-player-study .zp-chrome,#zorofin-player-study .zp-shade{transition:none}}
+</style>
+<script>
+(()=>{
+ const root=document.getElementById('zorofin-player-study');
+ const designPreferences={};
+ const icon=name=>`<i data-lucide="${name}" aria-hidden="true"></i>`;
+ const labels=['A New Orbit','Into the Dark','Homeward'];
+ const fmt=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;
+ root.querySelectorAll('.zp-stage').forEach((stage)=>{
+  const state={playing:false,time:784,speed:'1',quality:'40',audio:'English',subtitles:'Off',season:'1',episode:3,panel:null,hidden:false,timer:null,status:'',locked:false,resumeAfterPanel:false,returnFocus:null};
+  const saved=window.openai?.widgetState?.modelContent?.playerDesign?.[stage.dataset.layout];
+  const design={showEpisodeContext:typeof saved==='boolean'?saved:true};
+  designPreferences[stage.dataset.layout]=design.showEpisodeContext;
+  stage.innerHTML=`<div class="zp-screen" data-layout="${stage.dataset.layout}" role="group" aria-label="Zorofin player preview">
+   <div class="zp-scene" aria-hidden="true"><div class="zp-stars"></div></div><button class="zp-reveal cursor-interaction" aria-label="Show or hide playback controls"></button><div class="zp-shade"></div>
+   <div class="zp-chrome"><div class="zp-top"><button class="zp-button cursor-interaction" data-action="back" aria-label="Back to library">${icon('chevron-left')}</button><div class="zp-context"><div class="zp-title">Orbital</div><div class="zp-subtitle">S1:E3 · A New Orbit</div></div><div class="zp-top-trailing"><button class="zp-button zp-route cursor-interaction" data-action="route" aria-label="AirPlay">${icon('airplay')}</button><button class="zp-button cursor-interaction" data-action="pip" aria-label="Picture in Picture">${icon('picture-in-picture-2')}</button></div></div>
+   <div class="zp-transport"><button class="zp-button zp-skip cursor-interaction" data-action="back10" aria-label="Back 10 seconds">${icon('rotate-ccw')}<span>10</span></button><button class="zp-button zp-play cursor-interaction" data-action="play" aria-label="Play">${icon('play')}</button><button class="zp-button zp-skip cursor-interaction" data-action="forward30" aria-label="Forward 30 seconds">${icon('rotate-cw')}<span>30</span></button></div>
+   <div class="zp-status" role="status" aria-live="polite"></div><div class="zp-bottom"><div class="zp-time-row"><span class="zp-elapsed">13:04</span><span class="zp-remaining">−31:56</span></div><input class="zp-scrub cursor-interaction" aria-label="Playback position" type="range" min="0" max="2700" step="1" value="784"><div class="zp-tools"><button class="zp-button cursor-interaction" data-action="episodes">${icon('panels-top-left')}<span>Episodes</span></button><button class="zp-button zp-sound cursor-interaction" data-action="tracks" aria-label="Sound and subtitles">${icon('captions')}<span class="zp-sound-label">Sound & subtitles</span></button><button class="zp-button cursor-interaction" data-action="speed">${icon('gauge')}<span class="zp-speed">1×</span></button><button class="zp-button cursor-interaction" data-action="more">${icon('ellipsis')}<span>More</span></button></div></div></div>
+   <button class="zp-button zp-unlock cursor-interaction" data-action="unlock" hidden>${icon('lock-open')}<span>Unlock</span></button><div class="zp-panel-wrap" hidden><div class="zp-panel" role="dialog" aria-modal="true" aria-label="Player options"><div class="zp-panel-header"><h3></h3><button class="zp-button cursor-interaction" data-action="done" aria-label="Close options">${icon('x')}</button></div><div class="zp-panel-content"></div></div></div></div><div class="zp-caption">Interface study · fictional media</div>`;
+  const screen=stage.querySelector('.zp-screen'), panelWrap=stage.querySelector('.zp-panel-wrap'), content=stage.querySelector('.zp-panel-content');
+  const refreshIcons=()=>{if(globalThis.lucide) lucide.createIcons({attrs:{width:22,height:22}})};
+  const hideLater=()=>{clearTimeout(state.timer);if(state.playing&&!state.panel&&!state.locked) state.timer=setTimeout(()=>{state.hidden=true;render()},4000)};
+  function render(){
+   screen.dataset.hidden=String(state.hidden||state.locked);screen.querySelector('.zp-unlock').hidden=!state.locked;screen.style.setProperty('--zp-progress',`${state.time/27}%`);screen.style.setProperty('--zp-buffer',`${Math.min(100,state.time/27+8)}%`);
+   screen.querySelector('.zp-chrome').inert=state.locked||!!state.panel||state.hidden;screen.querySelector('.zp-reveal').disabled=!!state.panel;
+   const play=screen.querySelector('[data-action="play"]');play.innerHTML=icon(state.playing?'pause':'play');play.setAttribute('aria-label',state.playing?'Pause':'Play');
+   screen.querySelector('.zp-elapsed').textContent=fmt(state.time);screen.querySelector('.zp-remaining').textContent='−'+fmt(2700-state.time);screen.querySelector('.zp-scrub').value=state.time;
+   screen.querySelector('.zp-speed').textContent=state.speed+'×';screen.querySelector('.zp-status').textContent=state.status;
+   screen.querySelector('.zp-subtitle').textContent=`S${state.season}:E${state.episode} · ${labels[(state.episode-3+3)%3]}`;
+   screen.querySelector('.zp-subtitle').hidden=!design.showEpisodeContext;
+   refreshIcons();
+  }
+  const choice=(label,kind,value,selected)=>`<button class="zp-choice cursor-interaction" data-choice="${kind}" data-value="${value}" aria-pressed="${selected}"><span>${label}</span><span aria-hidden="true">${selected?'✓':''}</span></button>`;
+  function openPanel(type){
+   if(!state.panel){state.returnFocus=document.activeElement;state.resumeAfterPanel=state.playing;state.playing=false}state.panel=type;state.hidden=false;clearTimeout(state.timer);panelWrap.hidden=false;
+   screen.querySelector('.zp-panel-header h3').textContent={episodes:'Episodes',tracks:'Sound & subtitles',speed:'Playback speed',quality:'Streaming quality',chapters:'Chapters',more:'More',route:'AirPlay',pip:'Picture in Picture'}[type];
+   if(type==='episodes') content.innerHTML=`<select class="zp-season" aria-label="Season"><option value="1" ${state.season==='1'?'selected':''}>Season 1</option><option value="2" ${state.season==='2'?'selected':''}>Season 2</option></select><div class="zp-episodes">${labels.map((name,i)=>`<button class="zp-episode cursor-interaction" data-episode="${i+3}" aria-label="Play episode ${i+3}, ${name}"><span class="zp-still"></span>${state.episode===i+3?'<span class="zp-badge">Current</span>':''}<strong>${i+3}. ${name}</strong><small>45 min · ${i===0?'Continue':'Play'}</small></button>`).join('')}</div>`;
+   else if(type==='tracks') content.innerHTML=`<div class="zp-choices"><div><div class="zp-track-heading">Audio</div>${['English','English · Audio description','Spanish'].map(v=>choice(v,'audio',v,state.audio===v)).join('')}</div><div><div class="zp-track-heading">Subtitles</div>${['Off','English','English · CC','Spanish'].map(v=>choice(v,'subtitles',v,state.subtitles===v)).join('')}</div></div>`;
+   else if(type==='speed') content.innerHTML=`<div class="zp-choices">${['0.5','0.75','1','1.25','1.5','2'].map(v=>choice(v+'×','speed',v,state.speed===v)).join('')}</div>`;
+   else if(type==='quality') content.innerHTML=`<div class="zp-track-heading">Maximum bitrate</div><div class="zp-choices">${['40','20','12','8','4','2'].map(v=>choice(v+' Mbps','quality',v,state.quality===v)).join('')}</div>`;
+   else if(type==='chapters') content.innerHTML=`<div class="zp-choices">${['00:00 · Departure','10:00 · A new orbit','24:00 · First contact','39:00 · Homeward'].map((v,i)=>choice(v,'chapter',[0,600,1440,2340][i],false)).join('')}</div>`;
+   else if(type==='more') content.innerHTML=`<div class="zp-choices">${choice('Quality · '+state.quality+' Mbps','panel','quality',false)}${choice('Chapters','panel','chapters',false)}${choice('Fit to screen','info','Fit to screen',false)}${choice('Lock controls','lock','',false)}</div>`;
+   else content.innerHTML=`<div class="zp-track-heading">${type==='route'?'The system route picker opens here on a supported device.':'Video continues in a floating window on a supported device.'}</div>`;
+   render();screen.querySelector('[data-action="done"]').focus();
+  }
+  function closePanel(){state.playing=state.resumeAfterPanel;state.resumeAfterPanel=false;state.panel=null;panelWrap.hidden=true;render();if(state.locked)screen.querySelector('.zp-unlock').focus();else if(state.returnFocus?.isConnected)state.returnFocus.focus();hideLater()}
+  stage.addEventListener('click',event=>{
+   const button=event.target.closest('button');if(!button)return;
+   if(button.classList.contains('zp-reveal')){if(state.locked)return;state.hidden=!state.hidden;state.status='';render();hideLater();return}
+   const key=button.dataset.action;
+   if(key==='unlock'){state.locked=false;state.hidden=false;state.status='';render();hideLater()}
+   else if(state.locked){return}
+   else if(key==='play'){state.playing=!state.playing;state.status='';render();hideLater()}
+   else if(key==='back10'||key==='forward30'){state.time=Math.max(0,Math.min(2700,state.time+(key==='back10'?-10:30)));state.status=key==='back10'?'10 seconds back':'30 seconds forward';render();hideLater()}
+   else if(['episodes','tracks','speed','more','route','pip'].includes(key))openPanel(key);
+   else if(key==='done')closePanel();
+   else if(key==='back'){state.status='Return to library';render()}
+   else if(button.dataset.choice){const k=button.dataset.choice,v=button.dataset.value;if(['audio','subtitles','speed','quality'].includes(k)){state[k]=v;openPanel(state.panel)}else if(k==='panel'){openPanel(v)}else if(k==='chapter'){state.time=Number(v);state.status='';closePanel()}else if(k==='lock'){state.locked=true;closePanel();state.status='';state.hidden=false;render()}else {state.status=v;closePanel()}}
+   else if(button.dataset.episode){state.episode=Number(button.dataset.episode);state.time=0;state.resumeAfterPanel=true;state.status='';closePanel()}
+  });
+  stage.addEventListener('change',event=>{if(event.target.classList.contains('zp-season')){state.season=event.target.value;openPanel('episodes')}});
+  screen.querySelector('.zp-scrub').addEventListener('input',event=>{clearTimeout(state.timer);state.time=Number(event.target.value);state.status=fmt(state.time);render()});
+  screen.querySelector('.zp-scrub').addEventListener('change',()=>{state.status='';render();hideLater()});
+  stage.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.panel){closePanel();event.preventDefault()}else if(event.key==='Tab'&&state.panel){const items=[...panelWrap.querySelectorAll('button,select,input')].filter(e=>!e.disabled&&!e.hidden);const first=items[0],last=items[items.length-1];if(event.shiftKey&&document.activeElement===first){last.focus();event.preventDefault()}else if(!event.shiftKey&&document.activeElement===last){first.focus();event.preventDefault()}}});
+  render();
+  window.addEventListener('openai:set_globals',event=>{const saved=event.detail?.globals?.widgetState?.modelContent?.playerDesign?.[stage.dataset.layout];if(typeof saved==='boolean'){design.showEpisodeContext=saved;designPreferences[stage.dataset.layout]=saved;render()}});
+  if(globalThis.Tweak){const tweak=new Tweak({container:screen,onChange:()=>{render();designPreferences[stage.dataset.layout]=design.showEpisodeContext;window.openai?.setWidgetState?.({modelContent:{playerDesign:{...designPreferences}},privateContent:null})?.catch(()=>{})}});tweak.addToggle(design,'showEpisodeContext',{label:'Episode context'});}
+ });
+})();
+</script>

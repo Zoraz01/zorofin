@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Quick Connect (Apple Shell.swift ProfileQuickConnectView): authorize another device's code. -->
+<component name="QuickConnectScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/QuickConnectScreen.brs" />
+  <children>
+    <Group translation="[600,190]">
+      <Label id="title" text="Sign in another device" color="0xF5F7F5FF" />
+      <Label id="intro" translation="[0,56]" width="720" wrap="true" color="0xBBC5BDFF" />
+      <Field id="code" translation="[0,170]" width="720" label="Quick Connect code" placeholder="Six-digit code" />
+      <ButtonBar id="authorize" translation="[0,320]" />
+      <Label id="status" translation="[0,410]" width="720" wrap="true" color="0xBBC5BDFF" />
+    </Group>
+  </children>
+</component>

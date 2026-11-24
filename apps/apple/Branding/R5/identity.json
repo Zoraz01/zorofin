@@ -1,0 +1,10 @@
+{
+  "approved": "2026-10-25",
+  "direction": "R5 Corsair",
+  "primary": "#21BB62",
+  "background": "#0C100F",
+  "wordmarkLight": "#F2F5F1",
+  "master": "master.png",
+  "masterSHA256": "33e60d2b398be74514de5e5d1c4ba721aa8c475524d80b6919328975da42efdd",
+  "note": "Primary is the sampled midtone of the approved R5 concept. Master retains subtle tonal variation. This is not the earlier jade proposal or legacy forest-green mark."
+}

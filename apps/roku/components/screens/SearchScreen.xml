@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Search, like the Apple TV SearchView: the keyboard on the left; on the
+  right Recommended titles for an empty search, or while typing the top
+  matches (most relevant first, any type) above the results by type.
+-->
+<component name="SearchScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/SearchScreen.brs" />
+  <children>
+    <Label id="heading" text="Search" translation="[96,140]" color="0xF5F7F5FF" />
+    <MiniKeyboard id="keyboard" translation="[80,214]" />
+    <ButtonBar id="suggestions" translation="[680,150]" align="left" spacing="12" visible="false" />
+    <RowList id="results" translation="[640,150]" />
+    <Group id="status" translation="[700,420]">
+      <Label id="statusTitle" width="1120" horizAlign="center" color="0xF5F7F5FF" />
+      <Label id="statusText" translation="[0,56]" width="1120" horizAlign="center" wrap="true" color="0xBBC5BDFF" />
+    </Group>
+    <Timer id="debounce" duration="0.3" />
+  </children>
+</component>

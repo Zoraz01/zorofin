@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A focusable text field look-alike; the screen opens TextEntry on OK. -->
+<component name="Field" extends="Group">
+  <interface>
+    <field id="label" type="string" onChange="paint" />
+    <field id="value" type="string" onChange="paint" />
+    <field id="placeholder" type="string" onChange="paint" />
+    <field id="secure" type="boolean" onChange="paint" />
+    <field id="width" type="integer" value="900" onChange="paint" />
+    <field id="selected" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/Field.brs" />
+  <children>
+    <Label id="caption" translation="[4,0]" color="0xBBC5BDFF" />
+    <Poster id="bg" uri="pkg:/images/option.9.png" height="64" translation="[0,34]" />
+    <Poster id="ring" uri="pkg:/images/option_ring.9.png" height="64" translation="[0,34]" visible="false" blendColor="0x72E79BFF" />
+    <Label id="text" translation="[20,34]" height="64" vertAlign="center" maxLines="1" />
+  </children>
+</component>

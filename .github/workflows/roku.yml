@@ -1,0 +1,30 @@
+name: Roku app
+on:
+  pull_request:
+    paths: ["apps/roku/**", ".github/workflows/roku.yml"]
+  push:
+    branches: [main]
+    paths: ["apps/roku/**", ".github/workflows/roku.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: roku-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/roku
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/roku/package-lock.json
+      - run: npm ci
+      - run: npm run validate
+      - run: npm run lint
+      - run: npm test

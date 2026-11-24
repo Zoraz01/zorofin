@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Centered alert in the app's style: title, message and up to three buttons.
+     Set "alert" to { title, message, buttons: [{ id, text, primary }] };
+     "result" gets the chosen button id, or "cancel" for Back. -->
+<component name="AlertDialog" extends="Group">
+  <interface>
+    <field id="alert" type="assocarray" onChange="onAlert" />
+    <field id="result" type="string" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/AlertDialog.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x0A0D0BCC" />
+    <Poster id="panel" uri="pkg:/images/panel.9.png" width="1000" height="420" translation="[460,330]" blendColor="0x1B211EFF" />
+    <Label id="title" translation="[520,380]" width="880" horizAlign="center" color="0xF5F7F5FF" />
+    <Label id="message" translation="[520,450]" width="880" wrap="true" maxLines="5" horizAlign="center" color="0xBBC5BDFF" />
+    <ButtonBar id="buttons" />
+  </children>
+</component>

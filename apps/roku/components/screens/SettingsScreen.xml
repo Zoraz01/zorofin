@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  One settings page, like the Apple app's NativeSettingsView: Account,
+  Display, Playback, Subtitles, Controls, Notification settings or Storage &
+  app. "On this device" values live on this Roku; "Account defaults" are the
+  viewer's Jellyfin settings and follow them to every app.
+-->
+<component name="SettingsScreen" extends="Group">
+  <interface>
+    <field id="page" type="string" onChange="load" />
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="action" type="string" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/SettingsScreen.brs" />
+  <children>
+    <Label id="title" translation="[96,150]" color="0xF5F7F5FF" />
+    <MenuList id="rows" translation="[96,214]" width="1100" rowHeight="64" maxHeight="826" />
+  </children>
+</component>

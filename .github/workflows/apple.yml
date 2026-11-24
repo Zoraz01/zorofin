@@ -1,0 +1,34 @@
+name: Apple apps
+on:
+  pull_request:
+    paths: ["apps/apple/**", ".github/workflows/apple.yml"]
+  push:
+    branches: [main]
+    paths: ["apps/apple/**", ".github/workflows/apple.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    # Hosted runners are free for public repositories. Builds are unsigned;
+    # store builds are signed and uploaded by the maintainer.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Core tests
+        run: swift test --package-path apps/apple/Core
+      - name: Build for iOS Simulator
+        run: >
+          xcodebuild -project apps/apple/Zorofin.xcodeproj -scheme Zorofin-iOS
+          -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build for tvOS Simulator
+        run: >
+          xcodebuild -project apps/apple/Zorofin.xcodeproj -scheme Zorofin-tvOS
+          -destination 'generic/platform=tvOS Simulator' CODE_SIGNING_ALLOWED=NO build

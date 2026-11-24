@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Home, laid out like the Apple TV HomeView: the banner card, then shelves
+  (Continue Watching, the server's Home rows, Recently Added) under the
+  header, scrolling as focus moves down.
+-->
+<component name="HomeScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="loaded" type="assocarray" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" onChange="onResumed" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/Page.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/HomeScreen.brs" />
+  <children>
+    <Group id="page" />
+    <Group id="statusGroup" visible="false" translation="[0,0]">
+      <Poster id="statusIcon" width="48" height="48" translation="[936,380]" blendColor="0x72E79BFF" />
+      <Label id="statusTitle" width="1920" translation="[0,448]" horizAlign="center" color="0xF5F7F5FF" />
+      <Label id="statusDetail" width="1100" translation="[410,500]" horizAlign="center" wrap="true" maxLines="3" color="0xBBC5BDFF" />
+      <ButtonBar id="retry" translation="[0,600]" />
+    </Group>
+  </children>
+</component>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Full-screen text entry: Roku keyboard plus Done and Cancel. -->
+<component name="TextEntry" extends="Group">
+  <interface>
+    <field id="title" type="string" onChange="onTitle" />
+    <field id="message" type="string" onChange="onTitle" />
+    <field id="text" type="string" onChange="onText" />
+    <field id="secure" type="boolean" onChange="onSecure" />
+    <field id="doneText" type="string" value="Done" onChange="onDoneText" />
+    <field id="result" type="assocarray" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/TextEntry.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x111513F5" />
+    <Label id="titleLabel" translation="[0,120]" width="1920" horizAlign="center" color="0xF5F7F5FF" />
+    <Label id="messageLabel" translation="[360,190]" width="1200" horizAlign="center" wrap="true" maxLines="2" color="0xBBC5BDFF" />
+    <Keyboard id="keyboard" translation="[260,300]" />
+    <ButtonBar id="actions" translation="[0,880]" />
+  </children>
+</component>

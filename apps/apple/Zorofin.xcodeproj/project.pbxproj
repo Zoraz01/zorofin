@@ -1,0 +1,1010 @@
+// !$*UTF8*$!
+{
+	"archiveVersion" = "1";
+	"classes" = {
+	};
+	"objectVersion" = "60";
+	"objects" = {
+		"85E0A85FFE852E5C4B6F9A18" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/AccountApprovalsView.swift";
+			"sourceTree" = "<group>";
+		};
+		"8CB6A8D313DC8BD476427362" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/AdministrationViews.swift";
+			"sourceTree" = "<group>";
+		};
+		"70A4CDDEF57FD881C3AB2878" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/AppModel.swift";
+			"sourceTree" = "<group>";
+		};
+		"2793E95DC59E6272D9016DC2" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/AppRating.swift";
+			"sourceTree" = "<group>";
+		};
+		"AC40C47C7B22B4245090BD42" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/ConnectView.swift";
+			"sourceTree" = "<group>";
+		};
+		"B2F963D62E1EB53386AF60FE" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/DashboardWebView.swift";
+			"sourceTree" = "<group>";
+		};
+		"2E2CCB68CB0F29F6F3BE59BA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/DetailView.swift";
+			"sourceTree" = "<group>";
+		};
+		"8B178DA40385510895BA18AD" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/DownloadManager.swift";
+			"sourceTree" = "<group>";
+		};
+		"9E3393C9FAC22C4B362ABE51" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/DownloadsView.swift";
+			"sourceTree" = "<group>";
+		};
+		"07ECA75E6F9A9C640A24C5B6" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/LibraryViews.swift";
+			"sourceTree" = "<group>";
+		};
+		"5898F1EB602A36E7AAA7E239" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/LiveGuideView.swift";
+			"sourceTree" = "<group>";
+		};
+		"4AC8B3E2B1B1714BE86536CC" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/LiveTVStreamsViews.swift";
+			"sourceTree" = "<group>";
+		};
+		"81D105ABA9A33083463A551F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/NativePlayer.swift";
+			"sourceTree" = "<group>";
+		};
+		"E4C3C57F643D7CD1145E21BA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/RequestsView.swift";
+			"sourceTree" = "<group>";
+		};
+		"0CE9C853CB21D1854FB778DD" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/Shell.swift";
+			"sourceTree" = "<group>";
+		};
+		"65DF78669C32D63C89CE167D" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/Theme.swift";
+			"sourceTree" = "<group>";
+		};
+		"F4AC98E024C57C235F876583" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/TopShelfPublisher.swift";
+			"sourceTree" = "<group>";
+		};
+		"CA159DD7CA16FEA8DF371D72" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/WatchTogetherModel.swift";
+			"sourceTree" = "<group>";
+		};
+		"1B0019BF7BDF02DD0F285386" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/WatchTogetherView.swift";
+			"sourceTree" = "<group>";
+		};
+		"B7E2DA053534835F1A9EAFCF" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/ZorofinApp.swift";
+			"sourceTree" = "<group>";
+		};
+		"9DE4DCBB5B837F1D3BEB0379" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file";
+			"path" = "Resources/Inter-LICENSE.txt";
+			"sourceTree" = "<group>";
+		};
+		"30F3AA21936827EC5AF05BBA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file";
+			"path" = "Resources/InterVariable.ttf";
+			"sourceTree" = "<group>";
+		};
+		"5F2C0BAFF5ECE16FF3ADD729" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file";
+			"path" = "Resources/PrivacyInfo.xcprivacy";
+			"sourceTree" = "<group>";
+		};
+		"FD040C39F4B229F4AFFE16A6" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "Resources/iOS/Assets.xcassets";
+			"sourceTree" = "<group>";
+		};
+		"376CB90F8A9538A33907968C" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "Resources/tvOS/Assets.xcassets";
+			"sourceTree" = "<group>";
+		};
+		"A046145E47C90486B46746D8" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "image.png";
+			"path" = "Resources/wordmark.png";
+			"sourceTree" = "<group>";
+		};
+		"552AFB5EC1B6A8F3B1B9D25D" = {
+			"isa" = "XCLocalSwiftPackageReference";
+			"relativePath" = "Core";
+		};
+		"4EDC8BFAFC6BD936B849F38C" = {
+			"isa" = "PBXGroup";
+			"children" = ("30C9DBDE3BF3ABDF8922EF29", "D6F2E749FCC1336FF91373AB", "F450F4AC1878305875CBD439", "FCF9D2DB0D2BD9DDA186B1E1", "670EEC1936CFC416889E190B");
+			"name" = "Products";
+			"sourceTree" = "<group>";
+		};
+		"EB814BE3CA3B78C0734C5605" = {
+			"isa" = "PBXGroup";
+			"children" = ("85E0A85FFE852E5C4B6F9A18", "8CB6A8D313DC8BD476427362", "70A4CDDEF57FD881C3AB2878", "2793E95DC59E6272D9016DC2", "AC40C47C7B22B4245090BD42", "B2F963D62E1EB53386AF60FE", "2E2CCB68CB0F29F6F3BE59BA", "8B178DA40385510895BA18AD", "9E3393C9FAC22C4B362ABE51", "07ECA75E6F9A9C640A24C5B6", "5898F1EB602A36E7AAA7E239", "4AC8B3E2B1B1714BE86536CC", "81D105ABA9A33083463A551F", "E4C3C57F643D7CD1145E21BA", "0CE9C853CB21D1854FB778DD", "65DF78669C32D63C89CE167D", "F4AC98E024C57C235F876583", "CA159DD7CA16FEA8DF371D72", "1B0019BF7BDF02DD0F285386", "B7E2DA053534835F1A9EAFCF", "9DE4DCBB5B837F1D3BEB0379", "30F3AA21936827EC5AF05BBA", "5F2C0BAFF5ECE16FF3ADD729", "FD040C39F4B229F4AFFE16A6", "376CB90F8A9538A33907968C", "A046145E47C90486B46746D8", "4EDC8BFAFC6BD936B849F38C", "223B6E584B47F23363A6A8A1", "AD0AE5B2A96A1659D718BAD6", "AC8AC033051D325A1BC37471", "7A67BFD2FEBA8700AB99FA10", "AEB8DA7AA31C2C42A61778BA", "4D569490764BB6EB51FA15FE", "8589EDC0CFFF74C8C53D9EF0", "CEA3F48719F2BAE92F708CAF");
+			"sourceTree" = "<group>";
+		};
+		"433548979C024CC63B5F3B8D" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CLANG_ENABLE_OBJC_ARC" = "YES";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+				"ENABLE_TESTABILITY" = "YES";
+			};
+		};
+		"B800A40FDE6F0A0218D9BCD2" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CLANG_ENABLE_OBJC_ARC" = "YES";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+			};
+		};
+		"3C05BEEE7303EE3FA7B250FA" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("433548979C024CC63B5F3B8D", "B800A40FDE6F0A0218D9BCD2");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"30C9DBDE3BF3ABDF8922EF29" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = "0";
+			"path" = "Zorofin-iOS.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"41ACE9528B0833314A45AFE5" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "85E0A85FFE852E5C4B6F9A18";
+		};
+		"F8BED3DD0C8AE619ABCB646B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8CB6A8D313DC8BD476427362";
+		};
+		"897FBA257802A3E82C037021" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "70A4CDDEF57FD881C3AB2878";
+		};
+		"E5142A6CBFCB516BFED16A1F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "2793E95DC59E6272D9016DC2";
+		};
+		"89A5B678A74EEB16957050D0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "AC40C47C7B22B4245090BD42";
+		};
+		"FD9201D71AA3E4C89BBF7A99" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B2F963D62E1EB53386AF60FE";
+		};
+		"92F03FE9FBB1D17C6DD3C0C7" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "2E2CCB68CB0F29F6F3BE59BA";
+		};
+		"753F9C3F8F6BFD79F0009B78" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8B178DA40385510895BA18AD";
+		};
+		"4FB4CD00AA1D02DE1BC99886" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "9E3393C9FAC22C4B362ABE51";
+		};
+		"710D3210C0C68CD8A056A88B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "07ECA75E6F9A9C640A24C5B6";
+		};
+		"0F275BDC0DFBB1DA59112DA9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5898F1EB602A36E7AAA7E239";
+		};
+		"93E2E716CF4ACB60870CBB5C" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "4AC8B3E2B1B1714BE86536CC";
+		};
+		"F1E2799408A0F1733A8436FD" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "81D105ABA9A33083463A551F";
+		};
+		"F782676D292F1D4EAD505227" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "E4C3C57F643D7CD1145E21BA";
+		};
+		"AF7A2EB5FF64102EF6EDFED3" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "0CE9C853CB21D1854FB778DD";
+		};
+		"37AFC0258404FDA91CCFCFC3" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "65DF78669C32D63C89CE167D";
+		};
+		"0317582E10F7BF6613EB1401" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "F4AC98E024C57C235F876583";
+		};
+		"16C1D459159303E3C3A57F9D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "CA159DD7CA16FEA8DF371D72";
+		};
+		"EC96C90ABC08EE19533B4CA2" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "1B0019BF7BDF02DD0F285386";
+		};
+		"9096CBF3B46037CDD1C52B1A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B7E2DA053534835F1A9EAFCF";
+		};
+		"E752AD35FD9CE42010B27F5D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "9DE4DCBB5B837F1D3BEB0379";
+		};
+		"0B1924FF2E54A6F17802B8C3" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "30F3AA21936827EC5AF05BBA";
+		};
+		"2155DABC50A6B504F50CC8F8" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5F2C0BAFF5ECE16FF3ADD729";
+		};
+		"42678A2DF5662B230F3509C0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "FD040C39F4B229F4AFFE16A6";
+		};
+		"417D5C49892114E2107A149D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "A046145E47C90486B46746D8";
+		};
+		"077D1F8800A0312F0EAE4DCE" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "552AFB5EC1B6A8F3B1B9D25D";
+			"productName" = "ZorofinCore";
+		};
+		"F7EF3CB0743079D5303DD57A" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "077D1F8800A0312F0EAE4DCE";
+		};
+		"7F2E8A8BA883777EDE634B1E" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("41ACE9528B0833314A45AFE5", "F8BED3DD0C8AE619ABCB646B", "897FBA257802A3E82C037021", "E5142A6CBFCB516BFED16A1F", "89A5B678A74EEB16957050D0", "FD9201D71AA3E4C89BBF7A99", "92F03FE9FBB1D17C6DD3C0C7", "753F9C3F8F6BFD79F0009B78", "4FB4CD00AA1D02DE1BC99886", "710D3210C0C68CD8A056A88B", "0F275BDC0DFBB1DA59112DA9", "93E2E716CF4ACB60870CBB5C", "F1E2799408A0F1733A8436FD", "F782676D292F1D4EAD505227", "AF7A2EB5FF64102EF6EDFED3", "37AFC0258404FDA91CCFCFC3", "0317582E10F7BF6613EB1401", "16C1D459159303E3C3A57F9D", "EC96C90ABC08EE19533B4CA2", "9096CBF3B46037CDD1C52B1A");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"E7DFD04E21FE97571A7A34BC" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("F7EF3CB0743079D5303DD57A");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"BB1B703CDE00C59C5EA85822" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("E752AD35FD9CE42010B27F5D", "0B1924FF2E54A6F17802B8C3", "2155DABC50A6B504F50CC8F8", "42678A2DF5662B230F3509C0", "417D5C49892114E2107A149D");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"A7A22DE1C69A5172CAE87E55" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app";
+				"INFOPLIST_FILE" = "Config/iOS-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+			};
+		};
+		"A0BA90A4349E37239C407E6D" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app";
+				"INFOPLIST_FILE" = "Config/iOS-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+			};
+		};
+		"0971745C6D6E147BA694540E" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("A7A22DE1C69A5172CAE87E55", "A0BA90A4349E37239C407E6D");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"EDEA640181FC0582276E6F4B" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "0971745C6D6E147BA694540E";
+			"buildPhases" = ("7F2E8A8BA883777EDE634B1E", "E7DFD04E21FE97571A7A34BC", "BB1B703CDE00C59C5EA85822");
+			"buildRules" = ();
+			"dependencies" = ();
+			"name" = "Zorofin-iOS";
+			"productName" = "Zorofin-iOS";
+			"productReference" = "30C9DBDE3BF3ABDF8922EF29";
+			"productType" = "com.apple.product-type.application";
+			"packageProductDependencies" = ("077D1F8800A0312F0EAE4DCE");
+		};
+		"D6F2E749FCC1336FF91373AB" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = "0";
+			"path" = "Zorofin-tvOS.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"2F26F0E50C1917EFF4DF6601" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "85E0A85FFE852E5C4B6F9A18";
+		};
+		"B54E94CC92BD30CB008F7338" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8CB6A8D313DC8BD476427362";
+		};
+		"32A8A59FDCC4E6227C307FFF" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "70A4CDDEF57FD881C3AB2878";
+		};
+		"A3681C727C56B4274DA2B6E4" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "2793E95DC59E6272D9016DC2";
+		};
+		"38568452DAF291AA2326A553" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "AC40C47C7B22B4245090BD42";
+		};
+		"BE0C20C2BDF22D8B078BB1F9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B2F963D62E1EB53386AF60FE";
+		};
+		"161EC771404999023552E634" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "2E2CCB68CB0F29F6F3BE59BA";
+		};
+		"6EDE31AE492BAAC385B49DDC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8B178DA40385510895BA18AD";
+		};
+		"E2A727843165D515F9A5B51A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "9E3393C9FAC22C4B362ABE51";
+		};
+		"28455A72A551E118EE2D8D8A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "07ECA75E6F9A9C640A24C5B6";
+		};
+		"F697EDE9515278394B050CE0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5898F1EB602A36E7AAA7E239";
+		};
+		"1B136916D0FEE867DEF17D2C" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "4AC8B3E2B1B1714BE86536CC";
+		};
+		"17493239D5765BEFDAD14A7E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "81D105ABA9A33083463A551F";
+		};
+		"0D4AF3F1CF352E9F58DA4F2A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "E4C3C57F643D7CD1145E21BA";
+		};
+		"F32BAB3EFCC1BC16B8DF1224" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "0CE9C853CB21D1854FB778DD";
+		};
+		"AA38AEAFAF3F9889C2291011" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "65DF78669C32D63C89CE167D";
+		};
+		"D377A6722B6EDCC98732CC01" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "F4AC98E024C57C235F876583";
+		};
+		"71A34DB3BD31300D8CE1C993" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "CA159DD7CA16FEA8DF371D72";
+		};
+		"57AD120A3DF512DE9595905F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "1B0019BF7BDF02DD0F285386";
+		};
+		"3F3EC98E9029053ECF2D10C9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B7E2DA053534835F1A9EAFCF";
+		};
+		"8308BF91655AB7CA982DDBD1" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "9DE4DCBB5B837F1D3BEB0379";
+		};
+		"6E8FD6348D9711BE62D7C8AF" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "30F3AA21936827EC5AF05BBA";
+		};
+		"019D2E2610A9D8C6FEC9BC2D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5F2C0BAFF5ECE16FF3ADD729";
+		};
+		"C4E5CE4482B17E1F7748DFE4" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "376CB90F8A9538A33907968C";
+		};
+		"9EC20BDAACB4C488EA12C2F9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "A046145E47C90486B46746D8";
+		};
+		"D75A1353DA0D030A8C5FBF46" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "552AFB5EC1B6A8F3B1B9D25D";
+			"productName" = "ZorofinCore";
+		};
+		"D04273D97491BB0007B5DD12" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "D75A1353DA0D030A8C5FBF46";
+		};
+		"3AFAD9728A3306863D286BBC" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("2F26F0E50C1917EFF4DF6601", "B54E94CC92BD30CB008F7338", "32A8A59FDCC4E6227C307FFF", "A3681C727C56B4274DA2B6E4", "38568452DAF291AA2326A553", "BE0C20C2BDF22D8B078BB1F9", "161EC771404999023552E634", "6EDE31AE492BAAC385B49DDC", "E2A727843165D515F9A5B51A", "28455A72A551E118EE2D8D8A", "F697EDE9515278394B050CE0", "1B136916D0FEE867DEF17D2C", "17493239D5765BEFDAD14A7E", "0D4AF3F1CF352E9F58DA4F2A", "F32BAB3EFCC1BC16B8DF1224", "AA38AEAFAF3F9889C2291011", "D377A6722B6EDCC98732CC01", "71A34DB3BD31300D8CE1C993", "57AD120A3DF512DE9595905F", "3F3EC98E9029053ECF2D10C9");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"83BD5A120E812A48F5BF7949" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("D04273D97491BB0007B5DD12");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"78D3BC668530355BE0AEA586" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("8308BF91655AB7CA982DDBD1", "6E8FD6348D9711BE62D7C8AF", "019D2E2610A9D8C6FEC9BC2D", "C4E5CE4482B17E1F7748DFE4", "9EC20BDAACB4C488EA12C2F9");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"7F2DDA63AB34AD5C64055822" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app";
+				"INFOPLIST_FILE" = "Config/tvOS-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "App Icon & Top Shelf Image";
+				"SDKROOT" = "appletvos";
+				"SUPPORTED_PLATFORMS" = "appletvos appletvsimulator";
+				"TARGETED_DEVICE_FAMILY" = "3";
+				"TVOS_DEPLOYMENT_TARGET" = "18.0";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+				"CODE_SIGN_ENTITLEMENTS" = "Config/tvOS.entitlements";
+			};
+		};
+		"F31A4102A4105846EEB3CF46" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app";
+				"INFOPLIST_FILE" = "Config/tvOS-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "App Icon & Top Shelf Image";
+				"SDKROOT" = "appletvos";
+				"SUPPORTED_PLATFORMS" = "appletvos appletvsimulator";
+				"TARGETED_DEVICE_FAMILY" = "3";
+				"TVOS_DEPLOYMENT_TARGET" = "18.0";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+				"CODE_SIGN_ENTITLEMENTS" = "Config/tvOS.entitlements";
+			};
+		};
+		"CAF7ABEA35D803B50D0E3B32" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("7F2DDA63AB34AD5C64055822", "F31A4102A4105846EEB3CF46");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"9CFB0D6E38F155424A0735B5" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "CAF7ABEA35D803B50D0E3B32";
+			"buildPhases" = ("3AFAD9728A3306863D286BBC", "83BD5A120E812A48F5BF7949", "78D3BC668530355BE0AEA586", "12EC46036BF591CD53FA0A16");
+			"buildRules" = ();
+			"dependencies" = ("A163F259B99B5DA32D19FF20");
+			"name" = "Zorofin-tvOS";
+			"productName" = "Zorofin-tvOS";
+			"productReference" = "D6F2E749FCC1336FF91373AB";
+			"productType" = "com.apple.product-type.application";
+			"packageProductDependencies" = ("D75A1353DA0D030A8C5FBF46");
+		};
+		"223B6E584B47F23363A6A8A1" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "TopShelf/ContentProvider.swift";
+			"sourceTree" = "<group>";
+		};
+		"AD0AE5B2A96A1659D718BAD6" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file";
+			"path" = "TopShelf/PrivacyInfo.xcprivacy";
+			"sourceTree" = "<group>";
+		};
+		"F450F4AC1878305875CBD439" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.app-extension";
+			"includeInIndex" = "0";
+			"path" = "Zorofin-TopShelf.appex";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"DA1C326AB4BCFBD8ECE58922" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "552AFB5EC1B6A8F3B1B9D25D";
+			"productName" = "ZorofinCore";
+		};
+		"C31ED8D0C4561567BA8A0370" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "223B6E584B47F23363A6A8A1";
+		};
+		"BDF0B2E7EBA373A3DE52A273" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("C31ED8D0C4561567BA8A0370");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"23A7CE1C9102D07F9D586879" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "DA1C326AB4BCFBD8ECE58922";
+		};
+		"5BF98313AA1E50F263A6F846" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("23A7CE1C9102D07F9D586879");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"E09DE431CCD75FA382731870" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "AD0AE5B2A96A1659D718BAD6";
+		};
+		"957306ABE884BFA7B95E1A05" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("E09DE431CCD75FA382731870");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"00EE327281A0AEFC5BCF43A9" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.topshelf";
+				"INFOPLIST_FILE" = "Config/TopShelf-Info.plist";
+				"CODE_SIGN_ENTITLEMENTS" = "Config/tvOS.entitlements";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "appletvos";
+				"SUPPORTED_PLATFORMS" = "appletvos appletvsimulator";
+				"TARGETED_DEVICE_FAMILY" = "3";
+				"TVOS_DEPLOYMENT_TARGET" = "18.0";
+				"APPLICATION_EXTENSION_API_ONLY" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+			};
+		};
+		"09200F1E69FB2A99F5FA49FE" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.topshelf";
+				"INFOPLIST_FILE" = "Config/TopShelf-Info.plist";
+				"CODE_SIGN_ENTITLEMENTS" = "Config/tvOS.entitlements";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "appletvos";
+				"SUPPORTED_PLATFORMS" = "appletvos appletvsimulator";
+				"TARGETED_DEVICE_FAMILY" = "3";
+				"TVOS_DEPLOYMENT_TARGET" = "18.0";
+				"APPLICATION_EXTENSION_API_ONLY" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				"MARKETING_VERSION" = "1.2";
+				"CURRENT_PROJECT_VERSION" = "49";
+			};
+		};
+		"278FB6B93B2EA858E5587B50" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("00EE327281A0AEFC5BCF43A9", "09200F1E69FB2A99F5FA49FE");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"0CD686B3C3F37CF759ED3FF2" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "278FB6B93B2EA858E5587B50";
+			"buildPhases" = ("BDF0B2E7EBA373A3DE52A273", "5BF98313AA1E50F263A6F846", "957306ABE884BFA7B95E1A05");
+			"buildRules" = ();
+			"dependencies" = ();
+			"name" = "Zorofin-TopShelf";
+			"productName" = "Zorofin-TopShelf";
+			"productReference" = "F450F4AC1878305875CBD439";
+			"productType" = "com.apple.product-type.app-extension";
+			"packageProductDependencies" = ("DA1C326AB4BCFBD8ECE58922");
+		};
+		"C49B729F00693C632A446B6C" = {
+			"isa" = "PBXContainerItemProxy";
+			"containerPortal" = "985959785319747668373CC6";
+			"proxyType" = "1";
+			"remoteGlobalIDString" = "0CD686B3C3F37CF759ED3FF2";
+			"remoteInfo" = "Zorofin-TopShelf";
+		};
+		"A163F259B99B5DA32D19FF20" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "0CD686B3C3F37CF759ED3FF2";
+			"targetProxy" = "C49B729F00693C632A446B6C";
+		};
+		"45921F6E07F905B77F2EAE1B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "F450F4AC1878305875CBD439";
+			"settings" = {
+				"ATTRIBUTES" = ("RemoveHeadersOnCopy");
+			};
+		};
+		"12EC46036BF591CD53FA0A16" = {
+			"isa" = "PBXCopyFilesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"dstPath" = "";
+			"dstSubfolderSpec" = "13";
+			"files" = ("45921F6E07F905B77F2EAE1B");
+			"name" = "Embed App Extensions";
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"AC8AC033051D325A1BC37471" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "UITests/IPadAcceptanceTests.swift";
+			"sourceTree" = "<group>";
+		};
+		"FCF9D2DB0D2BD9DDA186B1E1" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.cfbundle";
+			"includeInIndex" = "0";
+			"path" = "Zorofin-iPadUITests.xctest";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"AD1E55D59B4DB81110611398" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "AC8AC033051D325A1BC37471";
+		};
+		"4A1F31A5F562186E36A64DBD" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("AD1E55D59B4DB81110611398");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"4F6922B89FCC01F6E4D7D92E" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ();
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"9740DFA794F70FBF179E48B9" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ();
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"B012A4F60CD5F2ABFF050065" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.uitests";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos";
+				"TARGETED_DEVICE_FAMILY" = "2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"TEST_TARGET_NAME" = "Zorofin-iOS";
+				"ENABLE_TESTING_SEARCH_PATHS" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+			};
+		};
+		"AF3AB9B35C11663F0622D0AC" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.uitests";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos";
+				"TARGETED_DEVICE_FAMILY" = "2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"TEST_TARGET_NAME" = "Zorofin-iOS";
+				"ENABLE_TESTING_SEARCH_PATHS" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+			};
+		};
+		"12935312B95356B55BCC1628" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("B012A4F60CD5F2ABFF050065", "AF3AB9B35C11663F0622D0AC");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"5780BA2FF3E3999E34E06312" = {
+			"isa" = "PBXContainerItemProxy";
+			"containerPortal" = "985959785319747668373CC6";
+			"proxyType" = "1";
+			"remoteGlobalIDString" = "EDEA640181FC0582276E6F4B";
+			"remoteInfo" = "Zorofin-iOS";
+		};
+		"64AAA25AFB600DCC6B51D797" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "EDEA640181FC0582276E6F4B";
+			"targetProxy" = "5780BA2FF3E3999E34E06312";
+		};
+		"758C27431E55DDC7EC479861" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "12935312B95356B55BCC1628";
+			"buildPhases" = ("4A1F31A5F562186E36A64DBD", "4F6922B89FCC01F6E4D7D92E", "9740DFA794F70FBF179E48B9");
+			"buildRules" = ();
+			"dependencies" = ("64AAA25AFB600DCC6B51D797");
+			"name" = "Zorofin-iPadUITests";
+			"productName" = "Zorofin-iPadUITests";
+			"productReference" = "FCF9D2DB0D2BD9DDA186B1E1";
+			"productType" = "com.apple.product-type.bundle.ui-testing";
+		};
+		"7A67BFD2FEBA8700AB99FA10" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/PlayerLayoutTests.swift";
+			"sourceTree" = "<group>";
+		};
+		"AEB8DA7AA31C2C42A61778BA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "file";
+			"path" = "Core/Tests/ZorofinCoreTests/Fixtures/player-preparation.mp4";
+			"sourceTree" = "<group>";
+		};
+		"4D569490764BB6EB51FA15FE" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/PlayerStartupFixture.swift";
+			"sourceTree" = "<group>";
+		};
+		"CEA3F48719F2BAE92F708CAF" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/PlayerRotationTrace.swift";
+			"sourceTree" = "<group>";
+		};
+		"8589EDC0CFFF74C8C53D9EF0" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder";
+			"path" = "Tests/Fixtures/rotation-hls";
+			"sourceTree" = "<group>";
+		};
+		"670EEC1936CFC416889E190B" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.cfbundle";
+			"includeInIndex" = "0";
+			"path" = "Zorofin-PlayerTests.xctest";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"51A3194A5E5C979A9C7842BD" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "552AFB5EC1B6A8F3B1B9D25D";
+			"productName" = "ZorofinCore";
+		};
+		"B8C6D18000F4EC34C6AE32E4" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "7A67BFD2FEBA8700AB99FA10";
+		};
+		"22BE2EC1B0A0D183D35EB1A4" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "4D569490764BB6EB51FA15FE";
+		};
+		"7336B6809E7FF2EF5399166D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "CEA3F48719F2BAE92F708CAF";
+		};
+		"0F00A05D0C16BC1AAC5369D6" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("B8C6D18000F4EC34C6AE32E4", "22BE2EC1B0A0D183D35EB1A4", "7336B6809E7FF2EF5399166D");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"D1DFF8AE391BB362E3B765F2" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "51A3194A5E5C979A9C7842BD";
+		};
+		"D5EFCD380240DFCBF79176A7" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("D1DFF8AE391BB362E3B765F2");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"CC1FF74F0EEE8D2B11B216E6" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "AEB8DA7AA31C2C42A61778BA";
+		};
+		"490F0ADD09AE9B7B94C39728" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8589EDC0CFFF74C8C53D9EF0";
+		};
+		"6A82476D3D8231065C02A7AF" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("CC1FF74F0EEE8D2B11B216E6", "490F0ADD09AE9B7B94C39728");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"A526F1DE63473CA3F2A5EEC4" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.playertests";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"BUNDLE_LOADER" = "$(TEST_HOST)";
+				"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/Zorofin-iOS.app/Zorofin-iOS";
+				"ENABLE_TESTING_SEARCH_PATHS" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+			};
+		};
+		"3481801808D78A6918ABAE6B" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "org.zorofin.app.playertests";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "18.0";
+				"BUNDLE_LOADER" = "$(TEST_HOST)";
+				"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/Zorofin-iOS.app/Zorofin-iOS";
+				"ENABLE_TESTING_SEARCH_PATHS" = "YES";
+				"SKIP_INSTALL" = "YES";
+				"LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+			};
+		};
+		"AC5C5B67D115945521601FCF" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("A526F1DE63473CA3F2A5EEC4", "3481801808D78A6918ABAE6B");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Debug";
+		};
+		"D7C08A91571FAEF6FEBD1152" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "EDEA640181FC0582276E6F4B";
+			"targetProxy" = "5780BA2FF3E3999E34E06312";
+		};
+		"E203CE89A7ECC0E3C37DD661" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "AC5C5B67D115945521601FCF";
+			"buildPhases" = ("0F00A05D0C16BC1AAC5369D6", "D5EFCD380240DFCBF79176A7", "6A82476D3D8231065C02A7AF");
+			"buildRules" = ();
+			"dependencies" = ("D7C08A91571FAEF6FEBD1152");
+			"name" = "Zorofin-PlayerTests";
+			"productName" = "Zorofin-PlayerTests";
+			"productReference" = "670EEC1936CFC416889E190B";
+			"productType" = "com.apple.product-type.bundle.unit-test";
+			"packageProductDependencies" = ("51A3194A5E5C979A9C7842BD");
+		};
+		"985959785319747668373CC6" = {
+			"isa" = "PBXProject";
+			"attributes" = {
+				"LastUpgradeCheck" = "2700";
+				"BuildIndependentTargetsInParallel" = "YES";
+				"TargetAttributes" = {
+					"758C27431E55DDC7EC479861" = {
+						"TestTargetID" = "EDEA640181FC0582276E6F4B";
+					};
+				};
+			};
+			"buildConfigurationList" = "3C05BEEE7303EE3FA7B250FA";
+			"compatibilityVersion" = "Xcode 15.0";
+			"developmentRegion" = "en";
+			"hasScannedForEncodings" = "0";
+			"knownRegions" = ("en", "Base");
+			"mainGroup" = "EB814BE3CA3B78C0734C5605";
+			"productRefGroup" = "4EDC8BFAFC6BD936B849F38C";
+			"projectDirPath" = "";
+			"projectRoot" = "";
+			"targets" = ("EDEA640181FC0582276E6F4B", "9CFB0D6E38F155424A0735B5", "0CD686B3C3F37CF759ED3FF2", "758C27431E55DDC7EC479861", "E203CE89A7ECC0E3C37DD661");
+			"packageReferences" = ("552AFB5EC1B6A8F3B1B9D25D");
+		};
+	};
+	"rootObject" = "985959785319747668373CC6";
+}

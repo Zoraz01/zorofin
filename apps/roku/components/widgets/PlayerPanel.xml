@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The player's options surface (Apple PlayerOptionsSurface on tvOS): a panel
+  on the right with a title, the playing title as context and a MenuList.
+  The player fills it page by page (options, Seasons & episodes, Audio &
+  subtitles, Quality, Channels & guide, Playback info).
+  Emits selected = row id, or back = true for Back and Left.
+-->
+<component name="PlayerPanel" extends="Group">
+  <interface>
+    <field id="title" type="string" onChange="layout" />
+    <field id="context" type="string" onChange="layout" />
+    <field id="rows" type="array" onChange="onRows" />
+    <field id="wide" type="boolean" onChange="layout" />
+    <field id="focusId" type="string" />
+    <field id="selected" type="string" alwaysNotify="true" />
+    <field id="back" type="boolean" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
+    <function name="updateRow" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/PlayerPanel.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x00000080" />
+    <Poster id="bg" uri="pkg:/images/popover.9.png" blendColor="0x1B211EF7" />
+    <Poster id="hair" uri="pkg:/images/popover_hair.9.png" blendColor="0x39423CFF" />
+    <Label id="heading" color="0xF5F7F5FF" />
+    <Label id="sub" color="0xBBC5BDFF" maxLines="1" />
+    <MenuList id="list" />
+  </children>
+</component>

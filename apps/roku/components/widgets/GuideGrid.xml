@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The Live TV grid guide (Apple LiveGuideView timeline): a "Channel" column
+  and four half-hour labels over rows of 108 px with 10 px spacing. Each row
+  is a 236 px channel cell and its programs laid out across a 1480 px, two
+  hour schedule. Cells use GuideCellStyle: 10 px corners, a 1 px border at
+  50% and a 3 px jade stroke on focus; airing programs get a jade tint and a
+  progress line, and a 2 px jade line marks now.
+
+  Only rowCount rows are built and they are reused as the guide scrolls.
+  channels = [{ id, name, number, favorite, logo }]; programs is set with
+  { channelId: [program] } for the channels whose listings arrived.
+-->
+<component name="GuideGrid" extends="Group">
+  <interface>
+    <field id="channels" type="array" onChange="onChannels" />
+    <field id="windowStart" type="integer" onChange="onWindow" />
+    <field id="offset" type="integer" />
+    <field id="now" type="integer" onChange="paint" />
+    <field id="rowCount" type="integer" value="5" onChange="buildRows" />
+    <field id="programs" type="assocarray" alwaysNotify="true" onChange="onPrograms" />
+    <field id="failed" type="boolean" onChange="paint" />
+    <!-- outputs -->
+    <field id="topIndex" type="integer" alwaysNotify="true" />
+    <field id="focusInfo" type="assocarray" />
+    <field id="selected" type="assocarray" alwaysNotify="true" />
+    <field id="play" type="assocarray" alwaysNotify="true" />
+    <field id="edge" type="string" alwaysNotify="true" />
+    <function name="focusChannel" />
+    <function name="focusTime" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveGuide.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/GuideGrid.brs" />
+  <children>
+    <Label id="channelHead" text="Channel" width="236" height="38" vertAlign="center" color="0xBBC5BDFF" />
+    <Group id="timeHead" translation="[248,0]" />
+    <Group id="rows" translation="[0,46]" />
+    <Rectangle id="nowLine" width="2" color="0x72E79BA6" visible="false" />
+  </children>
+</component>

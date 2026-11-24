@@ -1,0 +1,9 @@
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+Config/Local.xcconfig
+TestResults/
+.DS_Store
+!Config/
+!Config/*.plist

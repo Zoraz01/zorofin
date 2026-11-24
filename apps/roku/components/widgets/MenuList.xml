@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  A vertical list of rows in the Apple TV FlatOptionStyle: 23 pt text, a
+  9% white fill and 2 px jade outline on focus, 10 px corners.
+  rows = [{ id, title, subtitle?, icon?, value?, checked?, avatar?, initial?,
+            divider?, header?, note?, disabled?, tint? }]
+  Dividers and headers are not focusable. Emits selected = id.
+  Scrolls inside maxHeight when the rows are taller.
+-->
+<component name="MenuList" extends="Group">
+  <interface>
+    <field id="rows" type="array" onChange="build" />
+    <field id="width" type="integer" value="428" />
+    <field id="rowHeight" type="integer" value="60" />
+    <field id="maxHeight" type="integer" value="0" />
+    <field id="fontSize" type="integer" value="23" />
+    <field id="focusIndex" type="integer" value="-1" onChange="paint" />
+    <field id="selected" type="string" alwaysNotify="true" />
+    <field id="focusedId" type="string" alwaysNotify="true" />
+    <field id="height" type="integer" />
+    <function name="focusRow" />
+    <function name="updateRow" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/MenuList.brs" />
+  <children>
+    <Group id="clip">
+      <Group id="body" />
+    </Group>
+  </children>
+</component>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The Apple TV header (Shell.swift wideHeader): the Zorofin symbol, tab pills
+  on the left, then the account avatar, Support, Notifications and Search on
+  the right. The selected tab is a white pill; the focused control lifts with
+  a jade ring. Emits selectedTab = home | movies | shows | live | search |
+  account | support | notifications.
+-->
+<component name="TabBar" extends="Group">
+  <interface>
+    <field id="selectedId" type="string" value="home" onChange="paint" />
+    <field id="selectedTab" type="string" alwaysNotify="true" />
+    <field id="showLive" type="boolean" value="false" onChange="build" />
+    <field id="showSupport" type="boolean" value="false" onChange="build" />
+    <field id="showNotifications" type="boolean" value="false" onChange="build" />
+    <field id="unread" type="integer" value="0" onChange="paintBadge" />
+    <field id="userName" type="string" onChange="onUser" />
+    <field id="userImage" type="string" onChange="onUser" />
+    <field id="focusId" type="string" onChange="onFocusId" />
+    <field id="leaveDown" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/TabBar.brs" />
+  <children>
+    <Rectangle id="shade" width="1920" height="124" color="0x111513FF" />
+    <Poster id="logo" uri="pkg:/images/logo.png" width="48" height="48" translation="[96,46]" />
+    <Group id="tabs" />
+    <Group id="tools" />
+  </children>
+</component>

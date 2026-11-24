@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Live TV grid guide, like the Apple TV LiveGuideView: controls (find a
+  channel, All channels / Favorites, refresh, day, earlier, Now, later), who
+  is using the server's streams, a preview of the focused program, then the
+  two hour grid. OK opens program details with Watch live; Play tunes the
+  focused channel; Rewind and Fast Forward page the schedule.
+-->
+<component name="LiveTvScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveTvStreams.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveGuide.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/LiveTvScreen.brs" />
+  <children>
+    <ButtonBar id="controls" translation="[96,140]" align="left" spacing="12" />
+    <LiveStreamsStrip id="strip" translation="[96,224]" visible="false" />
+    <Group id="preview" translation="[96,224]">
+      <Label id="previewName" maxLines="1" color="0xF5F7F5FF" />
+      <Label id="previewTime" color="0xBBC5BDFF" />
+      <Label id="previewLine" translation="[0,44]" width="1728" maxLines="1" color="0x72E79BFF" />
+      <Label id="previewBody" translation="[0,76]" width="1728" wrap="true" maxLines="2" color="0xBBC5BDFF" />
+    </Group>
+    <GuideGrid id="grid" translation="[96,352]" />
+    <Label id="status" translation="[96,560]" width="1728" horizAlign="center" wrap="true" color="0xBBC5BDFF" />
+    <Timer id="clock" duration="30" repeat="true" />
+    <Timer id="streamsTimer" duration="15" repeat="true" />
+  </children>
+</component>

@@ -1,0 +1,19 @@
+# Weekly, grouped updates keep noise low. Majors are left for a person to plan.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups: { actions: { patterns: ["*"] } }
+  - package-ecosystem: pub
+    directory: /apps/tv
+    schedule: { interval: weekly }
+    groups: { flutter: { patterns: ["*"], update-types: [minor, patch] } }
+  - package-ecosystem: npm
+    directory: /apps/roku
+    schedule: { interval: monthly }
+    groups: { roku-tools: { patterns: ["*"], update-types: [minor, patch] } }
+  - package-ecosystem: npm
+    directory: /apps/legacy-tv
+    schedule: { interval: monthly }
+    groups: { legacy-tools: { patterns: ["*"], update-types: [minor, patch] } }

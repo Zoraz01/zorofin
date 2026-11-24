@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something new or better
+labels: ["enhancement", "needs triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the problem or moment, not just the solution. "When I finish an episode on the TV I ..." is perfect.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Zorofin to do?
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Which apps would this help on?
+      options:
+        - label: iPhone / iPad
+        - label: Apple TV
+        - label: Android TV, Google TV, Fire TV
+        - label: LG or Samsung TV
+        - label: Roku
+  - type: textarea
+    id: else
+    attributes:
+      label: Anything else? (other apps that do this well, screenshots, mockups)

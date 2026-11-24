@@ -1,0 +1,53 @@
+# Standalone project: never include the production Compose files.
+name: zorofin-demo
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:12.4@sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771
+    container_name: zorofin-demo-jellyfin
+    user: "${DEMO_UID:?Set DEMO_UID}:${DEMO_GID:?Set DEMO_GID}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DEMO_PORT:?Set an unused loopback port}:8096"
+    volumes:
+      - type: bind
+        source: "${DEMO_DATA_DIR:?Set a dedicated demo directory}/config"
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DEMO_DATA_DIR}/cache"
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${DEMO_DATA_DIR}/media"
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      DOTNET_PROCESSOR_COUNT: "2"
+      # Small, low-concurrency library: prefer workstation GC over server heaps.
+      DOTNET_gcServer: "0"
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: 0.75
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+      org.zorofin.purpose: "isolated-review-demo"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    networks: [demo]
+networks:
+  demo:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"

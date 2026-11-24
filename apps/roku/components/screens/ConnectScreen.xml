@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Connect to a Jellyfin server, then sign in with Quick Connect or a password. -->
+<component name="ConnectScreen" extends="Group">
+  <interface>
+    <field id="server" type="string" />
+    <field id="notice" type="string" onChange="onNotice" />
+    <field id="deviceId" type="string" />
+    <field id="deviceName" type="string" />
+    <field id="signedIn" type="assocarray" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="closing" type="boolean" onChange="stopPolling" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/ConnectScreen.brs" />
+  <children>
+    <Poster id="logo" uri="pkg:/images/wordmark.png" width="320" height="80" translation="[800,90]" loadDisplayMode="scaleToFit" />
+    <Label id="title" translation="[0,210]" width="1920" horizAlign="center" color="0xF5F7F5FF" />
+    <Label id="subtitle" translation="[360,280]" width="1200" horizAlign="center" wrap="true" maxLines="2" color="0xBBC5BDFF" />
+
+    <Group id="serverStep" translation="[510,400]">
+      <Field id="serverField" label="Server address" placeholder="https://media.example.com" />
+      <ButtonBar id="serverActions" translation="[0,180]" />
+      <Label id="serverHelp" translation="[0,300]" width="900" wrap="true" maxLines="4" color="0x8A958DFF"
+        text="Use the address you open Jellyfin with in a web browser. Addresses on your home network, like 192.168.1.20:8096, work too." />
+    </Group>
+
+    <Group id="signInStep" visible="false">
+      <Group id="qcPanel" translation="[150,380]">
+        <Poster uri="pkg:/images/panel.9.png" width="700" height="460" blendColor="0x1B211EFF" />
+        <Label id="qcTitle" text="Quick Connect" translation="[48,40]" color="0xF5F7F5FF" />
+        <Label id="qcCode" translation="[48,110]" width="604" horizAlign="left" color="0x72E79BFF" />
+        <Label id="qcHelp" translation="[48,230]" width="604" wrap="true" maxLines="5" color="0xBBC5BDFF"
+          text="On a phone or computer signed in to this server, open your profile, choose Quick Connect and enter this code. This TV signs in by itself." />
+      </Group>
+      <Group id="passwordPanel" translation="[960,360]">
+        <ButtonBar id="userPicker" />
+        <Field id="userField" label="Username" placeholder="Your Jellyfin username" translation="[0,110]" width="800" />
+        <Field id="passField" label="Password" placeholder="Password" secure="true" translation="[0,260]" width="800" />
+        <ButtonBar id="signInActions" translation="[0,420]" />
+      </Group>
+    </Group>
+
+    <Label id="error" translation="[360,960]" width="1200" horizAlign="center" wrap="true" maxLines="2" color="0xFF8A80FF" />
+    <Label id="footer" translation="[0,1020]" width="1920" horizAlign="center" color="0x5E6A62FF" />
+    <Timer id="qcTimer" duration="4" repeat="true" />
+  </children>
+</component>

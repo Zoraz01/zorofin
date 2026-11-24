@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- "Playing now" on the Live TV screen: each channel using a Live TV stream,
+     with Join, and the stream summary underneath (Apple TV LiveTVStreamsStrip).
+     Set "status" to a parsed liveTvStreams status; "selected" gets the stream
+     the viewer chose to join. -->
+<component name="LiveStreamsStrip" extends="Group">
+  <interface>
+    <field id="status" type="assocarray" onChange="build" />
+    <field id="server" type="string" />
+    <field id="focusIndex" type="integer" value="0" onChange="paint" />
+    <field id="selected" type="assocarray" alwaysNotify="true" />
+    <field id="height" type="float" value="0" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveTvStreams.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/LiveStreamsStrip.brs" />
+  <children>
+    <Group id="cards" />
+    <Label id="summary" color="0x8A958DFF" />
+  </children>
+</component>

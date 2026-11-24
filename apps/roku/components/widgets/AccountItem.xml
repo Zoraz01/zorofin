@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Who's watching: avatar circle, name and server. -->
+<component name="AccountItem" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContent" />
+    <field id="focusPercent" type="float" onChange="onFocus" />
+    <field id="width" type="float" />
+    <field id="height" type="float" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/AccountItem.brs" />
+  <children>
+    <Group id="avatar" scaleRotateCenter="[110,110]" translation="[20,18]">
+      <Poster id="circle" uri="pkg:/images/pill.9.png" width="220" height="220" />
+      <Label id="initial" width="220" height="220" horizAlign="center" vertAlign="center" color="0xF5F7F5FF" />
+      <Poster id="photo" width="220" height="220" loadDisplayMode="scaleToZoom" />
+      <Poster id="ring" uri="pkg:/images/ring.9.png" width="236" height="236" translation="[-8,-8]" opacity="0" />
+    </Group>
+    <Label id="name" translation="[0,266]" width="260" horizAlign="center" maxLines="1" color="0xF5F7F5FF" />
+    <Label id="server" translation="[0,304]" width="260" horizAlign="center" maxLines="1" color="0x8A958DFF" />
+  </children>
+</component>

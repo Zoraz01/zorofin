@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Apple TV MediaShelf: a jade-barred section title over one horizontal row of
+  MediaCards (2:3 posters or 16:9 artwork). content is a ContentNode whose
+  children are the cards. Reports its height for the page scroller.
+-->
+<component name="Shelf" extends="Group">
+  <interface>
+    <field id="title" type="string" onChange="onTitle" />
+    <field id="content" type="node" onChange="onContent" />
+    <field id="landscape" type="boolean" value="false" onChange="onContent" />
+    <field id="cardWidth" type="integer" value="0" onChange="onContent" />
+    <field id="height" type="integer" />
+    <field id="itemSelected" type="node" alwaysNotify="true" />
+    <field id="itemFocused" type="node" alwaysNotify="true" />
+    <field id="focusIndex" type="integer" />
+    <field id="jumpTo" type="integer" onChange="onJump" />
+    <!-- true while the shelf is far off screen: its cards are released -->
+    <field id="parked" type="boolean" value="false" onChange="onParked" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/Shelf.brs" />
+  <children>
+    <Group id="heading" />
+    <RowList id="row" translation="[0,52]" />
+  </children>
+</component>

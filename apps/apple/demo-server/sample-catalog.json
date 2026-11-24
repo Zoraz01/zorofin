@@ -1,0 +1,101 @@
+[
+  {
+    "title": "Sintel",
+    "year": 2010,
+    "genre": "Fantasy",
+    "still_seconds": 190,
+    "source": "https://download.blender.org/durian/movies/Sintel.2010.720p.mkv.zip",
+    "license": "https://creativecommons.org/licenses/by/3.0/",
+    "license_evidence": "https://durian.blender.org/sharing/",
+    "attribution": "Sintel © Blender Foundation | durian.blender.org | CC BY 3.0",
+    "plot": "A young traveler searches for a dragon she befriended. An open film by the Blender Foundation."
+  },
+  {
+    "title": "Tears of Steel",
+    "year": 2012,
+    "genre": "Science Fiction",
+    "still_seconds": 185,
+    "source": "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov",
+    "license": "https://creativecommons.org/licenses/by/3.0/",
+    "license_evidence": "https://mango.blender.org/about/",
+    "attribution": "Tears of Steel © Blender Foundation | mango.blender.org | CC BY 3.0",
+    "plot": "Scientists and warriors reunite in Amsterdam to recreate a moment from the past. An open film by the Blender Foundation."
+  },
+  {
+    "title": "Elephants Dream",
+    "year": 2006,
+    "genre": "Fantasy",
+    "still_seconds": 525,
+    "source": "https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov",
+    "license": "https://creativecommons.org/licenses/by/2.5/",
+    "license_evidence": "https://orange.blender.org/press/",
+    "attribution": "Elephants Dream © 2006 Blender Foundation / Netherlands Media Art Institute | www.elephantsdream.org | CC BY 2.5",
+    "plot": "Two companions explore a strange mechanical world. An open film from the Blender Foundation and Netherlands Media Art Institute."
+  },
+  {
+    "title": "Caminandes 2 - Gran Dillama",
+    "year": 2013,
+    "genre": "Comedy",
+    "still_seconds": 56,
+    "minimum_duration": 140,
+    "source": "https://video.blender.org/object-storage/web_videos/fb70d459-48d2-4db5-adba-813c84f9200a-1080.mp4",
+    "license": "https://creativecommons.org/licenses/by/3.0/",
+    "license_evidence": "https://video.blender.org/videos/watch/fb70d459-48d2-4db5-adba-813c84f9200a",
+    "license_note": "The retained closing license card explicitly states Creative Commons Attribution 3.0; inspected from the official complete film.",
+    "attribution": "Caminandes 2: Gran Dillama © Blender Foundation | www.caminandes.com | CC BY 3.0",
+    "plot": "Koro the llama encounters an electrifying obstacle while searching for a meal. A short Caminandes adventure.",
+    "poster_horizontal_focus": 0.22
+  },
+  {
+    "title": "Caminandes 3 - Llamigos",
+    "year": 2016,
+    "genre": "Comedy",
+    "still_seconds": 115,
+    "minimum_duration": 145,
+    "source": "https://video.blender.org/object-storage/web_videos/23f3ef79-15dc-44c5-aa45-cf92e78a4509-1080.mp4",
+    "license": "https://creativecommons.org/licenses/",
+    "license_evidence": "https://video.blender.org/api/v1/videos/23f3ef79-15dc-44c5-aa45-cf92e78a4509",
+    "license_note": "Official Blender account labels the full film Attribution (licence.id=1). The metadata does not specify a license version; do not invent one.",
+    "attribution": "Caminandes 3: Llamigos © Blender Foundation | cloud.blender.org/p/caminandes-3 | Creative Commons Attribution, as labeled by the official publisher",
+    "plot": "In snowy Patagonia, Koro the llama and Oti the penguin compete for the last berry. A short Caminandes adventure."
+  },
+  {
+    "title": "Spring",
+    "year": 2019,
+    "genre": "Fantasy",
+    "still_seconds": 325,
+    "minimum_duration": 460,
+    "source": "https://video.blender.org/object-storage/web_videos/3d95fb3d-c866-42c8-9db1-fe82f48ccb95-804.mp4",
+    "license": "https://creativecommons.org/licenses/by/4.0/",
+    "license_evidence": "https://studio.blender.org/projects/spring/pages/about/",
+    "license_note": "The project About page specifies CC BY 4.0; the official video mirror labels Attribution-Share Alike without a version. Project-specific grant is retained here.",
+    "attribution": "Spring © Blender Foundation | studio.blender.org/projects/spring | CC BY 4.0",
+    "plot": "A shepherd girl and her dog awaken ancient spirits in a mountain forest."
+  },
+  {
+    "title": "Cosmos Laundromat - First Cycle",
+    "year": 2015,
+    "genre": "Fantasy",
+    "still_seconds": 540,
+    "minimum_duration": 725,
+    "source": "https://video.blender.org/object-storage/web_videos/f507dfdc-e73e-45a4-9778-d758cbe1ce96-804.mp4",
+    "license": "https://creativecommons.org/licenses/by/3.0/",
+    "license_evidence": "https://gooseberry.blender.org/sharing/",
+    "attribution": "Cosmos Laundromat © Blender Foundation | gooseberry.blender.org | CC BY 3.0",
+    "plot": "On a windswept island, a mysterious salesman offers Franck a chance at another life."
+  },
+  {
+    "title": "The Great Train Robbery",
+    "year": 1903,
+    "genre": "Western",
+    "still_seconds": 300,
+    "minimum_duration": 695,
+    "source": "https://upload.wikimedia.org/wikipedia/commons/1/1d/The_Great_Train_Robbery_1903.webm",
+    "license": "https://commons.wikimedia.org/wiki/File:The_Great_Train_Robbery_1903.webm#Licensing",
+    "license_evidence": "https://www.loc.gov/item/00694220/",
+    "license_note": "Original 1903 US film by Edwin S. Porter (died 1941); Commons records public-domain status. Discard the upload soundtrack: no rights to a later musical recording are asserted.",
+    "attribution": "The Great Train Robbery (1903), Edwin S. Porter / Edison Manufacturing Co. Film preserved by the Library of Congress; source copy via Wikimedia Commons.",
+    "plot": "Bandits hold up a train and flee into the countryside in this pioneering silent Western.",
+    "silent_original": true
+  }
+]

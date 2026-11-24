@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Support (Apple RequestsView.swift HomeUtilityView .support): choose an
+  issue, name the title, describe what happened, agree to sharing, then
+  Send report. One POST per report; replies arrive under the bell.
+-->
+<component name="SupportScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/SupportScreen.brs" />
+  <children>
+    <Group translation="[580,150]">
+      <Label id="title" text="How can we help?" color="0xF5F7F5FF" />
+      <Label id="intro" translation="[0,52]" width="760" wrap="true" color="0xBBC5BDFF"
+        text="Send an issue to your server’s support agent. Replies appear under the notification bell." />
+      <Group id="form" translation="[0,130]">
+        <MenuList id="issue" width="760" />
+        <Field id="media" translation="[0,80]" width="760" label="Movie, show or channel (optional)" placeholder="Title or channel name" />
+        <Field id="description" translation="[0,214]" width="760" label="What happened?" placeholder="Describe the issue" />
+        <Label id="sender" translation="[0,354]" color="0xF5F7F5FF" />
+        <Label id="consentText" translation="[0,390]" width="760" wrap="true" color="0xBBC5BDFF"
+          text="Your report, affected title and account context go to this server’s administrators and support service. The service may send them to its configured AI support provider and consult relevant server diagnostics. Ask your server owner about that provider before sending sensitive information. Leave out passwords and payment details." />
+        <MenuList id="consent" translation="[0,530]" width="760" />
+        <ButtonBar id="send" translation="[0,610]" />
+      </Group>
+      <Group id="result" visible="false" translation="[0,130]">
+        <Poster id="resultIcon" width="32" height="32" blendColor="0x72E79BFF" />
+        <Label id="resultTitle" translation="[44,0]" height="32" vertAlign="center" color="0x72E79BFF" />
+        <Label id="resultDetail" translation="[0,52]" width="760" wrap="true" color="0xBBC5BDFF" />
+        <ButtonBar id="again" translation="[0,180]" />
+      </Group>
+    </Group>
+  </children>
+</component>

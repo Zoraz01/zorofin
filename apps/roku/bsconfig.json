@@ -1,0 +1,16 @@
+{
+  "rootDir": ".",
+  "files": [
+    "manifest",
+    "source/**/*",
+    "components/**/*",
+    "images/**/*",
+    "fonts/*.ttf"
+  ],
+  "stagingDir": "out/staging",
+  "retainStagingDir": false,
+  "createPackage": false,
+  "diagnosticFilters": [],
+  "plugins": [],
+  "autoImportComponentScript": false
+}

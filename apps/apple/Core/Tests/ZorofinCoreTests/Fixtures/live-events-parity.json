@@ -1,0 +1,1074 @@
+{
+  "now": "2026-10-12T18:00:00.000Z",
+  "cases": [
+    {
+      "name": "ranking and CFL",
+      "channels": [
+        {
+          "Id": "channel-1",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "1",
+          "CurrentProgram": {
+            "Name": "Live: Cricket",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-2",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "2",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-3",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "3",
+          "CurrentProgram": {
+            "Name": "Live: NBA Basketball",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-4",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "4",
+          "CurrentProgram": {
+            "Name": "Live: NFL Football",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-5",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "5",
+          "CurrentProgram": {
+            "Name": "Live: CFL Football",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-6",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "6",
+          "CurrentProgram": {
+            "Name": "Live: Baseball",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-7",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "7",
+          "CurrentProgram": {
+            "Name": "Live: NHL Hockey",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-8",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "8",
+          "CurrentProgram": {
+            "Name": "Live: Tennis",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-9",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "9",
+          "CurrentProgram": {
+            "Name": "Live: Golf",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-10",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "10",
+          "CurrentProgram": {
+            "Name": "Live: Formula One",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-11",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "11",
+          "CurrentProgram": {
+            "Name": "Live: Boxing",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-12",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "12",
+          "CurrentProgram": {
+            "Name": "Live: Opening Ceremony",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-4",
+          "title": "NFL Football",
+          "sport": "football",
+          "competition": "Football"
+        },
+        {
+          "id": "channel-3",
+          "title": "NBA Basketball",
+          "sport": "basketball",
+          "competition": "Basketball"
+        },
+        {
+          "id": "channel-2",
+          "title": "Soccer",
+          "sport": "soccer",
+          "competition": "Soccer"
+        },
+        {
+          "id": "channel-5",
+          "title": "CFL Football",
+          "sport": "football",
+          "competition": "Football"
+        },
+        {
+          "id": "channel-6",
+          "title": "Baseball",
+          "sport": "baseball",
+          "competition": "Baseball"
+        },
+        {
+          "id": "channel-7",
+          "title": "NHL Hockey",
+          "sport": "hockey",
+          "competition": "Hockey"
+        },
+        {
+          "id": "channel-1",
+          "title": "Cricket",
+          "sport": "cricket",
+          "competition": "Cricket"
+        },
+        {
+          "id": "channel-8",
+          "title": "Tennis",
+          "sport": "tennis",
+          "competition": "Tennis"
+        },
+        {
+          "id": "channel-9",
+          "title": "Golf",
+          "sport": "golf",
+          "competition": "Golf"
+        },
+        {
+          "id": "channel-10",
+          "title": "Formula One",
+          "sport": "racing",
+          "competition": "Motorsport"
+        },
+        {
+          "id": "channel-11",
+          "title": "Boxing",
+          "sport": "combat",
+          "competition": "Fight night"
+        },
+        {
+          "id": "channel-12",
+          "title": "Opening Ceremony",
+          "sport": "event",
+          "competition": "Live event"
+        }
+      ]
+    },
+    {
+      "name": "exclude SEC Now",
+      "channels": [
+        {
+          "Id": "channel-13",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "13",
+          "CurrentProgram": {
+            "Name": "Live: SEC Now — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude B1G Live",
+      "channels": [
+        {
+          "Id": "channel-14",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "14",
+          "CurrentProgram": {
+            "Name": "Live: B1G Live — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude MLB Now",
+      "channels": [
+        {
+          "Id": "channel-15",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "15",
+          "CurrentProgram": {
+            "Name": "Live: MLB Now — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude MLB Tonight",
+      "channels": [
+        {
+          "Id": "channel-16",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "16",
+          "CurrentProgram": {
+            "Name": "Live: MLB Tonight — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude NBA Today",
+      "channels": [
+        {
+          "Id": "channel-17",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "17",
+          "CurrentProgram": {
+            "Name": "Live: NBA Today — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude NFL Live",
+      "channels": [
+        {
+          "Id": "channel-18",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "18",
+          "CurrentProgram": {
+            "Name": "Live: NFL Live — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude SportsCenter",
+      "channels": [
+        {
+          "Id": "channel-19",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "19",
+          "CurrentProgram": {
+            "Name": "Live: SportsCenter — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude Premier League Live",
+      "channels": [
+        {
+          "Id": "channel-20",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "20",
+          "CurrentProgram": {
+            "Name": "Live: Premier League Live — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude Big Day With Peter Schrager",
+      "channels": [
+        {
+          "Id": "channel-21",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "21",
+          "CurrentProgram": {
+            "Name": "Live: Big Day With Peter Schrager — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude Tiki + Tierney",
+      "channels": [
+        {
+          "Id": "channel-22",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "22",
+          "CurrentProgram": {
+            "Name": "Live: Tiki + Tierney — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude CPL Matchday Live",
+      "channels": [
+        {
+          "Id": "channel-23",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "23",
+          "CurrentProgram": {
+            "Name": "Live: CPL Matchday Live — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude Monday Night Countdown",
+      "channels": [
+        {
+          "Id": "channel-24",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "24",
+          "CurrentProgram": {
+            "Name": "Live: Monday Night Countdown — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude College Football Highlights",
+      "channels": [
+        {
+          "Id": "channel-25",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "25",
+          "CurrentProgram": {
+            "Name": "Live: College Football Highlights — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "exclude Nuggets Postgame Live",
+      "channels": [
+        {
+          "Id": "channel-26",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "26",
+          "CurrentProgram": {
+            "Name": "Live: Nuggets Postgame Live — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "sports flag is insufficient Law & Order",
+      "channels": [
+        {
+          "Id": "channel-27",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "27",
+          "CurrentProgram": {
+            "Name": "Law & Order",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "sports flag is insufficient College Football",
+      "channels": [
+        {
+          "Id": "channel-28",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "28",
+          "CurrentProgram": {
+            "Name": "College Football",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "sports flag is insufficient US| UFC HD",
+      "channels": [
+        {
+          "Id": "channel-29",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "29",
+          "CurrentProgram": {
+            "Name": "US| UFC HD",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "sports flag is insufficient NBA TV",
+      "channels": [
+        {
+          "Id": "channel-30",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "30",
+          "CurrentProgram": {
+            "Name": "NBA TV",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "sports flag is insufficient ESPN News",
+      "channels": [
+        {
+          "Id": "channel-31",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "31",
+          "CurrentProgram": {
+            "Name": "ESPN News",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsSports": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "repeat",
+      "channels": [
+        {
+          "Id": "channel-32",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "32",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsRepeat": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "notLive",
+      "channels": [
+        {
+          "Id": "channel-33",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "33",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsLive": false
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "noEnd",
+      "channels": [
+        {
+          "Id": "channel-34",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "34",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": null
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "invalidStart",
+      "channels": [
+        {
+          "Id": "channel-35",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "35",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "invalid",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "future",
+      "channels": [
+        {
+          "Id": "channel-36",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "36",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T18:00:01.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "ended",
+      "channels": [
+        {
+          "Id": "channel-37",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "37",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T18:00:00.000Z"
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "allDay",
+      "channels": [
+        {
+          "Id": "channel-38",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "38",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-11T18:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "discussion",
+      "channels": [
+        {
+          "Id": "channel-39",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "39",
+          "CurrentProgram": {
+            "Name": "Live: Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "A preview show with studio analysis."
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "explicit live flag",
+      "channels": [
+        {
+          "Id": "channel-40",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "40",
+          "CurrentProgram": {
+            "Name": "Soccer",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsLive": true
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-40",
+          "title": "Soccer",
+          "sport": "soccer",
+          "competition": "Soccer"
+        }
+      ]
+    },
+    {
+      "name": "unproven scoreboard suffix",
+      "channels": [
+        {
+          "Id": "channel-41",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "41",
+          "CurrentProgram": {
+            "Name": "Live: Premier League Soccer — Newcastle United vs Coventry City",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "An unrelated match."
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-41",
+          "title": "Premier League Soccer",
+          "sport": "soccer",
+          "competition": "Soccer"
+        }
+      ]
+    },
+    {
+      "name": "grounded scoreboard suffix",
+      "channels": [
+        {
+          "Id": "channel-42",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "42",
+          "CurrentProgram": {
+            "Name": "Live: Premier League Soccer — Newcastle United vs Coventry City",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "Coventry City hosts Newcastle United."
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-42",
+          "title": "Newcastle United vs Coventry City",
+          "sport": "soccer",
+          "competition": "Premier League Soccer"
+        }
+      ]
+    },
+    {
+      "name": "overlapping team evidence",
+      "channels": [
+        {
+          "Id": "channel-43",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "43",
+          "CurrentProgram": {
+            "Name": "Live: Soccer — York vs New York",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "New York plays today."
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-43",
+          "title": "Soccer",
+          "sport": "soccer",
+          "competition": "Soccer"
+        }
+      ]
+    },
+    {
+      "name": "favorite simulcast wins",
+      "channels": [
+        {
+          "Id": "channel-44",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "44",
+          "CurrentProgram": {
+            "Name": "Live: NFL Football — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "Alpha Team hosts Beta Team."
+          }
+        },
+        {
+          "Id": "favorite",
+          "Name": "Other Network",
+          "Type": "TvChannel",
+          "ChannelNumber": "44",
+          "CurrentProgram": {
+            "Name": "Live: NFL Football — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "Alpha Team hosts Beta Team."
+          },
+          "UserData": {
+            "IsFavorite": true
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "favorite",
+          "title": "Alpha Team vs Beta Team",
+          "sport": "football",
+          "competition": "NFL Football"
+        }
+      ]
+    },
+    {
+      "name": "different windows stay separate",
+      "channels": [
+        {
+          "Id": "channel-44",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "44",
+          "CurrentProgram": {
+            "Name": "Live: NFL Football — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "Alpha Team hosts Beta Team."
+          }
+        },
+        {
+          "Id": "later",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "44",
+          "CurrentProgram": {
+            "Name": "Live: NFL Football — Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T20:00:00.000Z",
+            "Overview": "Alpha Team hosts Beta Team."
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-44",
+          "title": "Alpha Team vs Beta Team",
+          "sport": "football",
+          "competition": "NFL Football"
+        },
+        {
+          "id": "later",
+          "title": "Alpha Team vs Beta Team",
+          "sport": "football",
+          "competition": "NFL Football"
+        }
+      ]
+    },
+    {
+      "name": "generic competitions stay separate",
+      "channels": [
+        {
+          "Id": "channel-45",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "45",
+          "CurrentProgram": {
+            "Name": "Live: College Football",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-46",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "46",
+          "CurrentProgram": {
+            "Name": "Live: College Football",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-45",
+          "title": "College Football",
+          "sport": "football",
+          "competition": "Football"
+        },
+        {
+          "id": "channel-46",
+          "title": "College Football",
+          "sport": "football",
+          "competition": "Football"
+        }
+      ]
+    },
+    {
+      "name": "event labels",
+      "channels": [
+        {
+          "Id": "channel-47",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "47",
+          "CurrentProgram": {
+            "Name": "Live: Opening Ceremony",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-48",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "48",
+          "CurrentProgram": {
+            "Name": "Live: Something",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-49",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "49",
+          "CurrentProgram": {
+            "Name": "Live: Alpha Team vs Beta Team",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-47",
+          "title": "Opening Ceremony",
+          "sport": "event",
+          "competition": "Live event"
+        },
+        {
+          "id": "channel-49",
+          "title": "Alpha Team vs Beta Team",
+          "sport": "event",
+          "competition": "Live event"
+        }
+      ]
+    },
+    {
+      "name": "Championship guide labels",
+      "channels": [
+        {
+          "Id": "channel-50",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "50",
+          "CurrentProgram": {
+            "Name": "Live: EFL Championship",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-51",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "51",
+          "CurrentProgram": {
+            "Name": "Live: English League Championship",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        },
+        {
+          "Id": "channel-52",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "52",
+          "CurrentProgram": {
+            "Name": "Live: English Championship",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-50",
+          "title": "EFL Championship",
+          "sport": "soccer",
+          "competition": "Soccer"
+        },
+        {
+          "id": "channel-51",
+          "title": "English League Championship",
+          "sport": "soccer",
+          "competition": "Soccer"
+        },
+        {
+          "id": "channel-52",
+          "title": "English Championship",
+          "sport": "soccer",
+          "competition": "Soccer"
+        }
+      ]
+    },
+    {
+      "name": "channel branding is not an event",
+      "channels": [
+        {
+          "Id": "channel-53",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "53",
+          "CurrentProgram": {
+            "Name": "Fixture Sports",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "IsLive": true
+          }
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "unicode teams",
+      "channels": [
+        {
+          "Id": "channel-54",
+          "Name": "Fixture Sports",
+          "Type": "TvChannel",
+          "ChannelNumber": "54",
+          "CurrentProgram": {
+            "Name": "Live: Soccer — Bodø Glimt vs København",
+            "StartDate": "2026-10-12T17:00:00.000Z",
+            "EndDate": "2026-10-12T19:00:00.000Z",
+            "Overview": "København visits Bodø Glimt."
+          }
+        }
+      ],
+      "expected": [
+        {
+          "id": "channel-54",
+          "title": "Bodø Glimt vs København",
+          "sport": "soccer",
+          "competition": "Soccer"
+        }
+      ]
+    }
+  ]
+}

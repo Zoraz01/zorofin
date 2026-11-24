@@ -1,0 +1,22 @@
+{
+    "id": "org.zorofin.tv",
+    "version": "0.1.0",
+    "vendor": "Zorofin",
+    "type": "native",
+    "main": "zorofin_tv",
+    "title": "Zorofin",
+    "icon": "icon.png",
+    "iconColor": "#111513",
+    "largeIcon": "largeIcon.png",
+    "bgColor": "#111513",
+    "handlesRelaunch": true,
+    "visible": true,
+    "defaultWindowType": "card",
+    "trustLevel": "default",
+    "locationHint": "none",
+    "noSplashOnLaunch": true,
+    "spinnerOnLaunch": false,
+    "transparent": true,
+    "uiRevision": 2,
+    "requiredACG": []
+}

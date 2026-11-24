@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Apple TV account popover (Shell.swift TVProfilePopover), under the avatar:
+  saved accounts with a check on the current one, Change server, Quick
+  Connect, Watch together when the server allows it, then Settings.
+  Emits action = { type: switch | servers | quickConnect | watchTogether | settings | close, key? }.
+-->
+<component name="AccountMenu" extends="Group">
+  <interface>
+    <field id="accounts" type="array" />
+    <field id="currentKey" type="string" />
+    <field id="serverName" type="string" />
+    <field id="userImage" type="string" />
+    <field id="userName" type="string" />
+    <field id="watchTogether" type="boolean" value="false" />
+    <field id="action" type="assocarray" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
+    <function name="refresh" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/AccountMenu.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x0000002E" />
+    <Group id="card">
+      <Poster id="bg" uri="pkg:/images/popover.9.png" blendColor="0x262E2AF5" />
+      <Poster id="edge" uri="pkg:/images/popover_hair.9.png" blendColor="0xFFFFFF29" />
+      <Poster id="avatarBg" uri="pkg:/images/circle.png" width="40" height="40" translation="[20,16]" blendColor="0x24543EFF" />
+      <Label id="initial" width="40" height="40" translation="[20,16]" horizAlign="center" vertAlign="center" color="0xE6FFEFFF" />
+      <Poster id="avatar" width="40" height="40" translation="[20,16]" loadDisplayMode="scaleToZoom" />
+      <Poster id="avatarMask" uri="pkg:/images/circle_mask.png" width="40" height="40" translation="[20,16]" blendColor="0x262E2AFF" />
+      <Label id="server" translation="[72,16]" height="40" vertAlign="center" color="0xF5F7F5FF" />
+      <Rectangle id="topLine" height="1" translation="[0,72]" color="0x39423CFF" />
+      <MenuList id="list" translation="[16,88]" />
+    </Group>
+  </children>
+</component>

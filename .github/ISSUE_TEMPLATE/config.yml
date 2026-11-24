@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/Zoraz01/zorofin/discussions
+    about: Ask how something works or float an idea before opening an issue.
+  - name: Server-side features (Requests, alerts, home rows)
+    url: https://github.com/Zoraz01/jellyfin-plugin-zorofin/issues
+    about: Problems with the Zorofin Jellyfin plugin belong in its repository.
+  - name: Setup guides and downloads
+    url: https://zorofin.app
+    about: Installing the apps and connecting your server.

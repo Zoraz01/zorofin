@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Title details laid out like the Apple TV DetailView: artwork on the left;
+  kind, title, metadata, quality badges, Play plus icon actions and the
+  synopsis on the right; then Genres, Seasons & episodes, Cast & Crew and
+  More Like This, scrolling under the header as focus moves down.
+-->
+<component name="DetailScreen" extends="Group">
+  <interface>
+    <field id="autoplay" type="boolean" />
+    <field id="itemId" type="string" onChange="load" />
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+    <field id="resumed" type="boolean" alwaysNotify="true" onChange="onResumed" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/Page.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveTvStreams.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/DetailScreen.brs" />
+  <children>
+    <Group id="page">
+      <Group id="overview">
+        <Poster id="art" loadDisplayMode="scaleToZoom" />
+        <Poster id="artCorners" uri="pkg:/images/corners.9.png" />
+        <Group id="column">
+          <Poster id="kindDot" uri="pkg:/images/circle.png" width="14" height="14" blendColor="0x72E79BFF" />
+          <Label id="kind" color="0x72E79BFF" />
+          <Label id="title" wrap="true" maxLines="2" color="0xF5F7F5FF" />
+          <Label id="episodeLabel" color="0xBBC5BDFF" />
+          <Group id="meta" />
+          <Group id="rating">
+            <Poster id="ratingStar" uri="pkg:/images/icons/star-filled.png" width="24" height="24" translation="[0,3]" blendColor="0xFFD60AFF" />
+            <Label id="ratingText" translation="[32,0]" height="30" vertAlign="center" color="0xFFD60AFF" />
+          </Group>
+          <Label id="nextLabel" color="0xBBC5BDFF" />
+          <Group id="badges" />
+          <ButtonBar id="actions" />
+          <Group id="liveLine" visible="false">
+            <Poster id="liveHalo" uri="pkg:/images/badge.9.png" width="18" height="18" translation="[0,9]" />
+            <Poster id="liveDot" uri="pkg:/images/badge.9.png" width="10" height="10" translation="[4,13]" />
+            <Label id="liveText" translation="[32,0]" width="1200" height="36" vertAlign="center" color="0xF5F7F5FF" />
+          </Group>
+          <Label id="tagline" wrap="true" maxLines="2" color="0xF5F7F5FF" />
+          <Label id="synopsis" wrap="true" maxLines="8" lineSpacing="5" color="0xBBC5BDFF" />
+        </Group>
+      </Group>
+    </Group>
+    <Timer id="streamsTimer" duration="15" repeat="true" />
+    <Label id="status" translation="[160,440]" width="1600" height="200" wrap="true" horizAlign="center" vertAlign="center" color="0xBBC5BDFF" />
+  </children>
+</component>

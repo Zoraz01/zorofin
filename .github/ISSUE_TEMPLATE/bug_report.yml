@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in a Zorofin app doesn't work as it should
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please blur server addresses, account names and anything personal in screenshots.
+        Security problems go through the Security tab instead (see SECURITY.md).
+  - type: dropdown
+    id: platform
+    attributes:
+      label: App
+      options:
+        - iPhone / iPad
+        - Apple TV
+        - Android TV / Google TV
+        - Fire TV
+        - Android phone or tablet
+        - LG webOS
+        - Samsung Tizen (2020 and newer)
+        - Samsung older TV (Tizen 3.0 to 5.5)
+        - Roku
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Profile, then About, shows it.
+      placeholder: "1.5 (72)"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS version
+      placeholder: "Apple TV 4K (3rd gen), tvOS 27.1"
+  - type: input
+    id: jellyfin
+    attributes:
+      label: Jellyfin server version, and whether the Zorofin plugin is installed
+      placeholder: "10.11.4, no plugin"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots, video or media details
+      description: For playback problems, the file's container, video and audio codecs (Jellyfin's Media Info) help a lot.

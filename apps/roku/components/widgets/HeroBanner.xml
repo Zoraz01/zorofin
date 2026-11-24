@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Apple TV Home banner (LibraryViews.swift HeroView): a 480 px card with
+  24 px corners, the title's backdrop under a dark bottom shade, then the
+  title, metadata, two lines of overview, Play or Resume, details and
+  favorite. Emits action = play | info | favorite.
+-->
+<component name="HeroBanner" extends="Group">
+  <interface>
+    <field id="item" type="node" onChange="onItem" />
+    <field id="favorite" type="boolean" onChange="paintFavorite" />
+    <field id="action" type="string" alwaysNotify="true" />
+    <field id="height" type="integer" value="480" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/HeroBanner.brs" />
+  <children>
+    <Rectangle id="base" width="1728" height="480" color="0x1B211EFF" />
+    <!-- The whole 16:9 backdrop at screen size, cropped toward its top
+         (faces sit high in backdrops) instead of through the middle. -->
+    <Group clippingRect="[0,0,1728,480]">
+      <Poster id="art" translation="[0,-120]" width="1728" height="972" loadWidth="1728" loadHeight="972" loadDisplayMode="scaleToZoom" />
+    </Group>
+    <Poster id="shade" uri="pkg:/images/hero_shade.png" width="1728" height="480" />
+    <Poster id="corners" uri="pkg:/images/corners24.9.png" width="1728" height="480" />
+    <Group id="info" translation="[40,0]">
+      <Label id="title" width="1300" wrap="true" maxLines="2" color="0xF5F7F5FF" />
+      <Group id="meta" />
+      <Label id="overview" width="620" wrap="true" maxLines="2" color="0xBBC5BDFF" />
+      <ButtonBar id="actions" spacing="12" />
+    </Group>
+  </children>
+</component>
