@@ -19,7 +19,7 @@ jobs:
       run:
         working-directory: apps/tv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Pinned to the Flutter release the LG flutter-webos SDK targets.
       - uses: subosito/flutter-action@v2
         with:
