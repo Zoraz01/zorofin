@@ -7,6 +7,6 @@
     "package": "tool/package_wgt.sh"
   },
   "devDependencies": {
-    "acorn": "8.14.0"
+    "acorn": "8.19.0"
   }
 }
