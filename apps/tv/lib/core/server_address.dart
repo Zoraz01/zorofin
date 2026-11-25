@@ -66,7 +66,7 @@ class ServerAddress {
     'allowsLocalHttp': allowsLocalHttp,
   };
 
-  static final _component = RegExp(r'^[A-Za-z0-9_-]+$');
+  static final _component = RegExp(r'^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$');
 
   /// Builds an API URL from strictly validated path components.
   Uri endpoint(List<String> path, [Map<String, String> query = const {}]) {

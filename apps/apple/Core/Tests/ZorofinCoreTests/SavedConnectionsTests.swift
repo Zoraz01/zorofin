@@ -7,6 +7,17 @@ private func connection(_ url: String = "https://one.example/jellyfin", user: St
 }
 
 @Suite("Saved servers and account isolation") struct SavedConnectionsTests {
+    @Test func phonesReopenTheLastAccountWhileSharedTVsAskWhoIsWatching() throws {
+        var saved = SavedConnections()
+        #expect(saved.launchSession(sharedDevice: false) == nil)
+        saved.remember(try connection(user: "a", token: "token-a"), serverName: "One")
+        #expect(saved.launchSession(sharedDevice: true)?.token == "token-a")
+        saved.remember(try connection(user: "b", token: "token-b"), serverName: "One")
+        #expect(saved.launchSession(sharedDevice: false)?.token == "token-b")
+        #expect(saved.launchSession(sharedDevice: true) == nil)
+        saved.clearSelection()
+        #expect(saved.launchSession(sharedDevice: false) == nil)
+    }
     @Test func migratesSingleSessionWithoutLosingCredentialsOrDeviceIdentity() throws {
         let original = try connection()
         let legacy = try JSONEncoder().encode(original)

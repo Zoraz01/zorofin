@@ -1,22 +1,36 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/catalog.dart';
+import '../../core/device_playback.dart';
+import '../../core/adaptive_quality.dart';
 import '../../core/errors.dart';
 import '../../core/models.dart';
+import '../../core/ass.dart';
+import '../../core/pgs.dart';
 import '../../core/playback.dart';
+import '../../core/playback_capabilities.dart';
+import '../../core/playback_recovery.dart';
+import '../../core/playback_reports.dart';
+import '../../extras_state.dart';
+import '../../core/player_extras.dart';
 import '../../core/preferences.dart';
 import '../../core/server_extras.dart';
 import '../../core/viewer_settings.dart';
 import '../../watch_together.dart';
 import '../player/player_controls.dart';
+import '../player/in_app_player.dart';
 import '../player/player_panels.dart';
+import '../player/player_extras_ui.dart';
 import '../theme.dart';
 import '../widgets/focusable.dart';
 import '../widgets/live_tv_notice.dart';
+import '../widgets/ass_overlay.dart';
+import '../widgets/pgs_overlay.dart';
 import '../widgets/subtitle_text.dart';
 import 'detail_screen.dart';
 import 'settings_screen.dart';
@@ -39,6 +53,7 @@ class PlayerScreen extends StatefulWidget {
     this.liveCapacityCheck = false,
     this.liveStreamsCheck = false,
     this.group,
+    this.presentation,
   });
 
   final JellyfinCatalog catalog;
@@ -59,6 +74,7 @@ class PlayerScreen extends StatefulWidget {
   /// Watch together: while joined, the group's server drives play, pause
   /// and seek.
   final WatchTogether? group;
+  final PlayerPresentation? presentation;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -68,13 +84,23 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   static const _reportEvery = Duration(seconds: 10);
   static const _hideAfter = Duration(seconds: 4);
   static const _upNextSeconds = 5;
+  static const _samsungOpenTimeout = Duration(seconds: 20);
+  static const _samsungCommandTimeout = Duration(seconds: 8);
+  static const _samsungReleaseTimeout = Duration(seconds: 2);
 
   late MediaItem _item = widget.item;
   late PlaybackOptions _options;
+  PlaybackDiagnostics? _diagnostics;
+  AdaptiveQuality? _adaptive;
+  Timer? _adaptiveTimer;
+  bool _autoQuality = true;
+  bool _adapting = false;
   late Preferences? _prefs;
   bool _started = false;
+  bool _streamReady = false;
 
   VideoPlayerController? _video;
+  VideoPlayerController? _pendingSamsungSeek;
   PlaybackPlan? _plan;
   PlayerPhase _phase = PlayerPhase.preparing;
   String? _error;
@@ -82,6 +108,7 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   /// Transcoded streams begin at the requested position, so the player's
   /// clock is offset from the title's timeline.
   Duration _offset = Duration.zero;
+  Duration _lastGoodPosition = Duration.zero;
 
   /// Bumped on every stream change so late results of an older one are dropped.
   int _generation = 0;
@@ -89,6 +116,7 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   bool _endHandled = false;
 
   bool _controls = true;
+  final _seasonMenu = MenuController();
   Timer? _hide;
   Timer? _reporter;
 
@@ -115,9 +143,119 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   /// Cues of the text subtitle being drawn, on the title's own timeline.
   List<Caption> _captions = const [];
 
+  /// Blu-ray image subtitles drawn on the device, on the title's timeline.
+  PgsSubtitles? _pgs;
+  String? _pgsStatus;
+  static const _pgsLoading = 'Loading Blu-ray subtitles';
+  int _captionRequest = 0;
+
+  /// Styled (ASS/SSA) subtitles drawn with their own look.
+  AssSubtitles? _ass;
+
+  /// Chapters and scrub thumbnails of the open title.
+  PlayerExtras _extras = PlayerExtras.none;
+
+  /// The show's (or movie's) remembered tracks and subtitle timing.
+  TrackMemory? _memory;
+
+  /// Positive: subtitles appear later than the file says.
+  Duration _subtitleOffset = Duration.zero;
+
+  /// Where subtitles are read from: the picture's time, shifted.
+  Duration get _subtitleClock => _position - _subtitleOffset;
+
+  Future<void> _loadExtras(MediaItem item, int generation) async {
+    if (item.isLive) return;
+    try {
+      final extras = await widget.catalog.client.playerExtras(
+        item.id,
+        mediaSourceId: _plan?.source?.id,
+      );
+      if (mounted && generation == _generation) {
+        final chapters = _prefs?.value.showChapters ?? false;
+        setState(() => _extras = chapters ? extras : extras.withoutChapters());
+      }
+    } catch (_) {
+      // Optional: the player works without chapters or thumbnails.
+    }
+  }
+
+  void _remember({MediaStream? audio, MediaStream? subtitle, bool? off}) {
+    final prefs = _prefs;
+    if (prefs == null || _item.isLive) return;
+    final next = (_memory ?? const TrackMemory()).choosing(
+      audio: audio,
+      subtitle: subtitle,
+      off: off,
+    );
+    _memory = next;
+    unawaited(prefs.rememberTracks(TrackMemory.keyFor(_item), next));
+  }
+
+  void _setSubtitleOffset(Duration offset) {
+    setState(() => _subtitleOffset = offset);
+    final prefs = _prefs;
+    if (prefs == null || _item.isLive) return;
+    final next = (_memory ?? const TrackMemory()).withOffsets(subtitle: offset);
+    _memory = next;
+    unawaited(prefs.rememberTracks(TrackMemory.keyFor(_item), next));
+  }
+
+  ImageProvider _trickplaySheet(int sheet) {
+    final client = widget.catalog.client;
+    return NetworkImage(
+      _extras.trickplay!
+          .sheetUrl(
+            client.server,
+            _item.id,
+            sheet,
+            mediaSourceId: _plan?.source?.id,
+          )
+          .toString(),
+      headers: client.authHeaders,
+    );
+  }
+
+  ImageProvider? _chapterImage(int index) {
+    final chapter = _extras.chapters[index];
+    final tag = chapter.imageTag;
+    if (tag == null) return null;
+    final client = widget.catalog.client;
+    return NetworkImage(
+      client.chapterImage(_item.id, chapter.imageIndex, tag).toString(),
+      headers: client.authHeaders,
+    );
+  }
+
+  Widget _scrubPreview(Duration at) {
+    final chapters = _extras.chapters;
+    final index = Chapter.indexAt(chapters, at);
+    return ScrubPreview(
+      position: at,
+      trickplay: _extras.trickplay,
+      sheet: _extras.trickplay == null ? null : _trickplaySheet,
+      chapter: index == null ? null : chapters[index].name,
+    );
+  }
+
   /// Watch together: a menu or scrub holds this device out of the group.
   bool _suspended = false;
   Timer? _buffering;
+
+  /// Problems this player tells the server about, when the server collects
+  /// them and the viewer left reporting on.
+  PlayerProblems? _problems;
+  ExtrasState? _serverExtras;
+  String get _reportMethod =>
+      playbackReportMethod(_plan?.method, live: _item.isLive);
+  void _problem(PlaybackProblem problem, {String reason = ''}) =>
+      _problems?.report(
+        problem,
+        _item,
+        _reportMethod,
+        reason: reason,
+        position: _item.isLive ? null : _lastGoodPosition,
+      );
   Timer? _drift;
 
   /// Pauses when the TV switches to another app or input, if the viewer
@@ -132,7 +270,36 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     _reveal(stay: true);
   }
 
+  bool get _mini => widget.presentation?.minimized ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    final presentation = widget.presentation;
+    presentation?.onBack = _back;
+    presentation?.onStop = _close;
+    presentation?.onExpanded = () {
+      if (!mounted) return;
+      _reveal(stay: true);
+      _playFocus.requestFocus();
+    };
+    presentation?.addListener(_presentationChanged);
+  }
+
+  void _presentationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _minimize() {
+    _hide?.cancel();
+    setState(() => _controls = false);
+    widget.presentation?.minimize();
+  }
+
   final _playFocus = FocusNode(debugLabel: 'player-play');
+  final _miniPlayFocus = FocusNode(debugLabel: 'mini-play');
+  final _miniExpandFocus = FocusNode(debugLabel: 'mini-expand');
+  final _miniCloseFocus = FocusNode(debugLabel: 'mini-close');
 
   /// The control that opened the options card, refocused when it closes.
   FocusNode? _panelOrigin;
@@ -144,12 +311,27 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     if (_started) return;
     _started = true;
     _prefs = Preferences.maybeOf(context);
+    _serverExtras = ExtrasScope.maybeOf(context);
+    _problems = PlayerProblems(
+      PlaybackReporter(
+        client: widget.catalog.client,
+        platform: DevicePlayback.isSamsungTv ? 'Samsung TV' : 'Android TV',
+        enabled: () =>
+            (_serverExtras?.features.playbackReports ?? false) &&
+            (_prefs?.value.sendPlaybackReports ?? true),
+      ),
+    );
     _options = PlaybackOptions(
       startTicks: widget.startTicks ?? widget.item.resumeTicks,
       bitrate: _prefs?.bitrate ?? 40000000,
       audioIndex: widget.audioIndex,
       subtitleIndex: widget.subtitleIndex,
       burnSubtitles: widget.burnSubtitles,
+    );
+    _adaptive = AdaptiveQuality(_options.bitrate);
+    _adaptiveTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _adaptQuality(),
     );
     _lifecycle;
     widget.group?.addListener(_groupChanged);
@@ -286,25 +468,60 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
 
   // Stream lifecycle
 
+  Future<T> _nativeOperation<T>(Future<T> operation, Duration timeout) =>
+      DevicePlayback.isSamsungTv ? operation.timeout(timeout) : operation;
+
+  /// How long a stream may take to open before the player gives up, so a
+  /// stream the device can't start never sits on "Preparing video".
+  static const _openTimeout = Duration(seconds: 45);
+
+  List<IntroSegment> _intros = const [];
+
+  Future<void> _loadIntros(String id, int generation) async {
+    try {
+      final markers = await widget.catalog.client.introSegments(id);
+      if (mounted && generation == _generation) {
+        setState(() => _intros = markers);
+      }
+    } catch (_) {
+      // Older servers and episodes without markers use the ordinary transport.
+    }
+  }
+
   Future<void> _open(
     MediaItem item,
     PlaybackOptions options, {
     bool resume = true,
   }) async {
+    if (item.id != _item.id) options = options.copyWith(allowDirectPlay: true);
     final generation = ++_generation;
+    _stall?.cancel();
+    _serverWait.cancel();
     await _teardown();
     if (!mounted || generation != _generation) return;
+    if (item.id != _item.id || _memory == null) {
+      _memory = item.isLive
+          ? null
+          : _prefs?.trackMemory(TrackMemory.keyFor(item));
+      _subtitleOffset = _memory?.subtitleOffset ?? Duration.zero;
+    }
+    if (item.id != _item.id) _extras = PlayerExtras.none;
     setState(() {
+      _intros = const [];
       _item = item;
       _options = options;
       _phase = PlayerPhase.preparing;
+      _streamReady = false;
+      _lastGoodPosition = MediaTime.duration(options.startTicks);
       _error = null;
+      _diagnostics = null;
       _endHandled = false;
       _upNext = null;
       _countdown = null;
     });
     _countdownTimer?.cancel();
     _guideTimer?.cancel();
+    _problems?.opening();
     if (item.isLive) {
       if (_guide.isNotEmpty && _guide.first.channelId != item.id) {
         _guide = const [];
@@ -316,6 +533,21 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
       );
     }
     try {
+      if (options.allowDirectPlay) {
+        options = options.withDeviceCapabilities(
+          await DevicePlayback.detect(),
+          item,
+        );
+      }
+      options = options.copyWith(
+        selectAudioOnDevice:
+            options.allowDirectPlay &&
+            options.capabilities.detected &&
+            DevicePlayback.supportsLocalAudioSelection &&
+            !item.isLive &&
+            _group == null,
+      );
+      if (!mounted || generation != _generation) return;
       if (item.isLive && options.subtitleIndex == PlaybackOptions.automatic) {
         options = options.copyWith(subtitleIndex: -1);
       }
@@ -327,73 +559,302 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
           plan.source,
           audioIndex: options.audioIndex,
         );
+        // What the viewer picked earlier in this show wins over the account
+        // defaults, where this episode has a track in that language.
+        final remembered = options.audioIndex == null
+            ? _memory?.pick(plan.streams)
+            : null;
+        final audioChoice = remembered?.audio ?? choice.audio;
+        final subtitleChoice = remembered?.subtitle ?? choice.subtitle;
         final subtitle = plan.streams
-            .where((s) => s.type == 'Subtitle' && s.index == choice.subtitle)
+            .where((s) => s.type == 'Subtitle' && s.index == subtitleChoice)
             .firstOrNull;
         options = options.copyWith(
-          audioIndex: () => choice.audio,
+          audioIndex: () => audioChoice,
           subtitleIndex: subtitle?.index ?? -1,
-          burnSubtitles: subtitle != null && !subtitle.isTextSubtitle,
+          burnSubtitles: plan.burnsIn(subtitle),
         );
-        if (options.needsTranscode) {
+        if (options.needsTranscode ||
+            options.audioIndex != plan.options.audioIndex) {
           plan = await widget.catalog.prepare(item, options);
         }
       }
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) {
+        if (plan.liveStreamId != null) {
+          try {
+            await widget.catalog.client.closeLive(plan.liveStreamId!);
+          } catch (_) {}
+        }
+        return;
+      }
       _options = options;
-      final video = VideoPlayerController.networkUrl(plan.url);
+      final video = VideoPlayerController.networkUrl(
+        plan.url,
+        viewType: DevicePlayback.viewType(plan),
+      );
       _plan = plan;
       _video = video;
-      await video.initialize();
+      // Ask for subtitles while the video opens: the server can take most of
+      // a minute to pull a Blu-ray track out of a file it has not served yet,
+      // and every second saved here is a line that still shows.
+      unawaited(_loadCaptions(generation));
+      await video.initialize().timeout(
+        DevicePlayback.isSamsungTv ? _samsungOpenTimeout : _openTimeout,
+      );
       if (!mounted || generation != _generation) {
         await video.dispose();
         return;
       }
+      await DevicePlayback.selectDirectAudio(
+        video,
+        plan,
+        options,
+      ).timeout(const Duration(seconds: 4));
+      if (!mounted || generation != _generation) return;
       final start = MediaTime.duration(options.startTicks);
-      if (plan.method == 'DirectPlay') {
-        _offset = Duration.zero;
-        if (start > Duration.zero) await video.seekTo(start);
-      } else {
-        _offset = start;
+      // Jellyfin HLS VOD has the full title timeline. Adding the requested
+      // resume point as an offset makes the clock advance over the opening
+      // scene without seeking the actual media. Match AVPlayer's real seek.
+      _offset = Duration.zero;
+      if (!item.isLive && start > Duration.zero) {
+        await _nativeOperation(video.seekTo(start), _samsungCommandTimeout);
       }
+      if (!mounted || generation != _generation) return;
+      _streamReady = true;
       video.addListener(_onVideo);
       final grouped = _group != null;
       if (grouped) resume = false;
       if (!item.isLive && _speed != 1 && !grouped) {
-        await video.setPlaybackSpeed(_speed);
+        await _nativeOperation(
+          video.setPlaybackSpeed(_speed),
+          _samsungCommandTimeout,
+        );
       }
-      unawaited(_loadCaptions(generation));
-      if (resume) await video.play();
+      if (_extras == PlayerExtras.none) {
+        unawaited(_loadExtras(item, generation));
+      }
+      if (item.isEpisode && _group == null) {
+        unawaited(_loadIntros(item.id, generation));
+      }
+      if (resume) await _nativeOperation(video.play(), _samsungCommandTimeout);
       if (!mounted || generation != _generation) return;
+      if (DevicePlayback.isSamsungTv && video.value.hasError) {
+        _playbackFailed(generation, resume: resume);
+        return;
+      }
       setState(
         () => _phase = resume ? PlayerPhase.playing : PlayerPhase.paused,
       );
       _reveal();
+      _problems?.started(item, _reportMethod);
       unawaited(_report('start'));
       _reporter = Timer.periodic(_reportEvery, (_) => _report('progress'));
       if (grouped) unawaited(_group?.playerReady(this, item.id));
     } on ClientError catch (e) {
       _fail(generation, e.message);
+    } on TimeoutException {
+      _playbackFailed(generation, resume: resume, timedOut: true);
     } catch (_) {
-      _fail(
-        generation,
-        const ClientError(ClientErrorKind.unsupportedPlayback).message,
-      );
+      _playbackFailed(generation, resume: resume);
     }
   }
 
-  /// Fetches the chosen text subtitle as WebVTT; image subtitles are part
-  /// of the video and need nothing here.
+  /// Waits for the server after the connection drops mid-playback.
+  late final _serverWait = ServerWait(
+    // Any answer will do: this asks whether the server is there at all.
+    ping: () => widget.catalog.client.requestText(const [
+      'System',
+      'Info',
+      'Public',
+    ], authenticated: false),
+  );
+  bool _checkingServer = false;
+  bool _reconnecting = false;
+  Timer? _stall;
+
+  /// A stream that had been playing broke, or sat buffering too long. If the
+  /// server no longer answers, keep the place, show "Reconnecting…" and
+  /// reopen when it is back. If it does answer, the stream is at fault and
+  /// [whenReachable] applies the usual retry.
+  Future<void> _reconnect(int generation, void Function() whenReachable) async {
+    if (_checkingServer) return;
+    _checkingServer = true;
+    final at = MediaTime.ticks(_lastGoodPosition);
+    final result = await _serverWait.wait(
+      onAway: () {
+        if (!mounted || _closing || generation != _generation) return;
+        _problem(
+          PlaybackProblem.stalled,
+          reason: 'Lost the connection to the server',
+        );
+        _video?.removeListener(_onVideo);
+        setState(() {
+          _reconnecting = true;
+          _phase = PlayerPhase.buffering;
+        });
+      },
+    );
+    _checkingServer = false;
+    if (!mounted || _closing || generation != _generation) {
+      _reconnecting = false;
+      return;
+    }
+    switch (result) {
+      case ServerWaitResult.reachable:
+        whenReachable();
+      case ServerWaitResult.returned:
+        setState(() => _reconnecting = false);
+        _problem(
+          PlaybackProblem.recovered,
+          reason: 'Reconnected after the server came back',
+        );
+        unawaited(_open(_item, _options.copyWith(startTicks: at)));
+      case ServerWaitResult.gaveUp:
+        _reconnecting = false;
+        _fail(
+          generation,
+          'Can’t reach your server. Check the connection, then try again.',
+        );
+      case ServerWaitResult.cancelled:
+        _reconnecting = false;
+    }
+  }
+
+  void _playbackFailed(
+    int generation, {
+    required bool resume,
+    bool timedOut = false,
+    int? startTicks,
+  }) {
+    if (!mounted || _closing || generation != _generation) return;
+    if (_streamReady && _group == null) {
+      unawaited(
+        _reconnect(
+          generation,
+          () => _streamFailed(
+            generation,
+            resume: resume,
+            timedOut: timedOut,
+            startTicks: startTicks,
+          ),
+        ),
+      );
+      return;
+    }
+    _streamFailed(
+      generation,
+      resume: resume,
+      timedOut: timedOut,
+      startTicks: startTicks,
+    );
+  }
+
+  void _streamFailed(
+    int generation, {
+    required bool resume,
+    bool timedOut = false,
+    int? startTicks,
+  }) {
+    if (!mounted || _closing || generation != _generation) return;
+    // Samsung retries a failed direct play. Other devices retry any stream
+    // negotiated with their detected decoders, once, since the compatibility
+    // profile it falls back to is no longer "detected".
+    final retry = DevicePlayback.isSamsungTv
+        ? _options.allowDirectPlay && _plan?.method == 'DirectPlay'
+        : _options.capabilities.detected;
+    if (retry && !_item.isLive && _group == null) {
+      _problem(
+        PlaybackProblem.fallback,
+        reason: timedOut
+            ? 'The player did not open the stream in time'
+            : _video?.value.errorDescription ?? 'Player error',
+      );
+      // Retry only this item and use Jellyfin's compatible HLS stream. Keep
+      // the chosen tracks and position. Live tuners and groups stay untouched.
+      unawaited(
+        _open(
+          _item,
+          _options.copyWith(
+            allowDirectPlay: false,
+            capabilities: const PlaybackCapabilities(),
+            startTicks: startTicks ?? MediaTime.ticks(_lastGoodPosition),
+          ),
+          resume: resume,
+        ),
+      );
+      return;
+    }
+    _fail(
+      generation,
+      timedOut
+          ? 'The TV player did not respond. Try again or close playback.'
+          : const ClientError(ClientErrorKind.playbackFailed).message,
+    );
+  }
+
+  /// Fetches the chosen text subtitle as WebVTT, or a Blu-ray (PGS) track to
+  /// draw on the device. Burned-in subtitles are part of the video.
   Future<void> _loadCaptions(int generation) async {
+    final request = ++_captionRequest;
+    bool isCurrent() =>
+        mounted && generation == _generation && request == _captionRequest;
     final plan = _plan;
     final path = plan == null || _options.burnSubtitles
         ? null
         : plan.subtitlePath(_options.subtitleIndex);
-    setState(() => _captions = const []);
+    final image = plan == null || _options.burnSubtitles
+        ? null
+        : plan.imageSubtitleUrl(_options.subtitleIndex);
+    final styled = plan == null || _options.burnSubtitles
+        ? null
+        : plan.styledSubtitlePath(_options.subtitleIndex);
+    setState(() {
+      _captions = const [];
+      _pgs = null;
+      _pgsStatus = image == null ? null : _pgsLoading;
+      _ass = null;
+    });
+    if (styled != null) {
+      try {
+        // The first request for an embedded track makes the server pull it
+        // out of the file, which can outlast the usual wait on a long film.
+        final text = await widget.catalog.client.requestText(
+          styled,
+          wait: const Duration(seconds: 90),
+        );
+        final ass = await compute(AssSubtitles.parse, text);
+        if (!isCurrent()) return;
+        setState(() => _ass = ass);
+        return;
+      } catch (_) {
+        // Fall back to the plain WebVTT conversion below.
+      }
+    }
+    if (image != null) {
+      try {
+        // Up to four 90-second waits: a long film's first extraction can
+        // take more than one.
+        final bytes = await widget.catalog.client.requestBytes(
+          image,
+          attempts: 4,
+        );
+        final pgs = await compute(PgsSubtitles.parse, bytes);
+        if (!isCurrent()) return;
+        setState(() {
+          _pgs = pgs;
+          _pgsStatus = null;
+        });
+      } catch (_) {
+        if (isCurrent()) {
+          setState(() => _pgsStatus = 'Blu-ray subtitles unavailable');
+        }
+      }
+      return;
+    }
     if (path == null) return;
     try {
       final text = await widget.catalog.client.requestText(path);
-      if (!mounted || generation != _generation) return;
+      if (!isCurrent()) return;
       setState(() => _captions = WebVTTCaptionFile(text).captions);
     } catch (_) {
       // Playback continues without subtitles.
@@ -401,14 +862,24 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   }
 
   String? get _caption {
+    // Say so while a Blu-ray track is still on its way, so missing lines at
+    // the start are not mistaken for subtitles being off.
+    if (_pgs == null && _pgsStatus == _pgsLoading && _streamReady) {
+      return 'Loading subtitles…';
+    }
     if (_captions.isEmpty) return null;
-    final at = _position;
+    final at = _subtitleClock;
     final cue = _captions.where((c) => c.start <= at && at < c.end).firstOrNull;
     return cue?.text.replaceAll(RegExp(r'<[^>]+>'), '').trim();
   }
 
   void _fail(int generation, String message) {
     if (!mounted || generation != _generation) return;
+    final detail = _video?.value.errorDescription;
+    _problem(
+      _streamReady ? PlaybackProblem.stopped : PlaybackProblem.startFailed,
+      reason: detail == null || detail.isEmpty ? message : '$message ($detail)',
+    );
     setState(() {
       _phase = PlayerPhase.failed;
       _error = message;
@@ -423,21 +894,43 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     if (video == null) return;
     video.removeListener(_onVideo);
     _video = null;
-    final position = video.value.position + _offset;
-    try {
-      await video.pause();
-    } catch (_) {}
-    await _report('stop', video: video, position: position);
+    final position = _streamReady
+        ? video.value.hasError
+              ? _lastGoodPosition
+              : video.value.position + _offset
+        : MediaTime.duration(_plan?.options.startTicks ?? 0);
+    final plan = _plan;
     _plan = null;
+    try {
+      await _nativeOperation(video.pause(), _samsungReleaseTimeout);
+    } catch (_) {}
+    final report = plan == null
+        ? Future<void>.value()
+        : _report('stop', video: video, position: position, stream: plan);
+    if (DevicePlayback.isSamsungTv) {
+      // A slow Jellyfin response or native dispose must not trap Back on
+      // the player. Finish server cleanup with the old session's own plan.
+      if (plan != null) {
+        final client = widget.catalog.client;
+        unawaited(report.then((_) => client.stopEncoding(plan)));
+      }
+      try {
+        await video.dispose().timeout(_samsungReleaseTimeout);
+      } catch (_) {}
+      return;
+    }
+    await report;
     await video.dispose();
+    if (plan != null) await widget.catalog.client.stopEncoding(plan);
   }
 
   Future<void> _report(
     String event, {
     VideoPlayerController? video,
     Duration? position,
+    PlaybackPlan? stream,
   }) async {
-    final plan = _plan;
+    final plan = stream ?? _plan;
     final player = video ?? _video;
     if (plan == null || player == null) return;
     try {
@@ -459,14 +952,30 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     if (video == null || !mounted) return;
     final value = video.value;
     if (value.hasError) {
-      _fail(
-        _generation,
-        const ClientError(ClientErrorKind.unsupportedPlayback).message,
-      );
+      // The open operation handles errors that arrive before play completes.
+      if (!DevicePlayback.isSamsungTv ||
+          _phase != PlayerPhase.preparing &&
+              _phase != PlayerPhase.failed &&
+              !identical(_pendingSamsungSeek, video)) {
+        _playbackFailed(
+          _generation,
+          resume:
+              _phase == PlayerPhase.playing || _phase == PlayerPhase.buffering,
+        );
+      }
       return;
     }
+    _lastGoodPosition = _position;
     final PlayerPhase phase;
-    if (value.isCompleted) {
+    // The plugin also marks a polled position at its reported duration as
+    // completed. Live streams can report zero or a stale window duration while
+    // the native decoder is still playing. Only a stopped, finite stream has
+    // reached its end. A live buffer is not a finite title: pausing at its
+    // reported edge must stay resumable, even when its duration is nonzero.
+    if (!_item.isLive &&
+        value.isCompleted &&
+        value.duration > Duration.zero &&
+        !value.isPlaying) {
       phase = PlayerPhase.ended;
     } else if (_phase == PlayerPhase.preparing) {
       phase = PlayerPhase.preparing;
@@ -477,6 +986,34 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     }
     final previous = _phase;
     setState(() => _phase = phase);
+    if (phase == PlayerPhase.playing &&
+        previous != PlayerPhase.playing &&
+        _controls &&
+        _hide?.isActive != true) {
+      _reveal();
+    }
+    if (phase != previous) {
+      _stall?.cancel();
+      if (phase == PlayerPhase.buffering && _scrub == null && _group == null) {
+        // Some players sit buffering forever on a lost connection instead of
+        // reporting an error.
+        final generation = _generation;
+        _stall = Timer(const Duration(seconds: 20), () {
+          if (_phase != PlayerPhase.buffering || generation != _generation) {
+            return;
+          }
+          unawaited(_reconnect(generation, () {}));
+        });
+      }
+    }
+    if (phase != previous && !_item.isLive) {
+      _problems?.buffering(
+        phase == PlayerPhase.buffering && _scrub == null,
+        _item,
+        _reportMethod,
+        () => _position,
+      );
+    }
     final group = _group;
     if (group != null && !_suspended && phase != previous) {
       _buffering?.cancel();
@@ -661,7 +1198,7 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   /// Shows the controls and restarts the hide timer. [stay] keeps them up,
   /// for example at the end of a title.
   void _reveal({bool stay = false}) {
-    if (!mounted) return;
+    if (!mounted || _mini) return;
     final wasHidden = !_controls;
     _hide?.cancel();
     if (wasHidden) setState(() => _controls = true);
@@ -758,10 +1295,39 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     final video = _video;
     if (video == null) return;
     if (_directPlay || _item.isLive) {
-      await video.seekTo(target);
-      if (resume) await video.play();
-      _endHandled = false;
-      unawaited(_report('progress'));
+      if (DevicePlayback.isSamsungTv && identical(_pendingSamsungSeek, video)) {
+        return;
+      }
+      final generation = _generation;
+      if (DevicePlayback.isSamsungTv) _pendingSamsungSeek = video;
+      try {
+        await _nativeOperation(video.seekTo(target), _samsungCommandTimeout);
+        if (!mounted || generation != _generation) return;
+        if (resume) {
+          await _nativeOperation(video.play(), _samsungCommandTimeout);
+        }
+        if (!mounted || generation != _generation) return;
+        if (DevicePlayback.isSamsungTv && video.value.hasError) {
+          _playbackFailed(
+            generation,
+            resume: resume,
+            startTicks: MediaTime.ticks(target),
+          );
+          return;
+        }
+        _endHandled = false;
+        unawaited(_report('progress'));
+      } catch (error) {
+        if (!DevicePlayback.isSamsungTv) rethrow;
+        _playbackFailed(
+          generation,
+          resume: resume,
+          timedOut: error is TimeoutException,
+          startTicks: MediaTime.ticks(target),
+        );
+      } finally {
+        if (identical(_pendingSamsungSeek, video)) _pendingSamsungSeek = null;
+      }
     } else {
       await _open(
         _item,
@@ -815,6 +1381,65 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
       _queued = null;
     });
     if (panel == PlayerPanel.channels) unawaited(_loadChannels());
+    if (panel == PlayerPanel.information) unawaited(_loadPlaybackDiagnostics());
+  }
+
+  Future<void> _adaptQuality() async {
+    final video = _video, plan = _plan;
+    if (!mounted || video == null || plan == null || _adapting) return;
+    final value = video.value;
+    var ahead = 0.0;
+    for (final range in value.buffered) {
+      if (range.start <= value.position && range.end >= value.position) {
+        ahead = (range.end - value.position).inMilliseconds / 1000;
+      }
+    }
+    final next = _adaptive?.sample(
+      now: DateTime.now().millisecondsSinceEpoch / 1000,
+      position: _position.inMilliseconds / 1000,
+      bitrate: _options.bitrate,
+      sourceBitrate: plan.source?.bitrate,
+      enabled: _autoQuality && _group == null && !_suspended && !_reconnecting,
+      ready:
+          value.isInitialized &&
+          _phase != PlayerPhase.preparing &&
+          _phase != PlayerPhase.ended &&
+          _error == null,
+      paused: !value.isPlaying || _panel != null,
+      seeking: _scrub != null,
+      buffering: value.isBuffering,
+      bufferedAhead: ahead,
+    );
+    if (next == null) return;
+    if (next < _options.bitrate) {
+      _problem(
+        PlaybackProblem.qualityLowered,
+        reason:
+            '${_options.bitrate ~/ 1000000} to ${next ~/ 1000000} Mbps after buffering',
+      );
+    }
+    _adapting = true;
+    try {
+      await _open(
+        _item,
+        _options.copyWith(
+          bitrate: next,
+          startTicks: MediaTime.ticks(_position),
+        ),
+      );
+    } finally {
+      _adapting = false;
+    }
+  }
+
+  Future<void> _loadPlaybackDiagnostics() async {
+    final plan = _plan;
+    final generation = _generation;
+    if (plan == null) return;
+    final info = await widget.catalog.client.playbackDiagnostics(plan);
+    if (mounted && generation == _generation && identical(plan, _plan)) {
+      setState(() => _diagnostics = info);
+    }
   }
 
   void _closePanel() {
@@ -884,7 +1509,11 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
 
   /// Remote Back, innermost first.
   void _back() {
-    if (_panel != null) {
+    if (_seasonMenu.isOpen) {
+      _seasonMenu.close();
+    } else if (_mini) {
+      widget.presentation?.expand();
+    } else if (_panel != null) {
       _closePanel();
     } else if (_scrub != null) {
       _scrubCancel();
@@ -897,7 +1526,10 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     }
   }
 
-  Future<void> _close() async {
+  Future<void>? _closeOperation;
+  Future<void> _close() => _closeOperation ??= _performClose();
+
+  Future<void> _performClose() async {
     if (_closing) return;
     _closing = true;
     _generation++;
@@ -911,7 +1543,13 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
       unawaited(group.playerClosed(this));
     }
     await _teardown();
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) {
+      if (widget.presentation != null) {
+        widget.presentation!.closed();
+      } else {
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -922,6 +1560,10 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.mediaStop) {
+      unawaited(_close());
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.mediaPlayPause ||
         key == LogicalKeyboardKey.mediaPlay ||
         key == LogicalKeyboardKey.mediaPause) {
@@ -932,6 +1574,22 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
         key == LogicalKeyboardKey.mediaRewind) {
       _skip(key == LogicalKeyboardKey.mediaRewind ? -_skipBack : _skipForward);
       return KeyEventResult.handled;
+    }
+    if (_mini) {
+      // Keep horizontal movement stable when Play changes to Pause or the
+      // library and player belong to different traversal groups. At the
+      // edges, normal directional traversal returns to the library.
+      if (key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowRight) {
+        final controls = [_miniPlayFocus, _miniExpandFocus, _miniCloseFocus];
+        final index = controls.indexWhere((focus) => focus.hasFocus);
+        final target = index + (key == LogicalKeyboardKey.arrowRight ? 1 : -1);
+        if (index >= 0 && target >= 0 && target < controls.length) {
+          controls[target].requestFocus();
+          return KeyEventResult.handled;
+        }
+      }
+      return KeyEventResult.ignored;
     }
     if (!_controls) {
       final select = selectKeys.keys.any(
@@ -961,6 +1619,14 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
 
   @override
   void dispose() {
+    _adaptiveTimer?.cancel();
+    _stall?.cancel();
+    _serverWait.cancel();
+    _problems?.dispose();
+    widget.presentation?.removeListener(_presentationChanged);
+    widget.presentation?.onBack = null;
+    widget.presentation?.onStop = null;
+    widget.presentation?.onExpanded = null;
     _lifecycle.dispose();
     widget.group?.removeListener(_groupChanged);
     _buffering?.cancel();
@@ -971,6 +1637,9 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     _generation++;
     if (!_closing) unawaited(_teardown());
     _playFocus.dispose();
+    _miniPlayFocus.dispose();
+    _miniExpandFocus.dispose();
+    _miniCloseFocus.dispose();
     _surfaceFocus.dispose();
     super.dispose();
   }
@@ -991,21 +1660,29 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
   }
 
   List<(String, String)> get _facts {
-    final method = _plan?.method;
+    final plan = _plan;
     final size = _video?.value.size;
     return [
+      ...?(_diagnostics ??
+              (plan == null ? null : PlaybackDiagnostics.fromPlan(plan)))
+          ?.facts,
       (
-        'Playback',
-        method == 'DirectPlay'
-            ? 'Direct play'
-            : (method == 'Transcode' ? 'Transcoding' : 'Preparing'),
+        'Quality mode',
+        _autoQuality
+            ? 'Auto${_adaptive?.reason == null ? '' : ' · ${_adaptive!.reason}'}'
+            : 'Fixed',
       ),
-      ('Quality limit', '${_options.bitrate ~/ 1000000} Mbps'),
       if (!_item.isLive) ('Speed', speedLabel(_speed)),
       if (_options.subtitleIndex >= 0)
         (
           'Subtitles',
-          _options.burnSubtitles ? 'Burned in by the server' : 'Text',
+          _options.burnSubtitles
+              ? 'Burned in by the server'
+              : _pgs != null
+              ? 'Blu-ray, drawn on this TV'
+              : _ass != null
+              ? 'Styled, drawn on this TV'
+              : _pgsStatus ?? 'Text',
         ),
       if (size != null && size.width > 0 && size.height > 0)
         (
@@ -1015,22 +1692,8 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     ];
   }
 
-  String get _sourceSummary {
-    final streams = _plan?.streams ?? const <MediaStream>[];
-    final video = streams.where((s) => s.type == 'Video').firstOrNull;
-    final audio =
-        streams.where((s) => s.type == 'Audio' && s.isDefault).firstOrNull ??
-        streams.where((s) => s.type == 'Audio').firstOrNull;
-    return [
-      if (video?.height != null) '${video!.height}p',
-      ?video?.codec?.toUpperCase(),
-      if (audio != null)
-        [
-          audio.codec?.toUpperCase(),
-          if (audio.channels != null) '${audio.channels} ch',
-        ].nonNulls.join(' '),
-    ].where((s) => s.isNotEmpty).join(' · ');
-  }
+  String get _sourceSummary =>
+      playbackSourceSummary(_plan?.streams ?? const <MediaStream>[]);
 
   Widget _panelSurface(PlayerPanel panel) {
     final options = _queued ?? _options;
@@ -1038,6 +1701,8 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     return switch (panel) {
       PlayerPanel.channels => PlayerOptionsSurface(
         title: 'Channels & guide',
+        liveSchedule: true,
+        focusClose: true,
         wide: true,
         onClose: _closePanel,
         child: ChannelChoices(
@@ -1046,6 +1711,20 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
           error: _channelError,
           now: _liveNow,
           next: _liveNext,
+          upcoming:
+              _guideAt != null &&
+                  DateTime.now().difference(_guideAt!) <
+                      const Duration(minutes: 2)
+              ? _guide
+                    .where(
+                      (p) =>
+                          p.start != null &&
+                          p.end != null &&
+                          p.start!.isAfter(DateTime.now()),
+                    )
+                    .take(4)
+                    .toList()
+              : const [],
           onRetry: _loadChannels,
           onSelect: _chooseChannel,
         ),
@@ -1059,6 +1738,7 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
           context: _item,
           currentEpisodeId: _item.id,
           inPlayer: true,
+          seasonMenuController: _seasonMenu,
           onOpen: _chooseEpisode,
         ),
       ),
@@ -1068,8 +1748,19 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
         footer: pending ? const PendingChangeNote() : null,
         child: QualityChoices(
           selected: options.bitrate,
+          automatic: _autoQuality,
+          ceiling: _adaptive?.ceiling ?? options.bitrate,
+          onAuto: () {
+            setState(() => _autoQuality = true);
+            _queue(
+              options.copyWith(bitrate: _adaptive?.ceiling ?? options.bitrate),
+            );
+          },
           isLive: _item.isLive,
-          onSelect: (bitrate) => _queue(options.copyWith(bitrate: bitrate)),
+          onSelect: (bitrate) {
+            setState(() => _autoQuality = false);
+            _queue(options.copyWith(bitrate: bitrate));
+          },
         ),
       ),
       PlayerPanel.tracks => PlayerOptionsSurface(
@@ -1080,26 +1771,173 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
           streams: _plan?.streams ?? const [],
           options: options,
           isLive: _item.isLive,
-          onAudio: (index) => _queue(options.copyWith(audioIndex: () => index)),
+          subtitleOffset: _subtitleOffset,
+          onSubtitleOffset: _item.isLive ? null : _setSubtitleOffset,
+          onAudio: (index) {
+            _remember(
+              audio: (_plan?.streams ?? const <MediaStream>[])
+                  .where((s) => s.type == 'Audio' && s.index == index)
+                  .firstOrNull,
+            );
+            _queue(options.copyWith(audioIndex: () => index));
+          },
           onSubtitles: (index) {
             final stream = (_plan?.streams ?? const <MediaStream>[])
                 .where((s) => s.type == 'Subtitle' && s.index == index)
                 .firstOrNull;
+            _remember(subtitle: stream, off: index == -1);
             _queue(
               options.copyWith(
                 subtitleIndex: index,
-                burnSubtitles: stream != null && !stream.isTextSubtitle,
+                burnSubtitles: _plan?.burnsIn(stream) ?? false,
               ),
             );
           },
         ),
       ),
+      PlayerPanel.chapters => PlayerOptionsSurface(
+        title: 'Chapters',
+        fullWidth: true,
+        onClose: _closePanel,
+        child: ChapterChoices(
+          chapters: _extras.chapters,
+          current: Chapter.indexAt(_extras.chapters, _position),
+          image: _chapterImage,
+          onSelect: (chapter) {
+            _resumeAfterPanel = true;
+            _closePanel();
+            unawaited(_seekTo(chapter.start, resume: true));
+          },
+        ),
+      ),
       PlayerPanel.information => PlayerOptionsSurface(
         title: 'Playback info',
+        focusClose: true,
         onClose: _closePanel,
         child: PlaybackInformation(facts: _facts, source: _sourceSummary),
       ),
     };
+  }
+
+  Widget _miniPlayer() {
+    final video = _video;
+    return Actions(
+      actions: {
+        BackIntent: CallbackAction<BackIntent>(
+          onInvoke: (_) => widget.presentation?.expand(),
+        ),
+      },
+      child: Focus(
+        skipTraversal: true,
+        onKeyEvent: _onKey,
+        child: Material(
+          color: Zoro.background,
+          elevation: 16,
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (video != null && video.value.isInitialized)
+                      Center(
+                        child: AspectRatio(
+                          aspectRatio: video.value.aspectRatio,
+                          child: VideoPlayer(video),
+                        ),
+                      ),
+                    if (_caption case final caption? when caption.isNotEmpty)
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 12,
+                        child: Text(
+                          caption,
+                          maxLines: 3,
+                          textAlign: TextAlign.center,
+                          style: Zoro.font(
+                            17,
+                            color: Colors.white,
+                          ).copyWith(backgroundColor: Colors.black87),
+                        ),
+                      ),
+                    if (_phase == PlayerPhase.preparing ||
+                        _phase == PlayerPhase.buffering)
+                      const Center(child: CircularProgressIndicator()),
+                    if (_reconnecting)
+                      Align(
+                        alignment: const Alignment(0, 0.22),
+                        child: Text('Reconnecting…', style: Zoro.font(20)),
+                      ),
+                    if (_error != null ||
+                        _upNext != null ||
+                        _phase == PlayerPhase.ended)
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          color: Colors.black87,
+                          child: Text(
+                            _error != null
+                                ? 'Unable to play'
+                                : _upNext != null
+                                ? 'Up next'
+                                : 'Playback ended',
+                            style: Zoro.font(22),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Row(
+                  children: [
+                    PlayerIconButton(
+                      focusNode: _miniPlayFocus,
+                      icon: _playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      label: _playing ? 'Pause' : 'Play',
+                      onPressed: _togglePlay,
+                      enabled:
+                          _phase == PlayerPhase.playing ||
+                          _phase == PlayerPhase.paused ||
+                          _phase == PlayerPhase.buffering,
+                    ),
+                    Expanded(
+                      child: Text(
+                        _title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Zoro.font(18),
+                      ),
+                    ),
+                    PlayerIconButton(
+                      icon: Icons.fullscreen_rounded,
+                      label: 'Expand player',
+                      focusNode: _miniExpandFocus,
+                      onPressed: () => widget.presentation?.expand(),
+                    ),
+                    PlayerIconButton(
+                      icon: Icons.close_rounded,
+                      label: 'Close mini-player',
+                      focusNode: _miniCloseFocus,
+                      onPressed: () => unawaited(_close()),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -1107,20 +1945,28 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
     final video = _video;
     final streams = _plan?.streams ?? const <MediaStream>[];
     final upNext = _upNext;
+    final introEnd =
+        _group == null && _error == null && _panel == null && _streamReady
+        ? introEndAt(_intros, _position, _duration)
+        : null;
+    if (_mini) return _miniPlayer();
     return Actions(
       actions: {
         BackIntent: CallbackAction<BackIntent>(onInvoke: (_) => _back()),
       },
       child: PopScope(
-        canPop: _closing,
+        canPop: widget.presentation != null || _closing,
         onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) _back();
+          if (!didPop && widget.presentation == null) _back();
         },
         child: Focus(
           onKeyEvent: _onKey,
           child: Scaffold(
-            // Transparent so the webOS video plane can show through.
-            backgroundColor: Colors.transparent,
+            // Android renders video in a Flutter texture, so letterbox margins
+            // must cover the library. Native webOS needs its video plane below.
+            backgroundColor: defaultTargetPlatform == TargetPlatform.android
+                ? Colors.black
+                : Colors.transparent,
             body: Stack(
               fit: StackFit.expand,
               children: [
@@ -1129,6 +1975,24 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
                     child: AspectRatio(
                       aspectRatio: video.value.aspectRatio,
                       child: VideoPlayer(video),
+                    ),
+                  ),
+                if (video != null && video.value.isInitialized && _pgs != null)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: video.value.aspectRatio,
+                      child: PgsOverlay(_pgs!.frameAt(_subtitleClock)),
+                    ),
+                  ),
+                if (video != null && video.value.isInitialized && _ass != null)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: video.value.aspectRatio,
+                      child: AssOverlay(
+                        script: _ass!,
+                        lines: _ass!.activeAt(_subtitleClock),
+                        at: _position,
+                      ),
                     ),
                   ),
                 Focus(focusNode: _surfaceFocus, child: const SizedBox.expand()),
@@ -1145,6 +2009,20 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
                           appearance: _prefs?.value.subtitleAppearance,
                         ),
                       ),
+                    ),
+                  ),
+                if (_reconnecting)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 26,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text('Reconnecting…', style: Zoro.font(24)),
                     ),
                   ),
                 ExcludeFocus(
@@ -1180,8 +2058,14 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
                           (s) => s.type == 'Audio' || s.type == 'Subtitle',
                         ),
                         isLive: _item.isLive,
+                        hasChapters: _extras.chapters.isNotEmpty,
+                        marks: [for (final c in _extras.chapters) c.start],
+                        preview: _item.isLive ? null : _scrubPreview,
                         playFocus: _playFocus,
                         onClose: () => unawaited(_close()),
+                        onMinimize: widget.presentation == null
+                            ? null
+                            : _minimize,
                         onTogglePlay: _togglePlay,
                         onSkip: _skip,
                         onPanel: _openPanel,
@@ -1194,6 +2078,15 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
                     ),
                   ),
                 ),
+                if (introEnd != null && upNext == null)
+                  Positioned(
+                    right: 48,
+                    bottom: 160,
+                    child: ZoroButton(
+                      label: 'Skip intro',
+                      onPressed: () => _seekTo(introEnd, resume: _playing),
+                    ),
+                  ),
                 if (_error != null)
                   Center(
                     child: Container(
@@ -1206,7 +2099,7 @@ class _PlayerScreenState extends State<PlayerScreen> implements GroupPlayer {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.play_disabled_rounded,
                             size: 48,
                             color: Zoro.jade,

@@ -1,5 +1,11 @@
 # Personalized Home rows
 
+Current switchover source supports both `homeRows` v1 and v2. V2 uses
+`/Zorofin/Home/Rows` and keeps the server-owned rows authoritative. The existing
+legacy routing, native layout and ordinary Jellyfin fallback remain. See the
+shared contract; historical implementation
+and device evidence below does not establish acceptance of the new candidate.
+
 > **Post-1.0 update:** five of these rows (new episodes, 90 minutes, 4K/HDR,
 > seasonal and your teams) are now computed in the app on any Jellyfin server,
 > and teams are saved in Jellyfin's display preferences. Only My requests and
@@ -8,7 +14,7 @@
 
 The Apple app automatically selects seven extra rows when supported by the
 connected server. All Jellyfin servers get library-based discovery; extra rows require a capability
-manifest that explicitly enables `homeRows` version 1. Empty rows stay hidden.
+manifest that explicitly enables a supported `homeRows` version. Empty rows stay hidden.
 Profile → Your teams is the only native Home preference; there are no row toggles,
 time-limit or curated-theme controls. Teams are saved to the authenticated account.
 
@@ -20,7 +26,7 @@ time-limit or curated-theme controls. Teams are saved to the authenticated accou
 | 4K / HDR showcase | Video width at least 3840 for 4K; Jellyfin VideoRange/VideoRangeType for HDR, HDR10, HDR10+, HLG and Dolby Vision. Never infers quality from a title or HEVC alone. Badges describe available source formats, not the output guaranteed by a device. |
 | Seasonal / curated picks | Automatic year-round holiday/season calendar, including Fourth of July, summer and back to school. The heading names the selected theme. Matching collections come first, then relevant metadata; unmatched holidays fall through to honestly named seasonal/mood picks. See [Seasonal programming](SEASONAL_ROWS.md). |
 | Popular this week | Playback Reporting recorded watch seconds over the previous seven days. Sessions under 2 minutes and invalid durations over 6 hours are excluded. Episodes combine under their series. Only accessible library items reach the viewer; no viewer identities or individual histories are exposed. |
-| Your teams / starting soon | Games for the viewer's followed teams (full names) on now or starting within the hour, on a channel the viewer can open. No teams, no row: generic sports channels never fill it. On the plugin, viewers who follow no teams get the server's favorite teams (companion Sports, `ZOROFIN_SPORTS_FAVORITES`). Expired broadcasts disappear. “On now” describes broadcast time, not independent live verification. |
+| Your teams / starting soon | Accessible guide broadcasts on now or starting within 12 hours, filtered by full favorite team names if supplied. Expired broadcasts disappear. “On now” describes broadcast time, not independently verified live-event status. |
 
 ## Service contract and account boundaries
 
@@ -272,6 +278,22 @@ detail navigation and metadata refresh. New rows append in a weighted batch rath
 than reshuffling above the reader. Account/server switches discard the ordering.
 Generated lane order also varies per visit while preserving stable server item
 sorts, cursor progression, finite-library bounds and sparse recommendations.
+
+## Continue Watching ordering and direct play — 2026-11-06
+
+The combined shelf now leads with Jellyfin's Next Up order, including transitions
+to another season. Older Resume titles no longer displace the first server
+suggestion. A matching Resume episode supplies its saved position at that show's
+Next Up rank; remaining Resume movies/episodes follow. ID/series deduplication,
+source-failure behavior, cache scope and the 40-card bound remain in place.
+The catalog fallback, Flutter Home and LG bridge use the equivalent Dart merge.
+
+On iOS/iPadOS, tvOS, Flutter TV and LG, activating a Continue Watching card starts
+that item at its saved position (zero when unstarted). Library cards keep their
+detail navigation. This supersedes the resume-first order documented below.
+Source-6 validation is pending; see `NEXT-01`–`NEXT-04` in the
+common matrix. Historical October
+results and the installed iPhone build 49 do not include this fix.
 
 ## Continue Watching episode handoff — 2026-10-24
 

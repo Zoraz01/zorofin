@@ -20,6 +20,7 @@
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/SettingsScreen.brs" />
   <children>

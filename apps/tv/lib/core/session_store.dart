@@ -1,205 +1,102 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
+import 'runtime_platform.dart';
+
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
-import 'server_address.dart';
+import 'errors.dart';
+import 'saved_connections.dart';
+export 'saved_connections.dart';
 
-extension ServerStorageKey on ServerAddress {
-  /// A server is its origin and installation path, never its display name.
-  /// Dart's [Uri] already omits default ports.
-  String get storageKey => url.toString();
-}
-
-/// One saved viewer on one server. A signed-out account keeps its server and
-/// name so it can sign in again; the token is removed.
-class SavedAccount {
-  SavedAccount({
-    required this.id,
-    required this.server,
-    required this.serverName,
-    required this.viewer,
-    this.session,
-  });
-
-  factory SavedAccount.fromJson(Map<String, dynamic> json) => SavedAccount(
-    id: json['id'] as String,
-    server: ServerAddress.fromJson(json['server'] as Map<String, dynamic>),
-    serverName: json['serverName'] as String? ?? '',
-    viewer: Viewer.fromJson(json['viewer'] as Map<String, dynamic>),
-    session: json['session'] is Map<String, dynamic>
-        ? Session.fromJson(json['session'] as Map<String, dynamic>)
-        : null,
+class AndroidConnectionVault implements ConnectionVault {
+  static const _key = 'zorofin.connections.secure.v1';
+  static const _storage = FlutterSecureStorage(
+    aOptions: AndroidOptions(resetOnError: false),
   );
 
-  final String id;
-  final ServerAddress server;
-  final String serverName;
-  final Viewer viewer;
-  final Session? session;
+  @override
+  Future<String?> read() => _storage.read(key: _key);
 
-  /// Identifies this account's device preferences; contains no token.
-  String get scope => '${server.storageKey}\n${viewer.id}';
-
-  SavedAccount copyWith({String? serverName, Session? Function()? session}) =>
-      SavedAccount(
-        id: id,
-        server: server,
-        serverName: serverName ?? this.serverName,
-        viewer: session?.call()?.viewer ?? viewer,
-        session: session == null ? this.session : session(),
-      );
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'server': server.toJson(),
-    'serverName': serverName,
-    'viewer': viewer.toJson(),
-    'session': ?session?.toJson(),
-  };
+  @override
+  Future<void> write(String value) => _storage.write(key: _key, value: value);
 }
 
-class SavedServer {
-  SavedServer(this.address, this.name, this.accounts);
-
-  final ServerAddress address;
-  final String name;
-  final List<SavedAccount> accounts;
-}
-
-/// Saved accounts and the active selection (Apple `SavedConnections`).
-/// Passwords and Quick Connect secrets never enter this model.
-class SavedConnections {
-  SavedConnections({List<SavedAccount>? accounts, this.activeId})
-    : accounts = accounts ?? [];
-
-  final List<SavedAccount> accounts;
-  String? activeId;
-
-  SavedAccount? get active =>
-      accounts.where((a) => a.id == activeId).firstOrNull;
-
-  List<SavedServer> get servers {
-    final result = <SavedServer>[];
-    for (final account in accounts) {
-      final key = account.server.storageKey;
-      if (result.any((s) => s.address.storageKey == key)) continue;
-      result.add(
-        SavedServer(
-          account.server,
-          account.serverName,
-          accounts.where((a) => a.server.storageKey == key).toList(),
-        ),
-      );
-    }
-    return result;
-  }
-
-  /// Adds or refreshes the account for [session] and selects it.
-  String remember(Session session, String serverName) {
-    final trimmed = serverName.trim();
-    final name = trimmed.isEmpty ? session.server.url.host : trimmed;
-    final key = session.server.storageKey;
-    final index = accounts.indexWhere(
-      (a) => a.server.storageKey == key && a.viewer.id == session.viewer.id,
-    );
-    final id = index >= 0 ? accounts[index].id : _newId();
-    final account = SavedAccount(
-      id: id,
-      server: session.server,
-      serverName: name,
-      viewer: session.viewer,
-      session: session,
-    );
-    if (index >= 0) {
-      accounts[index] = account;
-    } else {
-      accounts.add(account);
-    }
-    for (final (i, a) in accounts.indexed) {
-      if (a.server.storageKey == key) {
-        accounts[i] = a.copyWith(serverName: name);
-      }
-    }
-    activeId = id;
-    return id;
-  }
-
-  void signOut(String id) {
-    final index = accounts.indexWhere((a) => a.id == id);
-    if (index >= 0) {
-      accounts[index] = accounts[index].copyWith(session: () => null);
-    }
-    if (activeId == id) activeId = null;
-  }
-
-  void remove(String id) {
-    accounts.removeWhere((a) => a.id == id);
-    if (activeId == id) activeId = null;
-  }
-
-  static String _newId() {
-    final random = Random.secure();
-    return List.generate(
-      12,
-      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join();
-  }
-
-  Map<String, dynamic> toJson() => {
-    'schemaVersion': 1,
-    'accounts': [for (final a in accounts) a.toJson()],
-    'activeId': ?activeId,
-  };
-
-  static SavedConnections fromJson(Map<String, dynamic> json) {
-    if (json['schemaVersion'] != 1) throw const FormatException('schema');
-    final accounts = (json['accounts'] as List)
-        .whereType<Map<String, dynamic>>()
-        .map(SavedAccount.fromJson)
-        .toList();
-    final ids = <String>{};
-    final identities = <String>{};
-    for (final a in accounts) {
-      final session = a.session;
-      if (!ids.add(a.id) ||
-          !identities.add(a.scope) ||
-          (session != null &&
-              (session.server.storageKey != a.server.storageKey ||
-                  session.viewer.id != a.viewer.id))) {
-        throw const FormatException('accounts');
-      }
-    }
-    final result = SavedConnections(
-      accounts: accounts,
-      activeId: json['activeId'] as String?,
-    );
-    if (result.activeId != null && result.active?.session == null) {
-      result.activeId = null;
-    }
-    return result;
+/// No browser token is persisted until a webOS vault has been device-tested.
+class MemoryConnectionVault implements ConnectionVault {
+  String? _value;
+  @override
+  Future<String?> read() async => _value;
+  @override
+  Future<void> write(String value) async {
+    _value = value;
   }
 }
 
-/// Persists the device ID and saved accounts.
-///
-/// Uses the app's private preferences store on every platform. Moving tokens
-/// to platform secure storage is tracked in the TV README.
+/// Android/Fire OS sessions use Keystore-backed encryption. Native webOS and
+/// Linux retain app-private preferences; the web target uses memory only.
+/// Device ID and ordinary preferences contain no session token.
 class SessionStore {
-  SessionStore(this._prefs);
+  SessionStore._(this._prefs, this._vault, this._loaded);
 
   static const _legacySessionKey = 'zorofin.session.v1';
   static const _connectionsKey = 'zorofin.connections.v1';
   static const _deviceKey = 'zorofin.device.v1';
 
   final SharedPreferences _prefs;
+  final ConnectionVault? _vault;
+  SavedConnections _loaded;
+  Future<void> _pending = Future.value();
 
-  /// Shared with [Preferences] so both use one store.
   SharedPreferences get prefs => _prefs;
 
-  static Future<SessionStore> open() async =>
-      SessionStore(await SharedPreferences.getInstance());
+  bool get supportsPersistentSignIn => _vault is! MemoryConnectionVault;
+
+  static Future<SessionStore> open({
+    ConnectionVault? vault,
+    bool? persistentConnections,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final persist = persistentConnections ?? !kIsWeb;
+    final selectedVault = !persist
+        ? MemoryConnectionVault()
+        : vault ?? (usesAndroidVault ? AndroidConnectionVault() : null);
+    try {
+      final encrypted = await selectedVault?.read();
+      final legacy = prefs.getString(_connectionsKey);
+      final single = prefs.getString(_legacySessionKey);
+      final loaded = encrypted != null
+          ? SavedConnections.fromJson(
+              jsonDecode(encrypted) as Map<String, dynamic>,
+            )
+          : legacy != null
+          ? SavedConnections.fromJson(
+              jsonDecode(legacy) as Map<String, dynamic>,
+            )
+          : SavedConnections();
+      if (encrypted == null && legacy == null && single != null) {
+        loaded.remember(
+          Session.fromJson(jsonDecode(single) as Map<String, dynamic>),
+          '',
+        );
+      }
+      final store = SessionStore._(prefs, selectedVault, loaded);
+      // Commit and read back the complete encrypted snapshot BEFORE removing
+      // either legacy key. An interrupted migration can safely be retried.
+      if (selectedVault != null && (legacy != null || single != null)) {
+        if (encrypted == null) {
+          await store._writeVault(jsonEncode(loaded.toJson()));
+        }
+        await store._removeLegacy();
+      }
+      return store;
+    } catch (_) {
+      throw const ClientError(ClientErrorKind.storage);
+    }
+  }
 
   String deviceId() {
     final existing = _prefs.getString(_deviceKey);
@@ -211,38 +108,49 @@ class SessionStore {
     return id;
   }
 
-  SavedConnections load() {
-    final text = _prefs.getString(_connectionsKey);
-    if (text != null) {
+  SavedConnections load() => SavedConnections.fromJson(_loaded.toJson());
+
+  Future<void> _writeVault(String text) async {
+    await _vault!.write(text);
+    if (await _vault.read() != text) {
+      throw StateError('Account storage verification failed');
+    }
+  }
+
+  Future<void> _removeLegacy() async {
+    for (final key in [_connectionsKey, _legacySessionKey]) {
+      if (_prefs.containsKey(key) && !await _prefs.remove(key)) {
+        throw StateError('Account storage cleanup failed');
+      }
+    }
+  }
+
+  Future<void> save(SavedConnections connections) {
+    // Snapshot before awaiting and serialize writes, including sign-out, so a
+    // late earlier write cannot restore a token that has just been removed.
+    final text = jsonEncode(connections.toJson());
+    final operation = _pending.then((_) async {
       try {
-        return SavedConnections.fromJson(
+        if (_vault != null) {
+          await _writeVault(text);
+          await _removeLegacy();
+        } else {
+          if (!await _prefs.setString(_connectionsKey, text)) {
+            throw StateError('Account storage write failed');
+          }
+          if (_prefs.containsKey(_legacySessionKey) &&
+              !await _prefs.remove(_legacySessionKey)) {
+            throw StateError('Account storage cleanup failed');
+          }
+        }
+        _loaded = SavedConnections.fromJson(
           jsonDecode(text) as Map<String, dynamic>,
         );
       } catch (_) {
-        return SavedConnections();
+        throw const ClientError(ClientErrorKind.storage);
       }
-    }
-    // A single session from earlier test builds becomes the first account.
-    final legacy = _prefs.getString(_legacySessionKey);
-    final result = SavedConnections();
-    if (legacy != null) {
-      try {
-        final session = Session.fromJson(
-          jsonDecode(legacy) as Map<String, dynamic>,
-        );
-        result.remember(session, '');
-      } catch (_) {}
-    }
-    return result;
-  }
-
-  Future<void> save(SavedConnections connections) async {
-    if (!await _prefs.setString(
-      _connectionsKey,
-      jsonEncode(connections.toJson()),
-    )) {
-      throw StateError('Saved accounts were not written');
-    }
-    await _prefs.remove(_legacySessionKey);
+    });
+    _pending = operation.catchError((Object _) {});
+    return operation;
   }
 }

@@ -17,6 +17,30 @@ private func homeClient(_ transport: any HTTPTransport) throws -> JellyfinClient
         session: .init(server: address, viewer: .init(id: "viewer", name: "Viewer"), token: "viewer-token", deviceID: "fixture"), transport: transport)
 }
 @Suite("Personal Home rows") struct HomeRowsTests {
+    @Test func homeCrestsAreOptionalValidatedAndAnonymous() async throws {
+        let path = "Zorofin/Web/ui/live-tv-logos/art/sports-0123456789abcdef01234567-89abcdef.png"
+        var raw: [String: Any] = ["id": "program", "item": ["Id": "channel", "Name": "Sports", "Type": "TvChannel"], "subtitle": "Game", "badges": ["Starting soon"]]
+        func read(_ raw: [String: Any]) throws -> HomeRowCard {
+            try Wire.decoder().decode(HomeRowCard.self, from: JSONSerialization.data(withJSONObject: raw))
+        }
+        #expect(try read(raw).game == nil)
+        raw["matchup"] = ["Wizards", "Celtics"]
+        raw["crests"] = [path, path.replacingOccurrences(of: ".png", with: ".jpg")]
+        #expect(try read(raw).game?.title == "Wizards vs Celtics")
+        for bad in [[path], [path, "https://other.example/a.png"], [path, path + "\n"]] {
+            raw["crests"] = bad
+            #expect(try read(raw).game == nil)
+        }
+        raw["crests"] = 4
+        #expect(try read(raw).game == nil)
+        let transport = HomeTransport("fixture")
+        let client = try homeClient(transport)
+        _ = try await client.homeCrestData(path: path)
+        let request = try #require(await transport.requests.first)
+        #expect(request.url?.path == "/jellyfin/" + path)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
     @Test func preferenceLimits() {
         var value = HomePreferences()
         #expect(value.isValid)

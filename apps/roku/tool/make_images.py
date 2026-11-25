@@ -3,7 +3,7 @@
 
 Run from anywhere: python3 apps/roku/tool/make_images.py
 Outputs go to apps/roku/images/ (committed). Sizes follow Roku's manifest
-artwork rules: focus icons 336x210 (HD) and 540x405 (store poster), splash
+artwork rules: focus icons 290x218 (HD) and 540x405 (FHD, store poster), splash
 1280x720 only: Roku scales it up on FHD, and a 1920x1080 splash stays in
 texture memory (8.3 MB) for the whole session on some TVs.
 """
@@ -42,7 +42,7 @@ def main():
 
     # Home-screen tiles (focus) and the store poster.
     for name, (w, h), pad in [
-        ("icon_focus_hd.png", (336, 210), 0.80),
+        ("icon_focus_hd.png", (290, 218), 0.80),
         ("icon_focus_fhd.png", (540, 405), 0.80),
         ("store_poster.png", (540, 405), 0.80),
     ]:
@@ -178,6 +178,21 @@ def main():
         for x in range(4):
             px[x, y] = (17, 21, 19, a)
     bottom.save(OUT / "scrim_bottom.png", optimize=True)
+    # Live score fade (web/Flutter card): black 92% at the bottom, 65% at
+    # 36% of the height, clear from 68% up.
+    fade = Image.new("RGBA", (4, 256))
+    px = fade.load()
+    for y in range(256):
+        up = 1 - (y + 0.5) / 256
+        if up <= 0.36:
+            a = 0.92 + (0.65 - 0.92) * up / 0.36
+        elif up <= 0.68:
+            a = 0.65 * (1 - (up - 0.36) / 0.32)
+        else:
+            a = 0
+        for x in range(4):
+            px[x, y] = (0, 0, 0, int(round(255 * a)))
+    fade.save(OUT / "score_fade.png", optimize=True)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,10 @@ public struct LibraryCachePolicy: Sendable {
     public static let liveArtworkIndex = Self(storage: .memory, lifetime: 300, snapshotLifetime: 900)
     public static let detail = Self(storage: .memory, lifetime: 120, snapshotLifetime: 120)
     public static let home = Self(storage: .homeFeed, lifetime: 300, snapshotLifetime: 3_600)
+    /// Plugin Home rows: always fetched, but the last answer is kept on disk so
+    /// a cold launch can show yesterday's rows while today's load.
+    public static let homeSnapshot = Self(storage: .homeFeed, lifetime: 0, snapshotLifetime: 86_400)
+    public static let homeCrest = Self(storage: .artwork, lifetime: 7 * 86_400, snapshotLifetime: 7 * 86_400)
     public static let artwork = Self(storage: .artwork, lifetime: 30 * 86_400, snapshotLifetime: 30 * 86_400)
 }
 

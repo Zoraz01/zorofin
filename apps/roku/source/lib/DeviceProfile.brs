@@ -9,16 +9,20 @@ function ZCanVideo(di as object, codec as string, container as string, profile =
     return res <> invalid and res.Result = true
 end function
 
-function ZCanAudio(di as object, codec as string, container = "" as string) as boolean
+function ZCanAudio(di as object, codec as string, container = "" as string, channels = 0 as integer) as boolean
     req = { Codec: codec }
     if container <> "" then req.Container = container
+    if channels > 0 then req.chcnt = channels
     res = di.CanDecodeAudio(req)
     return res <> invalid and res.Result = true
 end function
 
 ' Returns { profile, maxBitrate, supports4k, hdr: { hdr10, dolbyVision, hlg } }.
 function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
-    di = CreateObject("roDeviceInfo")
+    return ZDeviceProfileFor(CreateObject("roDeviceInfo"), maxBitrateSetting)
+end function
+
+function ZDeviceProfileFor(di as object, maxBitrateSetting as integer) as object
     display = di.GetDisplayProperties()
     uiMode = di.GetVideoMode()
     supports4k = Left(uiMode, 4) = "2160" or (display <> invalid and display.Hdr10 = true)
@@ -37,10 +41,27 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
             audio.push(name)
         end if
     end for
-    passthrough = ZCanAudio(di, "eac3") or ZCanAudio(di, "ac3")
-
-    maxChannels = "2"
-    if passthrough then maxChannels = "6"
+    audioRules = []
+    dolbyHls = ["aac"]
+    maxChannels = 2
+    for each codec in audio
+        ' PCM names share one rule and use the existing conservative limit.
+        channels = 2
+        if codec <> "pcm_s16le,pcm_s24le" then
+            if codec <> "ac3" and ZCanAudio(di, codec, "", 8) then
+                channels = 8
+            else if ZCanAudio(di, codec, "", 6) then
+                channels = 6
+            end if
+        end if
+        audioRules.push({ Type: "VideoAudio", Codec: codec, Conditions: [
+            { Condition: "LessThanEqual", Property: "AudioChannels", Value: channels.toStr(), IsRequired: false }
+        ] })
+        if codec = "ac3" or codec = "eac3" then dolbyHls.push(codec)
+        if codec = "aac" or codec = "ac3" or codec = "eac3" then
+            if channels > maxChannels then maxChannels = channels
+        end if
+    end for
 
     maxBitrate = 20000000
     if supports4k then maxBitrate = 80000000
@@ -51,17 +72,18 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
     hlsVideo = "h264"
     ' Jellyfin encodes to the first codec listed: keep real encodes H.264, still copy HEVC.
     if video.count() > 1 and video[1] = "hevc" then hlsVideo = "h264,hevc"
-    hlsAudio = "aac"
-    if passthrough then hlsAudio = "aac,ac3,eac3"
+    hlsAudio = ZJoin(dolbyHls, ",")
 
-    hdr = { hdr10: false, dolbyVision: false, hlg: false }
+    hdr = { hdr10: false, hdr10Plus: false, dolbyVision: false, hlg: false }
     if display <> invalid then
         hdr.hdr10 = display.Hdr10 = true
+        hdr.hdr10Plus = display.Hdr10Plus = true
         hdr.dolbyVision = display.DolbyVision = true
         hdr.hlg = display.HLG = true
     end if
     ranges = ["SDR"]
     if hdr.hdr10 then ranges.push("HDR10")
+    if hdr.hdr10Plus then ranges.push("HDR10Plus")
     if hdr.hlg then ranges.push("HLG")
     if hdr.dolbyVision then
         ranges.push("DOVI")
@@ -84,7 +106,7 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
         TranscodingProfiles: [
             {
                 Container: "ts", Type: "Video", Protocol: "hls", Context: "Streaming",
-                VideoCodec: hlsVideo, AudioCodec: hlsAudio, MaxAudioChannels: maxChannels,
+                VideoCodec: hlsVideo, AudioCodec: hlsAudio, MaxAudioChannels: maxChannels.toStr(),
                 MinSegments: 1, BreakOnNonKeyFrames: true, CopyTimestamps: false
             },
             { Container: "mp3", Type: "Audio", AudioCodec: "mp3", Protocol: "http", Context: "Streaming", MaxAudioChannels: "2" }
@@ -94,14 +116,19 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
             {
                 Type: "Video", Codec: "h264",
                 Conditions: [
-                    { Condition: "LessThanEqual", Property: "VideoLevel", Value: "51", IsRequired: false },
+                    ' Roku decoders top out at H.264 Level 4.2 / 1080p. Advertising
+                    ' 5.1 or 4K width made Jellyfin offer avc1.640033 variants the
+                    ' Roku rejects as an invalid playlist when switching quality.
+                    { Condition: "LessThanEqual", Property: "VideoLevel", Value: "42", IsRequired: false },
+                    { Condition: "LessThanEqual", Property: "Height", Value: "1080", IsRequired: false },
+                    { Condition: "LessThanEqual", Property: "VideoBitrate", Value: "10000000", IsRequired: false },
                     { Condition: "NotEquals", Property: "IsAnamorphic", Value: "true", IsRequired: false },
                     ' Broadcast channels are often 1080i; the Roku stalls on
                     ' interlaced H.264, so the server deinterlaces instead.
                     { Condition: "NotEquals", Property: "IsInterlaced", Value: "true", IsRequired: false },
                     { Condition: "LessThanEqual", Property: "VideoBitDepth", Value: "8", IsRequired: false },
                     { Condition: "EqualsAny", Property: "VideoProfile", Value: "high|main|baseline|constrained baseline", IsRequired: false },
-                    { Condition: "LessThanEqual", Property: "Width", Value: maxWidth, IsRequired: false }
+                    { Condition: "LessThanEqual", Property: "Width", Value: "1920", IsRequired: false }
                 ]
             },
             {
@@ -116,12 +143,6 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
                 Type: "Video",
                 Conditions: [
                     { Condition: "EqualsAny", Property: "VideoRangeType", Value: ZJoin(ranges, "|"), IsRequired: false }
-                ]
-            },
-            {
-                Type: "VideoAudio",
-                Conditions: [
-                    { Condition: "LessThanEqual", Property: "AudioChannels", Value: maxChannels, IsRequired: false }
                 ]
             }
         ],
@@ -138,5 +159,6 @@ function ZDeviceProfile(maxBitrateSetting = 0 as integer) as object
         ],
         ResponseProfiles: []
     }
+    profile.CodecProfiles.append(audioRules)
     return { profile: profile, maxBitrate: maxBitrate, supports4k: supports4k, hdr: hdr }
 end function

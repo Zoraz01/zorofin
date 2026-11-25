@@ -1,5 +1,8 @@
 # Zorofin for Roku: release checklist
 
+Current development candidate: **1.4.0**. See the 1.4 handoff for current changes, reproducible checks and separate device/portal gates. The 1.0.1 receipt below is historical.
+
+
 Nothing here is submitted. The Roku Channel Store submission waits for a Roku
 developer account (Vitality Labs LLC) and the owner's typed go.
 
@@ -34,8 +37,8 @@ Roku signs packages on a device in Developer Mode, and every later update must
 be signed with the same key.
 
 ```sh
-tool/package-signed.sh <roku-ip> --genkey   # once: makes the key, saves its password in Keychain "zorofin-roku-signing"
-tool/package-signed.sh <roku-ip>            # each release: sideloads, signs, writes out/zorofin-roku-<version>.pkg
+tool/package-signed.sh <roku-host> --genkey   # once: makes the key, saves its password in Keychain "zorofin-roku-signing"
+tool/package-signed.sh <roku-host>            # each release: sideloads, signs, writes out/zorofin-roku-<version>.pkg
 ```
 
 The developer web password comes from `ROKU_DEV_PASSWORD` or the Keychain item
@@ -80,7 +83,7 @@ splash is HD only because Roku keeps it loaded all session.
 ## Certification items already handled in code
 
 - Deep linking with `contentId` and `mediaType` at launch and through `roInput`.
-- `AppLaunchComplete` beacon once Home (or the Connect screen) is ready.
+- `AppLaunchComplete` when Home is ready or a cold deep link actually plays. Connect uses paired AppDialog beacons.
 - Back on the Home screen exits the app.
 - `supports_input_launch=1`, FHD UI with HD artwork and focus icons; the splash is HD only (1280×720) because Roku keeps the splash bitmap in texture memory for the whole session, and an FHD one costs 8.3 MB.
 - Network work in Task nodes only.
@@ -116,7 +119,7 @@ Zorofin is independently developed and is not affiliated with the Jellyfin proje
 
 **Publisher:** Vitality Labs LLC
 
-**Poster:** `images/store_poster.png` (540 × 405). Focus icons: `images/icon_focus_fhd.png` (540 × 405) and `images/icon_focus_hd.png` (336 × 210).
+**Poster:** `images/store_poster.png` (540 × 405). Focus icons: `images/icon_focus_fhd.png` (540 × 405) and `images/icon_focus_hd.png` (290 × 218).
 
 **Screenshots:** five Roku captures (1920 × 1080 JPEG) taken on the TCL Roku TV against the isolated demo server's licensed Blender films (`apps/apple/demo-server`), never against a personal server: `01-home`, `02-movie-details`, `03-movies-grid`, `04-search` and `05-home-rows`. They live in the owner's release folder outside Git with the signed package. They show no server address, account page or private names. The older Google TV captures in `release/screenshots/` remain as a fallback. To retake them, sign the app in to the demo server through a temporary LAN forwarder and use the Developer Mode web page ("Utilities", "Screenshot"); paused video captures black there, so leave the player out.
 

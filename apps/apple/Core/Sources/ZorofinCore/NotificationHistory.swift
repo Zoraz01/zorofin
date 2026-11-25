@@ -59,12 +59,12 @@ public actor NotificationHistoryStore {
     }
     /// Call only after a complete successful availability check. The first
     /// snapshot is history, including migration from older unread-only builds.
-    public func receiveRequests(_ notices: [RequestAvailabilityNotice], legacyReadIDs: Set<Int> = [],
+    public func receiveRequests(_ notices: [RequestAvailabilityNotice], legacyReadIDs: Set<Int> = [], initializeSnapshot: Bool = true,
                                 server: ServerAddress, viewerID: String) throws -> NotificationHistory {
         var state = try load(server: server, viewerID: viewerID)
         state.readRequestIDs.formUnion(legacyReadIDs)
         if !state.requestsInitialized {
-            state.readRequestIDs.formUnion(notices.map(\.id))
+            if initializeSnapshot { state.readRequestIDs.formUnion(notices.map(\.id)) }
             state.requestsInitialized = true
         }
         let incoming = Set(notices.map(\.id))

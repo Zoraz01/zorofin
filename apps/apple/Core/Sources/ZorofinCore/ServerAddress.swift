@@ -14,7 +14,7 @@ public enum ClientError: Error, LocalizedError, Equatable, Sendable {
         case .forbidden: "Your account does not have permission for this action."
         case .unavailable(let status): "The server is unavailable (HTTP \(status)). Try again."
         case .network: "Could not reach the server. Check your connection and try again."
-        case .unsupportedPlayback: "This title needs a compatible stream. Check the server's transcoding settings."
+        case .unsupportedPlayback: "The server could not provide a compatible stream for this device. Try another quality."
         case .missingSession: "Sign in to your server to continue."
         case .responseTooLarge: "The server response was too large. Try a smaller selection."
         case .invalidQuickConnectCode: "Enter the six-digit Quick Connect code shown on your other device."
@@ -93,10 +93,11 @@ public struct ServerAddress: Hashable, Codable, Sendable {
 
     public func endpoint(_ path: [String], query: [URLQueryItem] = []) throws -> URL {
         var target = url
+        // A dot is allowed inside a part (`looks.json`); "." and ".." are not.
         for component in path {
             guard !component.isEmpty, component != ".", component != "..",
                   component.rangeOfCharacter(from: CharacterSet.alphanumerics
-                    .union(CharacterSet(charactersIn: "-_" )).inverted) == nil
+                    .union(CharacterSet(charactersIn: "-_." )).inverted) == nil
             else { throw ClientError.unsafeURL }
             target.appendPathComponent(component)
         }

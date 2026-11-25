@@ -31,13 +31,20 @@ private actor DiscoveryTransport: HTTPTransport {
             let seed = url.deletingLastPathComponent().lastPathComponent
             page = .init(items: [MediaItem(id: seed, name: "Self"), MediaItem(id: "fixed", name: "Already at top"),
                 MediaItem(id: "similar-\(seed)", name: "Recommendation"), MediaItem(id: "similar-\(seed)", name: "Duplicate"),
-                MediaItem(id: "episode-result", name: "Episode", type: "Episode")], totalRecordCount: 5)
+                MediaItem(id: "similar-\(seed)-2", name: "Recommendation 2"), MediaItem(id: "similar-\(seed)-3", name: "Recommendation 3"),
+                MediaItem(id: "similar-\(seed)-4", name: "Recommendation 4"), MediaItem(id: "similar-\(seed)-5", name: "Recommendation 5"),
+                MediaItem(id: "similar-\(seed)-6", name: "Recommendation 6"),
+                MediaItem(id: "episode-result", name: "Episode", type: "Episode")], totalRecordCount: 10)
         } else if small {
             page = .init(items: [MediaItem(id: "fixed", name: "Only title")], totalRecordCount: 1)
         } else {
             let prefix = [query["includeItemTypes"], query["sortBy"], query["genres"], query["years"], query["isPlayed"], query["minCommunityRating"]].compactMap { $0 }.joined(separator: "-")
             let offset = Int(query["startIndex"] ?? "0") ?? 0
-            page = .init(items: (offset..<(offset + 24)).map { MediaItem(id: "\(prefix)-\($0)", name: "Title \($0)", type: query["includeItemTypes"] ?? "Movie") }, totalRecordCount: 2400)
+            page = .init(items: (offset..<(offset + 24)).map {
+                var item = MediaItem(id: "\(prefix)-\($0)", name: "Title \($0)", type: query["includeItemTypes"] ?? "Movie")
+                item.communityRating = 8
+                return item
+            }, totalRecordCount: 2400)
         }
         return (try Wire.encoder().encode(page), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
@@ -86,29 +93,51 @@ private func discoveryClient(_ transport: any HTTPTransport) throws -> JellyfinC
         empty.accept(.init(items: [], totalRecordCount: 999), limit: 24)
         #expect(!empty.hasMore)
     }
-    @Test func recommendationsUsePlayedHistoryAndAreSparse() async throws {
+    @Test func recommendationsUsePlayedHistoryAndCategoriesEndWithoutRepeating() async throws {
         let transport = DiscoveryTransport()
         let client = try discoveryClient(transport)
         var feed = DiscoveryFeed()
         var rows: [DiscoveryRow] = []
         for _ in 0..<18 { rows += try await feed.next(client: client, excluding: ["fixed"]) }
         let recommendations = rows.enumerated().filter { $0.element.title.hasPrefix("Because you watched") }
-        #expect(recommendations.map(\.offset) == [5, 11])
-        #expect(recommendations.map(\.element.title) == ["Because you watched A real watched show", "Because you watched A real watched movie"])
-        #expect(recommendations.allSatisfy { $0.element.items.count == 1 })
-        #expect(rows.count == 36)
-        #expect(feed.hasMore)
+        #expect(recommendations.map(\.offset) == [5])
+        #expect(recommendations.map(\.element.title) == ["Because you watched A real watched show"])
+        #expect(recommendations.allSatisfy { $0.element.items.count >= 6 })
+        #expect(!rows.isEmpty && rows.count < 20)
+        #expect(!feed.hasMore)
+        #expect(Set(rows.map(\.title)).count == rows.count)
+        #expect(rows.allSatisfy { (6...20).contains($0.items.count) })
+        #expect(rows.first?.title == "Highly rated movies")
         #expect(Set(rows.map(\.id)).count == rows.count)
         // LazyVStack flattens sibling ForEach IDs. Never collide with the fixed
         // integer shelf IDs or the named server-provided Home rows.
         #expect(rows.allSatisfy { $0.id.hasPrefix("discovery-") })
         let requests = await transport.requests
-        #expect(requests.contains { $0.url?.query?.contains("startIndex=24") == true })
+        #expect(requests.filter { $0.url?.query?.contains("minCommunityRating=7") == true }.count == 1)
         #expect(requests.allSatisfy { $0.httpMethod == "GET" && $0.url?.host == "library.example" })
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization")?.contains("fixture-token") == true })
         #expect(requests.allSatisfy { $0.url?.absoluteString.contains("fixture-token") == false })
         #expect(requests.allSatisfy { $0.url?.query?.contains("userId=viewer") == true })
         #expect(requests.contains { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(.init(name: "genres", value: "Drama & Adventure")) == true })
+    }
+    @Test func sparseFirstPageFillsTheSameCategoryWithoutCreatingAnotherShelf() async throws {
+        let transport = DiscoveryTransport()
+        var feed = DiscoveryFeed(seed: 3)
+        let client = try discoveryClient(transport)
+        let excluded = Set((0..<22).map { "Movie-CommunityRating,SortName-Drama & Adventure-\($0)" })
+        var rows: [DiscoveryRow] = []
+        for _ in 0..<16 { rows += try await feed.next(client: client, excluding: excluded) }
+        let genre = rows.filter { $0.title == "Drama & Adventure movies" }
+        #expect(genre.count == 1)
+        #expect(genre.first?.items.count == 20)
+        let requests = await transport.requests
+        #expect(requests.contains { request in
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return query.contains(.init(name: "genres", value: "Drama & Adventure")) &&
+                query.contains(.init(name: "startIndex", value: "24"))
+        })
+        let ids = rows.flatMap { $0.items.map(\.id) }
+        #expect(Set(ids).count == ids.count)
     }
     @Test func duplicateOnlyLibraryEndsWithBoundedRequests() async throws {
         let transport = DiscoveryTransport(small: true)

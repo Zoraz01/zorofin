@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Pinned LG webOS web packaging tools",
+  "devDependencies": {
+    "@webos-tools/cli": "3.2.6"
+  }
+}

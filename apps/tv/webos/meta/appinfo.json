@@ -1,6 +1,6 @@
 {
     "id": "org.zorofin.tv",
-    "version": "0.1.0",
+    "version": "1.5.0",
     "vendor": "Zorofin",
     "type": "native",
     "main": "zorofin_tv",

@@ -8,6 +8,7 @@
     <field id="unloadImages" type="array" alwaysNotify="true" />
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
@@ -26,6 +27,7 @@
       <Rectangle width="1920" height="1080" color="0x11151399" />
       <Label id="busyText" text="Loading…" translation="[0,500]" width="1920" height="80" horizAlign="center" vertAlign="center" color="0xBBC5BDFF" />
     </Group>
+    <Timer id="inboxTimer" duration="120" repeat="true" />
     <Timer id="toastTimer" duration="3.5" />
   </children>
 </component>

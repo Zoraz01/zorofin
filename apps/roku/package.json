@@ -1,7 +1,7 @@
 {
   "name": "zorofin-roku",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.5.0",
   "description": "Zorofin for Roku (BrightScript / SceneGraph)",
   "scripts": {
     "validate": "bsc --project bsconfig.json",

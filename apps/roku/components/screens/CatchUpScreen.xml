@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Left skips, right likes, OK opens details and Options filters the deck. -->
+<component name="CatchUpScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Extras.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/CatchUpScreen.brs" />
+  <children>
+    <Group translation="[96,150]">
+      <Label id="heading" text="Catch Up" color="0xF5F7F5FF" />
+      <Label id="filterLabel" translation="[0,64]" color="0xBBC5BDFF" />
+      <Label id="count" translation="[1228,64]" width="500" horizAlign="right" color="0xBBC5BDFF" />
+    </Group>
+    <Group id="card" translation="[96,260]" visible="false">
+      <Rectangle width="1728" height="560" color="0x1B211EFF" />
+      <Group clippingRect="[0,0,1728,560]">
+        <Poster id="art" translation="[0,-180]" width="1728" height="972" loadWidth="1280" loadHeight="720" loadDisplayMode="scaleToZoom" />
+      </Group>
+      <Poster uri="pkg:/images/scrim_left.png" width="1300" height="560" />
+      <Poster uri="pkg:/images/corners24.9.png" width="1728" height="560" />
+      <Group translation="[56,60]">
+        <Poster id="logo" width="520" height="160" loadWidth="520" loadHeight="160" loadDisplayMode="scaleToFit" />
+        <Label id="title" width="900" wrap="true" maxLines="2" color="0xF5F7F5FF" />
+        <Group id="meta" />
+        <Label id="overview" width="780" wrap="true" maxLines="5" color="0xD5DCD7FF" />
+      </Group>
+    </Group>
+    <Group id="keys" translation="[96,868]" visible="false" />
+    <Group id="statusGroup" visible="false">
+      <Label id="statusTitle" width="1920" translation="[0,470]" horizAlign="center" color="0xF5F7F5FF" />
+      <Label id="statusDetail" width="1100" translation="[410,522]" horizAlign="center" wrap="true" maxLines="3" color="0xBBC5BDFF" />
+    </Group>
+  </children>
+</component>

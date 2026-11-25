@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -24,6 +26,132 @@ Widget _app(Widget child) => MaterialApp(
 );
 
 void main() {
+  testWidgets(
+    'loading and ready controls keep the same timeline and transport geometry',
+    (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final play = FocusNode();
+      addTearDown(play.dispose);
+      Future<void> pump(
+        PlayerPhase phase,
+        Duration? duration,
+        Duration position,
+      ) async {
+        await tester.pumpWidget(
+          _app(
+            PlayerControls(
+              title: 'Sample series',
+              subtitle: 'S1 E2 · Sample episode',
+              phase: phase,
+              position: position,
+              duration: duration,
+              playFocus: play,
+              hasEpisodes: true,
+              onClose: () {},
+              onTogglePlay: () {},
+              onSkip: (_) {},
+              onPanel: (_) {},
+              onScrubStart: () {},
+              onScrubMove: (_) {},
+              onScrubCommit: () {},
+              onScrubCancel: () {},
+              onInteract: () {},
+            ),
+          ),
+        );
+        await tester.pump();
+      }
+
+      await pump(PlayerPhase.preparing, null, Duration.zero);
+      final rail = tester.getRect(find.byType(TimelineBar));
+      final title = tester.getRect(find.text('Sample series'));
+      expect(
+        tester.widget<TimelineBar>(find.byType(TimelineBar)).enabled,
+        false,
+      );
+      await pump(
+        PlayerPhase.playing,
+        const Duration(hours: 2),
+        const Duration(hours: 1),
+      );
+      expect(tester.getRect(find.byType(TimelineBar)), rail);
+      expect(tester.getRect(find.text('Sample series')), title);
+      expect(
+        tester.widget<TimelineBar>(find.byType(TimelineBar)).enabled,
+        true,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  for (final platform in [TargetPlatform.android, TargetPlatform.linux]) {
+    testWidgets(
+      'fullscreen player background on $platform',
+      (tester) async {
+        tester.view.physicalSize = const Size(1920, 1080);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final server = ServerAddress.parse('https://example.com');
+        final catalog = JellyfinCatalog(
+          JellyfinClient(
+            server: server,
+            identity: const ClientIdentity(deviceId: 'd', deviceName: 'TV'),
+            session: Session(
+              server: server,
+              viewer: Viewer(id: 'u1', name: 'Sample viewer'),
+              token: 'test-token',
+              deviceId: 'd',
+            ),
+            httpClient: MockClient(
+              (_) async =>
+                  http.Response('{"ErrorCode":"NoCompatibleStream"}', 200),
+            ),
+          ),
+        );
+        const boundary = Key('player-composition');
+        await tester.pumpWidget(
+          _app(
+            RepaintBoundary(
+              key: boundary,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const ColoredBox(color: Color(0xFFFF00FF)),
+                  PlayerScreen(
+                    catalog: catalog,
+                    item: MediaItem(id: 'm1', name: 'Sample'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final image = await tester.runAsync(
+          () => tester
+              .renderObject<RenderRepaintBoundary>(find.byKey(boundary))
+              .toImage(),
+        );
+        final bytes = await tester.runAsync(
+          () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
+        );
+        // A corner outside the video/error card represents a letterbox margin.
+        expect(
+          bytes!.buffer.asUint8List().sublist(0, 4),
+          platform == TargetPlatform.android
+              ? [0, 0, 0, 255]
+              : [255, 0, 255, 255],
+          reason:
+              'Android must hide the library; native webOS retains its video plane.',
+        );
+        image!.dispose();
+        await tester.pumpWidget(const SizedBox());
+      },
+      variant: TargetPlatformVariant({platform}),
+    );
+  }
+
   test('time labels match the Apple player', () {
     expect(timeLabel(const Duration(seconds: 65)), '1:05');
     expect(
@@ -265,6 +393,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     var closed = false;
+    int? chosen;
     await tester.pumpWidget(
       _app(
         Stack(
@@ -274,7 +403,10 @@ void main() {
               child: PlayerOptionsSurface(
                 title: 'Quality',
                 onClose: () => closed = true,
-                child: QualityChoices(selected: 8000000, onSelect: (_) {}),
+                child: QualityChoices(
+                  selected: 8000000,
+                  onSelect: (value) => chosen = value,
+                ),
               ),
             ),
           ],
@@ -292,9 +424,74 @@ void main() {
     expect(card.bottom, 1080 - PlayerOptionsSurface.controlsClearance);
     expect(card.height, lessThan(700));
     expect(find.text('Maximum streaming bitrate'), findsOneWidget);
-    // Close takes focus first; Select on it returns to playback.
+    // The current quality takes focus first; Select keeps that choice.
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(chosen, 8000000);
+    expect(closed, isFalse);
+    await tester.tap(find.bySemanticsLabel('Return to playback'));
     expect(closed, isTrue);
+  });
+
+  testWidgets('audio and subtitle segments start on the selected track', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    int? audio;
+    int? subtitle;
+    await tester.pumpWidget(
+      _app(
+        PlayerOptionsSurface(
+          title: 'Tracks',
+          onClose: () {},
+          child: TrackChoices(
+            streams: [
+              MediaStream(index: 1, type: 'Audio', language: 'eng'),
+              MediaStream(index: 2, type: 'Audio', language: 'spa'),
+              MediaStream(index: 3, type: 'Subtitle', language: 'eng'),
+            ],
+            options: PlaybackOptions(audioIndex: 2, subtitleIndex: -1),
+            onAudio: (v) => audio = v,
+            onSubtitles: (v) => subtitle = v,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(audio, 2);
+    await tester.tap(find.text('Subtitles').first);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(subtitle, -1);
+    await tester.tap(find.text('Audio').first);
+    await tester.pumpAndSettle();
+    audio = null;
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(audio, 2);
+  });
+
+  testWidgets('read-only playback info keeps Close focused', (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var closed = false;
+    await tester.pumpWidget(
+      _app(
+        PlayerOptionsSurface(
+          title: 'Playback info',
+          focusClose: true,
+          onClose: () => closed = true,
+          child: const PlaybackInformation(
+            facts: [('Playback', 'Direct play')],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(closed, true);
   });
 
   testWidgets('a failed stream offers Try again and Close', (tester) async {

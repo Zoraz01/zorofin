@@ -178,7 +178,7 @@ class _SupportScreenState extends State<SupportScreen> {
     SupportSubmission.accepted => [
       Row(
         children: [
-          const Icon(Icons.check_circle_rounded, color: Zoro.jade),
+          Icon(Icons.check_circle_rounded, color: Zoro.jade),
           const SizedBox(width: 12),
           Text(
             'Report received',

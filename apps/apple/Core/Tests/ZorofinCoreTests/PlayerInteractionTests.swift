@@ -358,7 +358,7 @@ import Testing
         let item = try fixture(), options = PlaybackOptions()
         #expect(throws: SettingsError.invalidInput) { try options.changing(.audio(3), item: item, position: 20) }
         #expect(throws: SettingsError.invalidInput) { try options.changing(.subtitles(2), item: item, position: 20) }
-        #expect(throws: SettingsError.invalidInput) { try options.changing(.bitrate(80_000_000), item: item, position: 20) }
+        #expect(throws: SettingsError.invalidInput) { try options.changing(.bitrate(200_000_000), item: item, position: 20) }
         #expect(throws: SettingsError.invalidInput) { try options.changing(.audio(nil), item: item, position: .nan) }
     }
     @Test func automaticChoicesRemainExplicitAndPositionIsBounded() throws {

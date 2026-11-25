@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="RequestsScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="modal" type="boolean" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/RequestsScreen.brs" />
+  <children>
+    <Label id="heading" text="Requests" translation="[96,140]" />
+    <MiniKeyboard id="keyboard" translation="[80,214]" />
+    <Label id="status" translation="[680,155]" width="1110" wrap="true" maxLines="2" />
+    <MenuList id="results" translation="[680,255]" width="1100" maxHeight="740" />
+    <Timer id="debounce" duration="0.35" />
+  </children>
+</component>

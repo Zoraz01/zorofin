@@ -14,3 +14,10 @@ image\.tmdb\.org\.evil\.example
 ServerAdministrationTests\.swift:.*/Users/other
 # A guard that asserts no private key is packaged.
 prepare_sideload\.py:.*BEGIN (RSA )?PRIVATE KEY
+# Third-party attribution: Flutter's AUTHORS list in the forked video_player_android package.
+^apps/tv/packages/video_player_android/AUTHORS:
+# npm's own deprecation notice for old glob versions in a lockfile.
+^apps/tv/tool/webos-web/package-lock\.json:.*contacting i@izs\.me
+# Jellyfin API paths and a path-traversal test, not local folders.
+^apps/tv/test/plugin_extras_test\.dart:.*/jellyfin/Users/u1/Items
+^apps/roku/tests/DeepLink\.test\.brs:.*\.\./Users/x

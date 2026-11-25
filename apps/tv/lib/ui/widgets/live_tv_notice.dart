@@ -9,6 +9,52 @@ import '../../extras_state.dart';
 import '../theme.dart';
 import 'focusable.dart';
 
+/// Phones and tablets lay out at their real size; TVs use the 1920 canvas.
+bool liveTvCompact(BuildContext context) =>
+    MediaQuery.sizeOf(context).width < 1600;
+
+/// TV focus button, or a touch-sized pill on phones and tablets.
+class _LiveButton extends StatelessWidget {
+  const _LiveButton({
+    required this.label,
+    required this.onPressed,
+    this.primary = false,
+    this.autofocus = false,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+  final bool primary;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!liveTvCompact(context)) {
+      return ZoroButton(
+        label: label,
+        primary: primary,
+        autofocus: autofocus,
+        onPressed: onPressed,
+      );
+    }
+    final style = FilledButton.styleFrom(
+      backgroundColor: primary ? Zoro.play : Zoro.panel,
+      foregroundColor: primary ? Zoro.background : Zoro.text,
+      minimumSize: const Size(64, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      shape: const StadiumBorder(),
+      textStyle: Zoro.font(15, weight: FontWeight.w700),
+      side: primary ? null : const BorderSide(color: Zoro.border),
+    );
+    return FilledButton(
+      autofocus: autofocus,
+      style: style,
+      onPressed: onPressed,
+      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    );
+  }
+}
+
 /// Live TV stream use on Live TV and channel pages. With the companion's
 /// liveTvStreams module it shows which channels are playing (a "Playing now"
 /// strip on Live TV, one line on a channel page, with Join / Watch). Otherwise
@@ -125,15 +171,16 @@ class _LiveTvNoticeState extends State<LiveTvNotice> {
     }
     final message =
         _status?.message ?? 'Live TV availability could not be checked.';
+    final compact = liveTvCompact(context);
     return Semantics(
       container: true,
       label: 'Live TV channel limit. $policy $message',
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(compact ? 16 : 24),
         decoration: BoxDecoration(
           color: Zoro.panel,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(compact ? 14 : 16),
         ),
         child: ExcludeSemantics(
           child: Column(
@@ -141,18 +188,33 @@ class _LiveTvNoticeState extends State<LiveTvNotice> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.info_outline_rounded, color: Zoro.text),
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: Zoro.text,
+                    size: compact ? 20 : 24,
+                  ),
                   const SizedBox(width: 10),
-                  Text(
-                    'Live TV channel limit',
-                    style: Zoro.font(24, weight: FontWeight.w600),
+                  Flexible(
+                    child: Text(
+                      'Live TV channel limit',
+                      style: Zoro.font(
+                        compact ? 16 : 24,
+                        weight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(policy, style: Zoro.font(22, color: Zoro.muted)),
-              const SizedBox(height: 10),
-              Text(message, style: Zoro.font(22, weight: FontWeight.w500)),
+              SizedBox(height: compact ? 6 : 10),
+              Text(
+                policy,
+                style: Zoro.font(compact ? 14 : 22, color: Zoro.muted),
+              ),
+              SizedBox(height: compact ? 6 : 10),
+              Text(
+                message,
+                style: Zoro.font(compact ? 14 : 22, weight: FontWeight.w500),
+              ),
             ],
           ),
         ),
@@ -166,22 +228,28 @@ class LiveTvLiveBadge extends StatelessWidget {
   const LiveTvLiveBadge({super.key});
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-    decoration: BoxDecoration(
-      color: const Color(0xE605120A),
-      borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: Zoro.jade.withValues(alpha: 0.55)),
-    ),
-    child: Text(
-      'LIVE',
-      style: Zoro.font(
-        15,
-        weight: FontWeight.w800,
-        color: Zoro.jade,
-      ).copyWith(letterSpacing: 1.2),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final compact = liveTvCompact(context);
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 10,
+        vertical: compact ? 2 : 4,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xE605120A),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Zoro.jade.withValues(alpha: 0.55)),
+      ),
+      child: Text(
+        'LIVE',
+        style: Zoro.font(
+          compact ? 11 : 15,
+          weight: FontWeight.w800,
+          color: Zoro.jade,
+        ).copyWith(letterSpacing: 1.2),
+      ),
+    );
+  }
 }
 
 /// Channel logo from the server, with the channel's initials if it has none.
@@ -243,50 +311,60 @@ class LiveTvStreamSummary extends StatelessWidget {
   final LiveTvStream stream;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      LiveTvChannelLogo(channelId: stream.channelId, name: stream.channelName),
-      const SizedBox(width: 18),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const LiveTvLiveBadge(),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    stream.channelName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Zoro.font(26, weight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final compact = liveTvCompact(context);
+    return Row(
+      children: [
+        LiveTvChannelLogo(
+          channelId: stream.channelId,
+          name: stream.channelName,
+          size: compact ? 52 : 80,
+        ),
+        SizedBox(width: compact ? 12 : 18),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const LiveTvLiveBadge(),
+                  SizedBox(width: compact ? 8 : 10),
+                  Flexible(
+                    child: Text(
+                      stream.channelName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Zoro.font(
+                        compact ? 17 : 26,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
                   ),
+                ],
+              ),
+              if (stream.programmeTitle != null) ...[
+                SizedBox(height: compact ? 2 : 5),
+                Text(
+                  stream.programmeTitle!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Zoro.font(compact ? 14 : 21),
                 ),
               ],
-            ),
-            if (stream.programmeTitle != null) ...[
-              const SizedBox(height: 5),
+              SizedBox(height: compact ? 2 : 5),
               Text(
-                stream.programmeTitle!,
+                stream.detail(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Zoro.font(21),
+                style: Zoro.font(compact ? 13 : 18, color: Zoro.muted),
               ),
             ],
-            const SizedBox(height: 5),
-            Text(
-              stream.detail(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Zoro.font(18, color: Zoro.muted),
-            ),
-          ],
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 /// "Playing now" on the Live TV screen: each channel using a stream, with
@@ -299,7 +377,10 @@ class LiveTvStreamsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (status.streams.isEmpty) return const SizedBox.shrink();
+    final compact = liveTvCompact(context);
+    final cardWidth = compact
+        ? (MediaQuery.sizeOf(context).width - 56).clamp(240.0, 420.0)
+        : 600.0;
     return Column(
       key: const ValueKey('live-tv-streams'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -312,26 +393,29 @@ class LiveTvStreamsStrip extends StatelessWidget {
           child: Row(
             children: [
               for (final (i, stream) in status.streams.indexed) ...[
-                if (i > 0) const SizedBox(width: 24),
-                _card(stream),
+                if (i > 0) SizedBox(width: compact ? 12 : 24),
+                _card(stream, cardWidth, compact),
               ],
             ],
           ),
         ),
-        const SizedBox(height: 10),
-        Text(status.summary, style: Zoro.font(19, color: Zoro.muted)),
+        SizedBox(height: compact ? 4 : 10),
+        Text(
+          status.summary,
+          style: Zoro.font(compact ? 13 : 19, color: Zoro.muted),
+        ),
       ],
     );
   }
 
-  Widget _card(LiveTvStream stream) {
+  Widget _card(LiveTvStream stream, double width, bool compact) {
     final join = onJoin;
     return Container(
-      width: 600,
-      padding: const EdgeInsets.all(20),
+      width: width,
+      padding: EdgeInsets.all(compact ? 14 : 20),
       decoration: BoxDecoration(
         color: Zoro.panel,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(compact ? 12 : 14),
         border: Border.all(
           color: stream.yours ? Zoro.jade.withValues(alpha: 0.45) : Zoro.border,
         ),
@@ -340,13 +424,13 @@ class LiveTvStreamsStrip extends StatelessWidget {
         children: [
           Expanded(child: LiveTvStreamSummary(stream: stream)),
           if (join != null) ...[
-            const SizedBox(width: 16),
+            SizedBox(width: compact ? 10 : 16),
             Semantics(
               label: stream.yours
                   ? 'You are watching ${stream.channelName}'
                   : 'Join ${stream.channelName}',
               excludeSemantics: true,
-              child: ZoroButton(
+              child: _LiveButton(
                 label: stream.yours ? 'Watching' : 'Join',
                 primary: !stream.yours,
                 onPressed: () => join(stream.channel),
@@ -381,10 +465,11 @@ class LiveTvStreamsLine extends StatelessWidget {
     final join = status.blocked(channelId)?.join;
     final color = playing ? Zoro.jade : const Color(0xFFE0B44A);
     final onJoin = this.onJoin;
+    final compact = liveTvCompact(context);
     return Wrap(
       key: const ValueKey('live-tv-stream-line'),
-      spacing: 16,
-      runSpacing: 12,
+      spacing: compact ? 12 : 16,
+      runSpacing: compact ? 8 : 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Row(
@@ -405,11 +490,11 @@ class LiveTvStreamsLine extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Text(line, style: Zoro.font(22)),
+            Flexible(child: Text(line, style: Zoro.font(compact ? 15 : 22))),
           ],
         ),
         if (join != null && onJoin != null)
-          ZoroButton(
+          _LiveButton(
             label: 'Watch ${join.channelName}',
             onPressed: () => onJoin(join.channel),
           ),
@@ -428,13 +513,18 @@ Future<MediaItem?> showLiveTvConflict(
       ? conflict.blocked.join
       : null;
   final join = conflict.join;
+  final compact = liveTvCompact(context);
+  final width = compact
+      ? (MediaQuery.sizeOf(context).width - 32).clamp(260.0, 440.0)
+      : 720.0;
   return showDialog<MediaItem>(
     context: context,
+    useRootNavigator: true,
     barrierColor: const Color(0xCC000000),
     builder: (context) => Center(
       child: Container(
-        width: 720,
-        padding: const EdgeInsets.all(36),
+        width: width,
+        padding: EdgeInsets.all(compact ? 22 : 36),
         decoration: BoxDecoration(
           color: Zoro.panel,
           borderRadius: BorderRadius.circular(20),
@@ -448,12 +538,12 @@ Future<MediaItem?> showLiveTvConflict(
             children: [
               Text(
                 conflict.title,
-                style: Zoro.font(32, weight: FontWeight.w700),
+                style: Zoro.font(compact ? 20 : 32, weight: FontWeight.w700),
               ),
-              const SizedBox(height: 20),
+              SizedBox(height: compact ? 14 : 20),
               if (stream != null) ...[
                 Container(
-                  padding: const EdgeInsets.all(18),
+                  padding: EdgeInsets.all(compact ? 12 : 18),
                   decoration: BoxDecoration(
                     color: const Color(0x0AFFFFFF),
                     borderRadius: BorderRadius.circular(14),
@@ -461,35 +551,42 @@ Future<MediaItem?> showLiveTvConflict(
                   ),
                   child: LiveTvStreamSummary(stream: stream),
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: compact ? 14 : 20),
               ],
               if (conflict is LiveTvStreamsConflict) ...[
-                Text(conflict.blocked.text, style: Zoro.font(22)),
-                const SizedBox(height: 12),
+                Text(
+                  conflict.blocked.text,
+                  style: Zoro.font(compact ? 15 : 22),
+                ),
+                SizedBox(height: compact ? 8 : 12),
                 Text(
                   conflict.blocked.hint,
-                  style: Zoro.font(22, color: Zoro.muted),
+                  style: Zoro.font(compact ? 15 : 22, color: Zoro.muted),
                 ),
               ] else
-                Text(conflict.message, style: Zoro.font(22, color: Zoro.muted)),
-              const SizedBox(height: 28),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+                Text(
+                  conflict.message,
+                  style: Zoro.font(compact ? 15 : 22, color: Zoro.muted),
+                ),
+              SizedBox(height: compact ? 20 : 28),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: compact ? 10 : 16,
+                runSpacing: 10,
                 children: [
                   if (join != null) ...[
-                    ZoroButton(
+                    _LiveButton(
                       label: 'Not now',
                       onPressed: () => Navigator.of(context).pop(),
                     ),
-                    const SizedBox(width: 16),
-                    ZoroButton(
+                    _LiveButton(
                       label: 'Watch ${join.name}',
                       primary: true,
                       autofocus: true,
                       onPressed: () => Navigator.of(context).pop(join),
                     ),
                   ] else
-                    ZoroButton(
+                    _LiveButton(
                       label: 'OK',
                       autofocus: true,
                       onPressed: () => Navigator.of(context).pop(),

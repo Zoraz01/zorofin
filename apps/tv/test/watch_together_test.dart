@@ -243,7 +243,7 @@ void main() {
     expect(() => client().syncPlay('Delete'), throwsA(isA<Object>()));
   });
 
-  testWidgets('preview Profile offers Watch together', (tester) async {
+  testWidgets('preview account menu offers Watch Together', (tester) async {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -254,10 +254,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.bySemanticsLabel(RegExp('^Account menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Watch together'));
-    await tester.tap(find.text('Watch together'));
+    await tester.tap(find.text('Watch Together'));
     await tester.pumpAndSettle();
     expect(
       find.text('Connect to your Jellyfin server to create or join a group.'),

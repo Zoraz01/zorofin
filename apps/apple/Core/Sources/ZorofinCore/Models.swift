@@ -43,6 +43,7 @@ public struct Viewer: Codable, Hashable, Sendable {
 public struct ViewerPolicy: Codable, Hashable, Sendable {
     public var isAdministrator: Bool?
     public var syncPlayAccess: String?
+    public var enableContentDownloading: Bool?
     public init(isAdministrator: Bool = false) { self.isAdministrator = isAdministrator }
 }
 
@@ -83,6 +84,8 @@ public struct UserData: Codable, Hashable, Sendable {
     public var playedPercentage: Double?
     public var isFavorite: Bool?
     public var played: Bool?
+    /// Jellyfin's thumbs-up; Zorofin's watchlist ("Watch later").
+    public var likes: Bool?
     public init(playbackPositionTicks: Int64? = nil, isFavorite: Bool? = nil, played: Bool? = nil) {
         self.playbackPositionTicks = playbackPositionTicks; self.isFavorite = isFavorite; self.played = played
     }
@@ -123,6 +126,8 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
     public var people: [Person]?
     public var channelNumber: String?
     public var currentProgram: LiveProgram?
+    /// Jellyfin local trailer extras; 0 means a preview lookup can be skipped.
+    public var localTrailerCount: Int?
 
     public init(id: String, name: String, type: String = "Movie", overview: String? = nil,
                 productionYear: Int? = nil, userData: UserData? = nil) {

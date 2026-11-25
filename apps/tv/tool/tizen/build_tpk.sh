@@ -35,6 +35,8 @@ python3 - <<'PY'
 import re
 p = open("pubspec.yaml").read()
 p = re.sub(r"^  (?:video_player_webos|shared_preferences_webos):\n(?:[ \t]{4}[^\n]*\n)*", "", p, flags=re.MULTILINE)
+# Match flutter-tizen's pinned Flutter SDK without changing the LG/Android lock.
+p = re.sub(r"^  meta:.*$", "  meta: 1.18.3", p, flags=re.MULTILINE)
 open("pubspec.yaml", "w").write(p)
 PY
 if [[ -f "$app_dir/release/tizen/pubspec.lock" ]]; then
@@ -55,7 +57,8 @@ c['packages'].append({'name': 'zorofin_tizen_runner', 'rootUri': '../tizen/flutt
 p.write_text(json.dumps(c, indent=2) + '\n')
 PY
 export PathMap="$stage=/_/app,${TIZEN_FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter-tizen)")/.." && pwd)}=/_/sdk"
-flutter-tizen build tpk --no-pub --device-profile tv "$mode" ${extra[@]+"${extra[@]}"}
+flutter-tizen build tpk --no-pub --device-profile tv "$mode" \
+  --dart-define=ZOROFIN_TIZEN_TV=true ${extra[@]+"${extra[@]}"}
 mkdir -p "$build_dir/tizen"
 cp build/tizen/tpk/*.tpk "$build_dir/tizen/"
 ls -l "$build_dir/tizen/"*.tpk

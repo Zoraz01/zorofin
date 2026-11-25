@@ -10,6 +10,7 @@ public struct LiveProgram: Codable, Hashable, Sendable {
     public var startDate: String?
     public var endDate: String?
     public var isLive: Bool?
+    public var isSports: Bool?
     public var isRepeat: Bool?
     public var genres: [String]?
     public var imageTags: [String: String]?
@@ -39,7 +40,7 @@ public enum LiveSport: String, Codable, Sendable, CaseIterable {
     }
 }
 
-private enum LiveRules {
+enum LiveRules {
     static func regex(_ pattern: String) -> NSRegularExpression { try! NSRegularExpression(pattern: pattern, options: .caseInsensitive) }
     static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {
         regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
@@ -109,12 +110,15 @@ public struct LiveEvent: Identifiable, Sendable {
     let leagueContext: String
     let evidence: String
     public var artwork: LiveEventArtwork?
+    /// From the companion's Live now feed (LiveScores.swift): a score when the
+    /// server shows scores, and whether either team is a server favorite.
+    public var score: LiveScore?
+    public var favoriteTeam = false
     /// Only images attached to this programme's identity are eligible. Jellyfin
     /// may inherit a channel logo into CurrentProgram; shared tags are not a
     /// thumbnail of the event and must not displace verified fixture artwork.
     public var artworkSources: [LiveEventArtworkSource] {
         var sources: [LiveEventArtworkSource] = []
-        if let image = artwork?.image { sources.append(.catalogue(image)) }
         if let program = channel.currentProgram, let id = program.id,
            !id.isEmpty, id != channel.id {
             let channelTags = Set(Array((channel.imageTags ?? [:]).values)
@@ -128,13 +132,14 @@ public struct LiveEvent: Identifiable, Sendable {
                 }
             }
         }
+        if let image = artwork?.image { sources.append(.catalogue(image)) }
         if let logos = artwork?.logos, logos.count == 2 { sources.append(.crests(logos)) }
         return sources
     }
     public func isCurrent(at now: Date) -> Bool { start <= now && now < end }
     public func progress(at now: Date) -> Double { min(1, max(0, now.timeIntervalSince(start) / end.timeIntervalSince(start))) }
 
-    public static func select(_ channels: [MediaItem], at now: Date) -> [Self] {
+    public static func select(_ channels: [MediaItem], at now: Date, deduplicateSimulcasts: Bool = true) -> [Self] {
         let events = channels.compactMap { channel -> Self? in
             guard !channel.id.isEmpty, let p = channel.currentProgram, !p.name.isEmpty,
                   let start = HomeRowCard.date(p.startDate), let end = HomeRowCard.date(p.endDate),
@@ -165,7 +170,7 @@ public struct LiveEvent: Identifiable, Sendable {
         var seen: Set<String> = [], channelIDs: Set<String> = []
         return events.filter { event in
             guard channelIDs.insert(event.id).inserted else { return false }
-            guard event.matchup != nil else { return true }
+            guard deduplicateSimulcasts, event.matchup != nil else { return true }
             return seen.insert("\(event.sport)-\(LiveRules.normalized(event.title))-\(event.start.timeIntervalSince1970)-\(event.end.timeIntervalSince1970)").inserted
         }
     }
@@ -189,6 +194,12 @@ public struct LiveEventArtwork: Sendable {
     public let logos: [String]
     public let teams: [String]
     public let sport: LiveSport
+    /// A guide image counts as a picture of the event only when it is roughly
+    /// 16:9; logos and portraits fall through to crests or the illustration.
+    public static func isWidePicture(width: Double, height: Double) -> Bool {
+        guard width > 0, height > 0 else { return false }
+        return (1.6...1.95).contains(width / height)
+    }
     public static func isSafePath(_ path: String) -> Bool {
         path.range(of: #"^/live-tv-logos/art/[a-z0-9][a-z0-9-]*\.(png|jpe?g|webp)$"#, options: .regularExpression) == path.startIndex..<path.endIndex
     }
@@ -322,5 +333,51 @@ extension JellyfinClient {
         }
         if let responseCache { return try await responseCache.value(server.storageKey + path, policy: .artwork, fetch: fetch) }
         return try await fetch()
+    }
+}
+
+
+/// Programme browsing metadata is separate from proof that a fixture is live.
+public struct LiveProgramArtSource: Hashable, Sendable {
+    public let itemID: String
+    public let kind: String
+    public let tag: String
+    public let isProgram: Bool
+}
+public enum LiveProgramListing {
+    public static func isCurrent(_ channel: MediaItem, at now: Date) -> Bool {
+        guard let p = channel.currentProgram, let start = HomeRowCard.date(p.startDate),
+              let end = HomeRowCard.date(p.endDate) else { return false }
+        return start <= now && now < end && end > start
+    }
+    public static func isLive(_ channel: MediaItem, at now: Date) -> Bool {
+        guard isCurrent(channel, at: now), let p = channel.currentProgram,
+              p.isLive == true, p.isRepeat != true,
+              let start = HomeRowCard.date(p.startDate), let end = HomeRowCard.date(p.endDate),
+              end.timeIntervalSince(start) <= 43200,
+              LiveRules.normalized(p.name) != LiveRules.normalized(channel.name),
+              !LiveRules.matches(LiveRules.placeholder, p.name) else { return false }
+        return true
+    }
+    /// A category, not a claim of a live game. Sports networks remain browseable.
+    public static func isSports(_ channel: MediaItem) -> Bool {
+        let genres = (channel.currentProgram?.genres ?? []) + (channel.genres ?? [])
+        return channel.currentProgram?.isSports == true || genres.contains { ["sport", "sports"].contains($0.lowercased()) }
+            || channel.name.range(of: #"\b(sports?|espn|nba|nfl|nhl|mlb|bein|eurosport)\b"#, options: .caseInsensitive) != nil
+    }
+    /// Thumb → Backdrop → Primary for the current programme, then channel art.
+    /// Tags inherited from a channel are not programme artwork.
+    public static func artwork(_ channel: MediaItem) -> [LiveProgramArtSource] {
+        let channelTags = Set(Array((channel.imageTags ?? [:]).values) + (channel.backdropImageTags ?? []) + (channel.parentBackdropImageTags ?? []))
+        var result: [LiveProgramArtSource] = []
+        if let p = channel.currentProgram, let id = p.id, !id.isEmpty, id != channel.id {
+            for (kind, tag) in [("Thumb", p.imageTags?["Thumb"]), ("Backdrop", p.backdropImageTags?.first ?? p.imageTags?["Backdrop"]), ("Primary", p.imageTags?["Primary"])] {
+                if let tag, !tag.isEmpty, !channelTags.contains(tag) { result.append(.init(itemID: id, kind: kind, tag: tag, isProgram: true)) }
+            }
+        }
+        for (kind, tag) in [("Backdrop", channel.backdropImageTags?.first), ("Primary", channel.imageTags?["Primary"])] {
+            if let tag, !tag.isEmpty { result.append(.init(itemID: channel.id, kind: kind, tag: tag, isProgram: false)) }
+        }
+        return result
     }
 }

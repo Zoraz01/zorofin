@@ -31,3 +31,27 @@ path from `support-agent/inject.js`, also cloned by the web Modern toolbar bridg
 The only export change replaces CSS currentColor with a template stroke; no external
 icon library or runtime network resource is added. Both Apple asset catalogs retain
 the vector for native tinting and scaling.
+
+## On-device player (AetherEngine)
+
+Files that AVPlayer can't open directly are played with AetherEngine 7.73
+(<https://github.com/superuser404notfound/AetherEngine>, Copyright (C) 2026
+Vincent Herbst). These are MKV files with DTS or TrueHD audio, or with Blu-ray
+PGS or styled ASS subtitles. AetherEngine is licensed under the GNU Lesser
+General Public License v3 with an App Store / DRM exception that allows
+distribution through the App Store and TestFlight. Zorofin uses the
+unmodified package through Swift Package Manager (`tools/generate_project.py`).
+The engine brings these packages with it:
+
+- FFmpegBuild (<https://github.com/superuser404notfound/FFmpegBuild>): FFmpeg
+  n8.1 built as LGPL dynamic frameworks, plus dav1d (BSD-2-Clause), zimg (WTFPL)
+  and libzvbi (LGPL/MIT parts only).
+- LibDovi (<https://github.com/superuser404notfound/LibDovi>): the
+  `dolby_vision` Rust crate (MIT).
+- LibTrueHD (<https://github.com/superuser404notfound/LibTrueHD>): the
+  `truehd` Rust decoder. Its license is in that repository.
+
+Before any store release, ship the full license texts in the app's Settings and
+point to these source repositories, as the LGPL requires. The exact resolved
+versions are in `Zorofin.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+after the first Xcode resolve.

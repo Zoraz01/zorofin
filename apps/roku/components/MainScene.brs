@@ -20,10 +20,16 @@ sub init()
     m.currentTab = ""
     m.views = []
     m.features = {}
+    m.inbox = invalid
+    m.inboxTask = invalid
+    m.inboxTimer = m.top.findNode("inboxTimer")
+    m.inboxTimer.observeField("fire", "refreshInbox")
     m.pendingLink = invalid
     m.launched = false
+    m.awaitingLinkPlayback = false
     m.deviceId = ZDeviceId()
     m.deviceName = ZDeviceName()
+    m.global.observeField("settings", "onSettingsChanged")
     m.global.settings = ZSettings()
 
     start()
@@ -42,12 +48,24 @@ sub start()
         showConnect("")
         return
     end if
+    for each other in accounts
+        if other.key <> account.key and other.server = account.server then
+            showAccounts()
+            return
+        end if
+    end for
     useAccount(account, true)
 end sub
 
 sub useAccount(account as object, validate = false as boolean)
+    if m.global.hasField("pickSession") then m.global.pickSession = invalid
     m.account = account
+    m.tabBar.showRequests = false
+    m.global.features = {}
+    m.global.extras = {}
+    saved = ZActiveAccount()
     m.global.session = {
+        remembered: saved <> invalid and saved.token = account.token,
         server: account.server,
         serverId: ZStr(account.serverId),
         serverName: ZStr(account.serverName),
@@ -59,6 +77,9 @@ sub useAccount(account as object, validate = false as boolean)
         deviceId: m.deviceId,
         deviceName: m.deviceName
     }
+    m.global.settings = ZSettings()
+    applyLooks(ZCachedLooks(account.server))
+    runTask({ cmd: "looks" }, "onLooks")
     if validate then
         setBusy(true, "Signing in…")
         runTask({ cmd: "validate" }, "onValidated")
@@ -98,6 +119,9 @@ sub signOut(params = invalid as dynamic)
     end if
     server = ""
     server = ZStr(m.global.session.server)
+    m.inboxTimer.control = "stop"
+    m.inbox = invalid
+    m.tabBar.unread = 0
     m.global.session = {}
     m.global.features = {}
     m.account = invalid
@@ -110,6 +134,9 @@ end sub
 
 sub switchAccount()
     ZSetActive(invalid)
+    m.inboxTimer.control = "stop"
+    m.inbox = invalid
+    m.tabBar.unread = 0
     m.global.session = {}
     showAccounts()
 end sub
@@ -118,6 +145,46 @@ sub onSignedIn(account as object, remember as boolean)
     ZSaveAccount(account, remember)
     ZSetLastServer(account.server)
     useAccount(account, false)
+end sub
+
+' MARK: Server looks
+
+sub applyLooks(looks as object)
+    m.global.accent = ZStr(looks.accent)
+    m.global.cardScale = ZNum(looks.cardScale, 0.0)
+    m.global.defaultCardScale = ZNum(looks.defaultCardScale, 0.0)
+end sub
+
+' The server's accent and card size beat the viewer's own settings. A
+' change seen after Home was built (first sign-in, or the owner changed
+' it) rebuilds Home once so every card and ring picks it up.
+sub onLooks(event as object)
+    r = event.getData()
+    if r = invalid or not r.ok or m.global.session = invalid then return
+    if ZStr(r.server) <> ZStr(m.global.session.server) then return
+    looks = r.looks
+    changed = ZStr(looks.accent) <> m.global.accent or ZNum(looks.cardScale, 0.0) <> m.global.cardScale or ZNum(looks.defaultCardScale, 0.0) <> m.global.defaultCardScale
+    ZSaveLooks(r.server, looks)
+    if not changed then return
+    applyLooks(looks)
+    if m.currentTab = "home" and m.stack.count() = 1 then
+        clearScreens()
+        showTab("home")
+    end if
+end sub
+
+' Display changes must rebuild cached browsing screens on return. Keep the
+' current Profile/Settings screen and its focus intact.
+sub onSettingsChanged()
+    stale = []
+    for each key in m.roots
+        if key <> m.currentTab then stale.push(key)
+    end for
+    for each key in stale
+        forgetArt(m.roots[key])
+        m.roots.delete(key)
+    end for
+    if m.inbox <> invalid and m.inbox.scope = ZNotificationScope(m.global.session) then applyInbox(m.inbox, false)
 end sub
 
 ' MARK: Navigation
@@ -140,7 +207,7 @@ sub showConnect(server as string, notice = "" as string)
     screen.notice = notice
     screen.observeField("signedIn", "onScreenSignedIn")
     pushScreen(screen)
-    launchComplete()
+    dialogStarted()
 end sub
 
 sub showAccounts()
@@ -150,7 +217,7 @@ sub showAccounts()
     screen.accounts = ZAccounts()
     screen.observeField("chosen", "onAccountChosen")
     pushScreen(screen)
-    launchComplete()
+    dialogStarted()
 end sub
 
 sub onAccountChosen(event as object)
@@ -200,6 +267,7 @@ sub onScreenSignedIn(event as object)
 end sub
 
 sub openHome()
+    dialogDone()
     clearScreens()
     m.tabBar.visible = true
     m.tabBar.userName = ZStr(m.global.session.userName)
@@ -257,6 +325,8 @@ function createRoot(tabId as string) as dynamic
         screen.config = { title: "Shows", types: "Series", sortBy: "SortName", sortOrder: "Ascending" }
     else if tabId = "live" then
         screen = CreateObject("roSGNode", "LiveTvScreen")
+    else if tabId = "requests" and m.tabBar.showRequests then
+        screen = CreateObject("roSGNode", "RequestsScreen")
     else if tabId = "search" then
         screen = CreateObject("roSGNode", "SearchScreen")
     else if tabId = "profile" then
@@ -465,6 +535,10 @@ sub showAccountMenu()
     menu.userName = ZStr(s.userName)
     menu.userImage = ZUserImageUrl(s.server, s.userId, s.imageTag, 120)
     menu.watchTogether = ZNum(m.features.syncPlay, 0) = 1
+    menu.pickTogether = ZNum(m.features.pickTogether, 0) = 1
+    extras = m.global.extras
+    menu.calendar = extras <> invalid and extras.calendar = true
+    menu.catchUp = extras <> invalid and extras.catchUp = true
     menu.callFunc("refresh", {})
     menu.observeField("action", "onAccountMenu")
     m.dialogLayer.appendChild(menu)
@@ -510,6 +584,15 @@ sub onAccountMenu(event as object)
     else if a.type = "watchTogether" then
         closeMenu()
         openScreen("WatchTogetherScreen")
+    else if a.type = "pickTogether" then
+        closeMenu()
+        openScreen("PickTogetherScreen")
+    else if a.type = "calendar" then
+        closeMenu()
+        openScreen("CalendarScreen")
+    else if a.type = "catchUp" then
+        closeMenu()
+        openScreen("CatchUpScreen")
     else if a.type = "settings" then
         closeMenu()
         showTab("profile")
@@ -523,6 +606,8 @@ sub showNotifications()
     m.dialogLayer.appendChild(panel)
     panel.focusIn = true
     m.menu = panel
+    if m.inbox <> invalid and m.inbox.scope = ZNotificationScope(m.global.session) then panel.snapshot = m.inbox
+    refreshInbox()
 end sub
 
 sub onNotificationsAction(event as object)
@@ -530,6 +615,18 @@ sub onNotificationsAction(event as object)
     if a = invalid then return
     if a.type = "close" then
         closeMenu("notifications")
+    else if a.type = "seen" then
+        if ZStr(a.scope) <> ZNotificationScope(m.global.session) then return
+        for each reply in a.replies
+            m.inboxLocalReplies[ZReplyKey(reply)] = true
+        end for
+        for each id in a.requests
+            m.inboxLocalRequests[id.toStr()] = true
+        end for
+        if m.inbox <> invalid then applyInbox(m.inbox, false)
+        postNotificationReads(a.requests, a.replies, false)
+    else if a.type = "refresh" then
+        refreshInbox()
     else if a.type = "unread" then
         m.tabBar.unread = a.count
     end if
@@ -560,6 +657,7 @@ sub onTabLeave()
 end sub
 
 sub onHomeLoaded(event as object)
+    if m.roots.home = invalid or not m.roots.home.isSameNode(event.getRoSGNode()) then return
     info = event.getData()
     if info <> invalid then
         m.views = info.views
@@ -572,16 +670,34 @@ sub onHomeLoaded(event as object)
             end for
         end if
         m.tabBar.showLive = hasLive
+        #if ZOROFIN_REQUESTS
+        m.tabBar.showRequests = ZContains([1, 2], Int(ZNum(m.features.requests, 0)))
+        #end if
         m.tabBar.showSupport = ZNum(m.features.support, 0) = 1
-        m.tabBar.showNotifications = ZNum(m.features.notifications, 0) = 1
-        if m.tabBar.showNotifications then runTask({ cmd: "supportReplies" }, "onReplies")
+        m.tabBar.showNotifications = ZNum(m.features.notifications, 0) = 1 or (ZNum(m.features.notificationReads, 0) = 1 and ZContains([1, 2], Int(ZNum(m.features.requests, 0))))
+        if m.tabBar.showNotifications then
+            refreshInbox()
+            m.inboxTimer.control = "start"
+        else
+            m.inboxTimer.control = "stop"
+            m.tabBar.unread = 0
+        end if
+        runTask({ cmd: "extras" }, "onExtras")
     end if
-    launchComplete()
     if m.pendingLink <> invalid then
         link = m.pendingLink
         m.pendingLink = invalid
+        m.awaitingLinkPlayback = true
         handleDeepLink(link)
+    else if not m.awaitingLinkPlayback then
+        launchComplete()
     end if
+end sub
+
+' Calendar and Catch Up appear in Profile only when the server turns them on.
+sub onExtras(event as object)
+    r = event.getData()
+    if r <> invalid and r.ok then m.global.extras = r.extras
 end sub
 
 ' Generic screen requests: { to: "detail" | "library" | "player" | "season", ... }
@@ -602,6 +718,8 @@ sub onNavigate(event as object)
     else if target = "settings" then
         screen = CreateObject("roSGNode", "SettingsScreen")
         wire(screen)
+        ' Quick Connect and Support open from Account and Help & about.
+        screen.observeField("action", "onProfileAction")
         screen.page = ZStr(nav.page)
         pushScreen(screen)
         m.tabBar.visible = true
@@ -624,7 +742,7 @@ end sub
 sub play(nav as object)
     ' Live channels check the server's Live TV streams first, like Apple TV, so a
     ' full tuner shows which channel is using it instead of a playback error.
-    if nav.live = true and ZNum(m.features.liveTvStreams, 0) = 1 and nav.checked <> true then
+    if nav.live = true and ZLtsRoute(m.features) <> "" and nav.checked <> true then
         setBusy(true, "Checking Live TV availability…")
         m.pendingLive = nav
         task = CreateObject("roSGNode", "JellyfinTask")
@@ -691,15 +809,94 @@ end sub
 
 sub startPlayer(nav as object)
     screen = CreateObject("roSGNode", "PlayerScreen")
+    screen.observeField("playbackStarted", "onPlaybackStarted")
     wire(screen)
     m.tabBar.visible = false
     pushScreen(screen)
     screen.start = nav
 end sub
 
-sub onReplies(event as object)
+sub onPlaybackStarted()
+    ' A cold direct-play launch finishes only once Video is actually playing.
+    m.awaitingLinkPlayback = false
+    launchComplete()
+end sub
+
+sub refreshInbox()
+    if not hasSession() or not m.tabBar.showNotifications then return
+    scope = ZNotificationScope(m.global.session)
+    if m.inboxTask <> invalid and m.inboxTask.request.scope = scope and m.inboxTask.state = "run" then return
+    task = CreateObject("roSGNode", "JellyfinTask")
+    task.request = { cmd: "inbox", scope: scope, features: m.features }
+    task.observeField("response", "onInbox")
+    m.inboxTask = task
+    task.control = "RUN"
+end sub
+
+sub onInbox(event as object)
     r = event.getData()
-    if r.ok then m.tabBar.unread = ZUnreadReplies(r.replies)
+    if ZStr(r.scope) <> ZNotificationScope(m.global.session) then return
+    if not r.ok then
+        if m.menu <> invalid and m.menu.subtype() = "NotificationsPanel" then m.menu.refreshFailed = true
+        return
+    end if
+    ' Preserve a component's last snapshot when only its optional service fails.
+    if m.inbox <> invalid and m.inbox.scope = r.scope then
+        if r.reads <> invalid then r.reads = ZMergeNotificationReads(m.inbox.reads, r.reads)
+        if not r.repliesOk then r.replies = m.inbox.replies
+        if not r.requestsOk then r.notices = m.inbox.notices
+    end if
+    applyInbox(r, true)
+end sub
+
+sub applyInbox(r as object, sync as boolean)
+    if ZStr(r.scope) <> ZNotificationScope(m.global.session) then return
+    if m.inboxLocalScope <> r.scope then
+        m.inboxLocalScope = r.scope
+        m.inboxLocalReplies = {}
+        m.inboxLocalRequests = {}
+        m.inboxLocalInitialized = false
+    end if
+    seen = ZSeenReplies()
+    seen.append(m.inboxLocalReplies)
+    for each reply in r.replies
+        reply.localSeen = seen[ZReplyKey(reply)] = true
+    end for
+    local = ZLocalRequestReads()
+    local.requests.append(m.inboxLocalRequests)
+    local.initialized = local.initialized or m.inboxLocalInitialized
+    plan = ZNotificationPlan(r.notices, r.replies, local, r.reads, r.requestsComplete = true)
+    if plan.localInitialized then
+        ZMarkRequestsSeen(plan.mark, true)
+        m.inboxLocalInitialized = true
+        for each id in plan.mark
+            m.inboxLocalRequests[id.toStr()] = true
+            local.requests[id.toStr()] = true
+        end for
+    end if
+    r.rows = ZNotificationRows(r.notices, r.replies, local, r.reads)
+    m.inbox = r
+    count = r.rows.unread
+    if ZSettings().showUnreadBadge = false then count = 0
+    m.tabBar.unread = count
+    if m.menu <> invalid and m.menu.subtype() = "NotificationsPanel" then m.menu.snapshot = r
+    if sync then postNotificationReads(plan.requests, plan.replies, plan.initialize)
+end sub
+
+sub postNotificationReads(requests as object, replies as object, initialize as boolean)
+    if ZNum(m.features.notificationReads, 0) <> 1 then return
+    if requests.count() + replies.count() = 0 and not initialize then return
+    runTask({ cmd: "notificationReadsWrite", scope: ZNotificationScope(m.global.session), version: 1, requests: requests, replies: replies, initialize: initialize }, "onNotificationReadsSaved")
+end sub
+
+sub onNotificationReadsSaved(event as object)
+    r = event.getData()
+    if ZStr(r.scope) <> ZNotificationScope(m.global.session) then return
+    if r.ok and r.reads <> invalid and m.inbox <> invalid and m.inbox.scope = r.scope then
+        m.inbox.reads = ZMergeNotificationReads(m.inbox.reads, r.reads)
+        applyInbox(m.inbox, false)
+    end if
+    ' Failure leaves local receipts in place; refresh/next dwell retries them.
 end sub
 
 sub onProfileAction(event as object)
@@ -712,6 +909,10 @@ sub onProfileAction(event as object)
         openScreen("QuickConnectScreen")
     else if action = "support" then
         openScreen("SupportScreen")
+    else if action = "calendar" then
+        openScreen("CalendarScreen")
+    else if action = "catchUp" then
+        openScreen("CatchUpScreen")
     else if action = "notifications" then
         showNotifications()
     end if
@@ -721,6 +922,9 @@ sub onSessionExpired()
     if m.account <> invalid then ZForgetAccount(m.account.key)
     server = ""
     server = ZStr(m.global.session.server)
+    m.inboxTimer.control = "stop"
+    m.inbox = invalid
+    m.tabBar.unread = 0
     m.global.session = {}
     showConnect(server, "Your sign-in has ended. Please sign in again.")
 end sub
@@ -756,6 +960,12 @@ end sub
 sub onLinkResolved(event as object)
     r = event.getData()
     if not r.ok then
+        ' Roku certification: an invalid link lands on Home.
+        if hasSession() then
+            showTab("home")
+            m.awaitingLinkPlayback = false
+            launchComplete()
+        end if
         showToast("That title isn't available on this server.")
         return
     end if
@@ -764,7 +974,7 @@ sub onLinkResolved(event as object)
         popScreen()
     end while
     kind = r.type
-    if kind = "Movie" or kind = "Episode" or kind = "Video" or kind = "MusicVideo" or kind = "TvChannel" then
+    if ZDeepLinkTarget(kind) = "play" then
         play({ to: "player", id: r.id, startTicks: r.position, live: kind = "TvChannel" })
     else
         openDetail(r.id)
@@ -814,8 +1024,24 @@ end sub
 
 sub launchComplete()
     if m.launched then return
+    dialogDone()
     m.launched = true
     m.top.signalBeacon("AppLaunchComplete")
+end sub
+
+' Sign-in or "Who's watching" shown before Home counts as a launch dialog for
+' Roku certification: AppDialogInitiate when it appears, AppDialogComplete
+' when it is done, then AppLaunchComplete once Home is ready.
+sub dialogStarted()
+    if m.launched = true or m.launchDialog = true then return
+    m.launchDialog = true
+    m.top.signalBeacon("AppDialogInitiate")
+end sub
+
+sub dialogDone()
+    if m.launchDialog <> true then return
+    m.launchDialog = false
+    m.top.signalBeacon("AppDialogComplete")
 end sub
 
 function onKeyEvent(key as string, press as boolean) as boolean

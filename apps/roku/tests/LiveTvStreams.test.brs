@@ -68,3 +68,22 @@ sub Test_LiveTvStreams_TimeLeft()
     AssertEqual(ZLtsTimeLeft("2026-11-07T17:00:00Z", now), "2 hr left", "whole hours")
     AssertEqual(ZLtsTimeLeft("2026-11-07T14:00:00Z", now), "", "already ended")
 end sub
+
+
+sub Test_LiveTvStreams_UsesServerCapacityNotVisibleChannelCount()
+    status = ZLtsParse({ version: 1, limit: 2, inUse: 2, free: 0, otherUse: 1, streams: [{ channelId: "a", channelName: "Sports", viewers: 9 }] })
+    AssertEqual(ZLtsSummary(status), "2 of 2 Live TV streams in use. Anyone can join a channel that’s already playing.", "server count; neither viewer count nor visible channel count")
+end sub
+
+
+sub Test_LiveTvStreams_LegacyOnlyForOlderServers()
+    AssertEqual(ZLtsRoute({ liveTvStreams: 1, liveTVAvailability: 1 }), "companion", "pool counts win")
+    AssertEqual(ZLtsRoute({ liveTVAvailability: 1 }), "legacy", "old adapter")
+    AssertEqual(ZLtsRoute({}), "", "ordinary Jellyfin")
+    s = ZLtsParseLegacy({ limit: 2, state: "busy", sameChannel: false, differentChannel: true, ownStream: false }, "c")
+    AssertTrue(ZLtsBlocked(s, "c") <> invalid, "older adapter blocks a different channel")
+    AssertTrue(Instr(1, ZLtsSummary(s), "of 2") = 0, "does not invent a precise usage count")
+    s = ZLtsParseLegacy({ limit: 2, state: "busy", sameChannel: true, differentChannel: false, ownStream: false }, "c")
+    AssertTrue(ZLtsBlocked(s, "c") = invalid, "joining existing channel allowed")
+    AssertTrue(ZLtsParseLegacy({ limit: 2, state: "available" }, "c") = invalid, "bad legacy response")
+end sub

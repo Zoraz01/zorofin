@@ -8,6 +8,8 @@ import '../../core/models.dart';
 import '../../core/preferences.dart';
 import '../theme.dart';
 import 'focusable.dart';
+import 'trailer_preview_card.dart';
+import 'home_rail_focus.dart';
 import 'section_title.dart';
 
 /// Artwork card matching the Apple TV `MediaCard`: 360-wide 16:9 or 212-wide
@@ -25,6 +27,9 @@ class MediaCard extends StatelessWidget {
     this.onFocus,
     this.focusNode,
     this.formats,
+    this.caption,
+    this.preview,
+    this.widenOnFocus = false,
   });
 
   static const posterWidth = 212.0;
@@ -59,7 +64,16 @@ class MediaCard extends StatelessWidget {
   /// Server-provided format badges, used in place of the item's own.
   final List<String>? formats;
 
+  /// One context line in place of the year ("85 min", "#1").
+  final String? caption;
+
+  final bool widenOnFocus;
+
+  /// Preview video fades over the focused backdrop.
+  final Widget? preview;
+
   String get _caption {
+    if (caption != null) return caption!;
     if (item.isEpisode) return item.episodeLabel;
     if (item.productionYear != null) return '${item.productionYear}';
     return item.isLive ? 'Live TV' : '';
@@ -68,7 +82,8 @@ class MediaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final prefs = Preferences.valueOf(context);
-    final w = width ?? widthFor(landscape: landscape, prefs: prefs);
+    final base = width ?? widthFor(landscape: landscape, prefs: prefs);
+    final artHeight = base / (landscape ? 16 / 9 : 2 / 3);
     final rating = item.communityRating;
     final badges = prefs.showQualityBadges
         ? (formats?.isNotEmpty ?? false
@@ -83,90 +98,139 @@ class MediaCard extends StatelessWidget {
       semanticLabel: item.isEpisode
           ? '${item.displayTitle}, ${item.episodeLabel}'
           : item.name,
-      builder: (context, focused) => SizedBox(
-        width: w,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AnimatedScale(
-              scale: Zoro.lift(context, focused, 1.045),
-              duration: Zoro.focusDuration,
-              child: Container(
-                foregroundDecoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: focused ? Colors.white : Colors.transparent,
-                    width: 4,
+      builder: (context, focused) {
+        final expanded = widenOnFocus && focused && !landscape;
+        final backdrop = expanded
+            ? catalog.artwork(item, landscape: true, width: 1280)
+            : null;
+        return AnimatedContainer(
+          duration: prefs.reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 260),
+          curve: Curves.easeOut,
+          width: expanded ? artHeight * 16 / 9 : base,
+          onEnd: () {
+            if (!expanded || focusNode?.hasFocus != true || !context.mounted) {
+              return;
+            }
+            final target = context.findRenderObject();
+            if (target != null && target.attached) {
+              Scrollable.maybeOf(
+                context,
+                axis: Axis.horizontal,
+              )?.position.ensureVisible(
+                target,
+                alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+                duration: prefs.reduceMotion
+                    ? Duration.zero
+                    : Zoro.focusDuration,
+              );
+            }
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedScale(
+                scale: Zoro.lift(context, focused, 1.045),
+                duration: Zoro.focusDuration,
+                child: Container(
+                  foregroundDecoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: focused ? Colors.white : Colors.transparent,
+                      width: 4,
+                    ),
                   ),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: AspectRatio(
-                    aspectRatio: landscape ? 16 / 9 : 2 / 3,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Artwork(
-                          url: catalog.artwork(
-                            item,
-                            landscape: landscape,
-                            width: landscape ? 720 : 420,
-                          ),
-                          headers: catalog.imageHeaders,
-                          title: item.displayTitle,
-                          seed: item.id,
-                          showTitle: catalog.isPreview,
-                        ),
-                        if (prefs.showRatings && rating != null && rating > 0)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: RatingBadge(rating: rating),
-                          ),
-                        if (badges.isNotEmpty)
-                          Positioned(
-                            left: 8,
-                            bottom: 16,
-                            child: QualityBadges(badges),
-                          ),
-                        if (prefs.showProgress && item.progress > 0)
-                          Positioned(
-                            left: 8,
-                            right: 8,
-                            bottom: 6,
-                            height: 4,
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: FractionallySizedBox(
-                                widthFactor: item.progress,
-                                child: const ColoredBox(color: Zoro.jade),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      height: widenOnFocus ? artHeight : null,
+                      width: double.infinity,
+                      child: AspectRatio(
+                        aspectRatio: landscape ? 16 / 9 : 2 / 3,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Artwork(
+                              url: catalog.artwork(
+                                item,
+                                landscape: landscape,
+                                width: landscape ? 720 : 420,
                               ),
+                              headers: catalog.imageHeaders,
+                              title: item.displayTitle,
+                              seed: item.id,
+                              showTitle: catalog.isPreview,
                             ),
-                          ),
-                      ],
+                            if (backdrop != null)
+                              Image.network(
+                                backdrop.toString(),
+                                headers: catalog.imageHeaders,
+                                fit: BoxFit.cover,
+                                // Keep the poster underneath until the backdrop decodes.
+                                frameBuilder: (_, child, frame, sync) =>
+                                    sync || frame != null
+                                    ? child
+                                    : const SizedBox.shrink(),
+                                errorBuilder: (_, _, _) =>
+                                    const SizedBox.shrink(),
+                              ),
+                            ?preview,
+                            if (preview == null &&
+                                prefs.showRatings &&
+                                rating != null &&
+                                rating > 0)
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: RatingBadge(rating: rating),
+                              ),
+                            if (preview == null && badges.isNotEmpty)
+                              Positioned(
+                                left: 8,
+                                bottom: 16,
+                                child: QualityBadges(badges),
+                              ),
+                            if (prefs.showProgress && item.progress > 0)
+                              Positioned(
+                                left: 8,
+                                right: 8,
+                                bottom: 6,
+                                height: 4,
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FractionallySizedBox(
+                                    widthFactor: item.progress,
+                                    child: ColoredBox(color: Zoro.jade),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            if (prefs.showTitles) ...[
-              const SizedBox(height: 9),
-              Text(
-                item.displayTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Zoro.font(22, weight: FontWeight.w600),
-              ),
-              Text(
-                _caption,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Zoro.font(17, color: Zoro.muted),
-              ),
+              if (prefs.showTitles) ...[
+                const SizedBox(height: 9),
+                Text(
+                  item.displayTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Zoro.font(22, weight: FontWeight.w600),
+                ),
+                Text(
+                  _caption,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Zoro.font(17, color: Zoro.muted),
+                ),
+              ],
             ],
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -241,6 +305,7 @@ class Artwork extends StatelessWidget {
     required this.title,
     required this.seed,
     this.showTitle = false,
+    this.fit = BoxFit.cover,
   });
 
   final Uri? url;
@@ -248,6 +313,7 @@ class Artwork extends StatelessWidget {
   final String title;
   final String seed;
   final bool showTitle;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +327,7 @@ class Artwork extends StatelessWidget {
     return Image.network(
       source.toString(),
       headers: headers,
-      fit: BoxFit.cover,
+      fit: fit,
       gaplessPlayback: true,
       errorBuilder: (_, _, _) => placeholder,
       frameBuilder: (_, child, frame, sync) =>
@@ -325,14 +391,31 @@ class PreviewArtwork extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.fromLTRB(16, 16, 16, h * 0.18),
                   child: Center(
-                    child: Text(
-                      title.toUpperCase(),
-                      textAlign: TextAlign.center,
-                      style: Zoro.font(
-                        (w * 0.11).clamp(8, 34),
-                        weight: FontWeight.w700,
-                        color: const Color(0xE6FFFFFF),
-                      ).copyWith(letterSpacing: 2),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: w - 32),
+                        child: Builder(
+                          builder: (context) {
+                            final text = title.toUpperCase();
+                            final style = _fitWords(
+                              context,
+                              text,
+                              Zoro.font(
+                                (w * 0.11).clamp(8, 34),
+                                weight: FontWeight.w700,
+                                color: const Color(0xE6FFFFFF),
+                              ).copyWith(letterSpacing: 2),
+                              w - 32,
+                            );
+                            return Text(
+                              text,
+                              textAlign: TextAlign.center,
+                              style: style,
+                            );
+                          },
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -402,21 +485,27 @@ class MediaShelf extends StatelessWidget {
     required this.catalog,
     required this.onOpen,
     this.landscape = false,
+    this.trailing,
     this.onFocus,
     this.autofocusFirst = false,
+    this.previews = false,
   });
+
+  /// Movie and show posters play their trailer when focused (TV Home).
+  final bool previews;
 
   final String title;
   final List<MediaItem> items;
   final Catalog catalog;
   final ValueChanged<MediaItem> onOpen;
   final bool landscape;
+  final Widget? trailing;
   final ValueChanged<MediaItem>? onFocus;
   final bool autofocusFirst;
 
   @override
   Widget build(BuildContext context) {
-    return FocusTraversalGroup(
+    return HomeRailFocus(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -439,20 +528,81 @@ class MediaShelf extends StatelessWidget {
                 horizontal: Zoro.gutter,
                 vertical: 18,
               ),
-              itemCount: items.length,
+              itemCount: items.length + (trailing == null ? 0 : 1),
+              findChildIndexCallback: (key) {
+                if (key == const ValueKey('shelf-browse-all')) {
+                  return items.length * 2;
+                }
+                final index = items.indexWhere(
+                  (item) => ValueKey(item.id) == key,
+                );
+                return index < 0 ? null : index * 2;
+              },
               separatorBuilder: (_, _) => const SizedBox(width: 28),
-              itemBuilder: (context, i) => MediaCard(
-                item: items[i],
-                catalog: catalog,
-                landscape: landscape,
-                autofocus: autofocusFirst && i == 0,
-                onFocus: onFocus == null ? null : () => onFocus!(items[i]),
-                onPressed: () => onOpen(items[i]),
-              ),
+              itemBuilder: (context, i) => i == items.length
+                  ? SizedBox(
+                      key: const ValueKey('shelf-browse-all'),
+                      width: MediaCard.widthFor(
+                        landscape: landscape,
+                        prefs: Preferences.valueOf(context),
+                      ),
+                      child: Center(child: trailing),
+                    )
+                  : previews && !landscape
+                  ? TrailerPreviewCard(
+                      key: ValueKey(items[i].id),
+                      item: items[i],
+                      catalog: catalog,
+                      autofocus: autofocusFirst && i == 0,
+                      onFocus: onFocus == null
+                          ? null
+                          : () => onFocus!(items[i]),
+                      onPressed: () => onOpen(items[i]),
+                    )
+                  : MediaCard(
+                      key: ValueKey(items[i].id),
+                      item: items[i],
+                      catalog: catalog,
+                      landscape: landscape,
+                      autofocus: autofocusFirst && i == 0,
+                      onFocus: onFocus == null
+                          ? null
+                          : () => onFocus!(items[i]),
+                      onPressed: () => onOpen(items[i]),
+                    ),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+/// Shrinks [style] so the longest word in [text] fits on one line within
+/// [width], so a long title never breaks mid-word.
+TextStyle _fitWords(
+  BuildContext context,
+  String text,
+  TextStyle style,
+  double width,
+) {
+  if (width <= 0) return style;
+  var widest = 0.0;
+  for (final word in text.split(RegExp(r'\s+'))) {
+    if (word.isEmpty) continue;
+    final painter = TextPainter(
+      text: TextSpan(text: word, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    if (painter.width > widest) widest = painter.width;
+    painter.dispose();
+  }
+  if (widest <= width) return style;
+  final scale = width / widest * 0.98;
+  return style.copyWith(
+    fontSize: (style.fontSize ?? 14) * scale,
+    letterSpacing: (style.letterSpacing ?? 0) * scale,
+  );
 }

@@ -89,3 +89,33 @@ private actor SearchTransport: HTTPTransport {
         await #expect(throws: ClientError.unavailable(503)) { try await client(transport).searchRecommendations() }
     }
 }
+
+extension SearchRecommendationsTests {
+    @Test func catalogueOptionsReachTheServerAndKeepDefaultCacheSeparate() async throws {
+        let server = try ServerAddress("https://library.example/base")
+        let transport = SearchTransport(), cache = LibraryResponseCache(server: server, viewerID: "viewer", root: nil)
+        let client = try client(transport, cache: cache)
+        _ = try await client.items(type: "Movie")
+        _ = try await client.items(type: "Movie", start: 30, favorites: true,
+            options: .init(sort: .title, genre: "Science Fiction & Fantasy", unwatched: true))
+        let request = try #require(await transport.requests.last)
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+        #expect(query.contains(.init(name: "sortBy", value: "SortName")))
+        #expect(query.contains(.init(name: "sortOrder", value: "Ascending")))
+        #expect(query.contains(.init(name: "startIndex", value: "30")))
+        #expect(query.contains(.init(name: "genres", value: "Science Fiction & Fantasy")))
+        #expect(query.contains(.init(name: "filters", value: "IsFavorite,IsUnplayed")))
+        #expect(query.contains(.init(name: "userId", value: "viewer")))
+        _ = try await client.readingCache().items(type: "Movie")
+        #expect(await transport.requests.count == 2)
+    }
+    @Test func typedResultTypeAndOffsetArePartOfTheQuery() async throws {
+        let transport = SearchTransport()
+        _ = try await client(transport).items(type: "Series", search: "Northern", start: 60)
+        let request = try #require(await transport.requests.last)
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+        #expect(query.contains(.init(name: "includeItemTypes", value: "Series")))
+        #expect(query.contains(.init(name: "startIndex", value: "60")))
+        #expect(query.contains(.init(name: "searchTerm", value: "Northern")))
+    }
+}

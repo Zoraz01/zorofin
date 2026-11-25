@@ -5,6 +5,8 @@
 ' the Play key on a card starts it directly.
 
 sub init()
+    m.top.findNode("kindDot").blendColor = ZAccent()
+    m.top.findNode("kind").color = ZAccent()
     m.page = m.top.findNode("page")
     m.page.id = "page"
     m.overview = m.top.findNode("overview")
@@ -715,7 +717,7 @@ end function
 ' One line under a channel's Play button: who's on this channel, or which
 ' channel is using the last stream, with "Watch ESPN" added to the buttons.
 sub watchStreams()
-    live = m.item <> invalid and m.item.itemType = "TvChannel" and ZNum(m.global.features.liveTvStreams, 0) = 1
+    live = m.item <> invalid and m.item.itemType = "TvChannel" and ZLtsRoute(m.global.features) <> ""
     if live and m.top.visible then
         loadStreams()
         m.streamsTimer.control = "start"
@@ -751,7 +753,7 @@ sub onStreams(event as object)
     group.visible = line <> ""
     m.top.findNode("liveText").text = line
     color = "0xE0B44AFF"
-    if playing then color = "0x72E79BFF"
+    if playing then color = ZAccent()
     m.top.findNode("liveDot").blendColor = color
     m.top.findNode("liveHalo").blendColor = Left(color, 8) + "33"
     joinChanged = (join = invalid) <> (m.liveJoin = invalid)

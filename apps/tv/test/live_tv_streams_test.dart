@@ -202,4 +202,80 @@ void main() {
     await tester.pumpAndSettle();
     expect((await choice)?.id, espn);
   });
+
+  testWidgets('phones get the touch-sized strip, line and dialog', (
+    tester,
+  ) async {
+    for (final size in const [Size(360, 740), Size(800, 412)]) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      final status = LiveTvStreams.fromJson(full());
+      MediaItem? joined;
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Builder(
+                builder: (c) {
+                  context = c;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LiveTvStreamsStrip(
+                        status: status,
+                        onJoin: (i) => joined = i,
+                      ),
+                      LiveTvStreamsLine(
+                        status: status,
+                        channelId: fox,
+                        onJoin: (i) => joined = i,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull, reason: '$size');
+      expect(liveTvCompact(context), isTrue);
+      // The card fits the screen instead of the 600 px TV card.
+      final card = tester.getSize(
+        find
+            .ancestor(
+              of: find.text('SportsCenter'),
+              matching: find.byType(Container),
+            )
+            .last,
+      );
+      expect(card.width, lessThanOrEqualTo(size.width - 40), reason: '$size');
+      expect(tester.getSize(find.text('ESPN').first).height, lessThan(30));
+      await tester.tap(find.text('Join'));
+      expect(joined?.id, espn);
+
+      final choice = showLiveTvConflict(
+        context,
+        LiveTvStreamsConflict(status.blocked(fox)!),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '$size dialog');
+      final dialog = tester.getRect(
+        find
+            .ancestor(
+              of: find.text('Live TV is in use'),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(dialog.width, lessThanOrEqualTo(size.width - 32));
+      expect(dialog.left, greaterThanOrEqualTo(0));
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
+      expect(await choice, isNull);
+    }
+    tester.view.reset();
+  });
 }

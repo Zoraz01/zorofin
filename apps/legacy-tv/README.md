@@ -15,9 +15,8 @@ at 1920x1080 and scaled for 1280x720 TVs.
 - **Connect and sign in:** server address (checked with
   `/System/Info/Public`), username and password, or Quick Connect.
 - **Who's watching:** each profile signed in on the TV is saved; with two or
-  more the app opens on a profile picker. The avatar menu switches directly
-  to another saved profile, or opens the picker from All. Add profiles in
-  Account and sign out in Settings.
+  more the app opens on a profile picker, like the other TV apps. Add, switch
+  and sign out from the profile menu (top-right).
 - **Home:** hero banner for the focused title, Continue Watching (wide cards),
   then the Zorofin plugin's rows (`/Zorofin/Home/Rows`: requests ready, new
   episodes, live sports, short movies, showcase, curated, popular), new movies,
@@ -36,11 +35,7 @@ at 1920x1080 and scaled for 1280x720 TVs.
   MP4/MKV/MOV, server transcode to H.264/AAC HLS for the rest; Live TV always
   goes through the server's HLS. Subtitles (Down), seek (Left/Right, longer
   when held), Skip intro / recap / credits from Jellyfin media segments, next
-  episode at the end, progress reported every 10 seconds. Playback Settings
-  controls skip intervals and an optional chapter list and timeline marks.
-  Interrupted streams reopen at the same position when the server returns;
-  live playback retunes. Playback problem reports are available in Help &
-  about when the server advertises collection.
+  episode at the end, progress reported every 10 seconds.
 
 Left out to stay smooth on 2017 to 2020 TV processors: trailer previews on
 Home, the animated media bar, and swiping on the TV itself.
@@ -70,19 +65,6 @@ TV engine) against the mock server and saves screenshots at 1920x1080 and
 1280x720 for every screen; it fails on any script error or a card with the
 wrong shape. Setup and run commands are at the top of the file.
 
-The optional `LEGACY_TEST_CLIP` environment variable enables playback checks
-using a generated WebM. Use this on a loopback mock server with fictional
-profiles. The test drives playing, seeking, pause and resume, a forced
-decoder error, a lost-server probe, recovery, reporting on and off, and Back
-during recovery. The WebM fixture exercises browser playback and the app's
-fallback and reporting logic. Run a signed WGT on real Tizen hardware to
-verify the TV's media engine and actual HLS.
-
-```sh
-ffmpeg -f lavfi -i 'testsrc2=size=320x180:rate=5' -t 105 -c:v libvpx -deadline realtime -b:v 140k -an test-clip.webm
-LEGACY_TEST_CLIP="$PWD/test-clip.webm" node apps/legacy-tv/tool/validate.cjs /path/to/private/evidence
-```
-
 To release: bump the version in `tizen/config.xml` and `core.js`, package,
 copy the `.wgt` to `release/`, and set `legacy_tv_version` and
 `legacy_tv_package_sha256` in `apps/apple/release/site-product.json`.
@@ -108,12 +90,9 @@ Tizen Studio works too (`tizen package -t wgt -s <profile>` then
 
 ## Status
 
-The 1.5.1 sideload preview brings the profile menu, Settings, chapters,
-reconnect and playback reporting to the lightweight client. Preview
-1.5.0 uses the Zorofin 1.5 release number. The preceding 0.2.0
-preview used its own older-TV version sequence. Chromium 69 validation uses
-1920x1080 and 1280x720 viewports against the mock server. The 1.5.0 preview
-awaits testing on a real 2017 to 2020 Samsung TV. 0.1.0 was a wrapper around
+Preview 0.2.0 (2026-11-23). Validated in Chromium 69 at 1920x1080 and
+1280x720 against the mock server; not yet run on a real 2017 to 2020 Samsung
+TV (the Tizen emulator needs an Intel or AMD PC). 0.1.0 was a wrapper around
 the server's web interface and looked poor on a real 2020 TV, so it was
 replaced. The reviewed package is tracked in `release/` and served at
 https://zorofin.app/samsung-tv#older-tvs.

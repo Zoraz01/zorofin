@@ -15,11 +15,14 @@ end sub
 ' Card sizes from the Apple TV MediaCard: 212 x 318 posters, 360 x 202 art,
 ' then a 22 pt title and 17 pt caption; 18 px room for the focus lift.
 function CardSize() as object
-    scale = 1.0
-    s = m.global.settings
-    if s <> invalid and s.posterScale <> invalid then scale = s.posterScale
+    scale = ZPosterScale()
     ' Fixed widths: Apple's 380 px episode cards and 180 px person cards.
     w = m.top.cardWidth
+    ' Live now: 16:9 art (scores over it), then two lines like MediaCard.
+    if m.top.itemComponent = "LiveEventCard" then
+        lw = Int(400 * scale)
+        return [lw + 12, Int(lw * 9 / 16) + 99]
+    end if
     ' Each size includes the card's 12 px focus inset (MediaCard frame).
     if w > 0 and m.top.landscape then return [w + 12, Int(w * 9 / 16) + 99]
     if w > 0 then return [w + 12, Int(w * 3 / 2) + 99]
@@ -38,7 +41,7 @@ sub onContent()
     else
         wrapper = items
     end if
-    m.row.itemComponentName = "MediaCard"
+    m.row.itemComponentName = m.top.itemComponent
     m.row.drawFocusFeedback = false
     m.row.rowFocusAnimationStyle = "floatingFocus"
     m.row.vertFocusAnimationStyle = "fixedFocus"

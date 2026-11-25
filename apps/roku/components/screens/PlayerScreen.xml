@@ -9,6 +9,7 @@
   <interface>
     <field id="start" type="assocarray" onChange="onStart" />
     <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="playbackStarted" type="boolean" />
     <field id="toast" type="string" alwaysNotify="true" />
     <field id="sessionExpired" type="boolean" alwaysNotify="true" />
     <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
@@ -17,6 +18,7 @@
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Quality.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/PlayerExtras.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/PlayerScreen.brs" />
   <children>
     <Rectangle width="1920" height="1080" color="0x000000FF" />
@@ -45,5 +47,6 @@
     <Timer id="progressTimer" duration="10" repeat="true" />
     <Timer id="tickTimer" duration="1" repeat="true" />
     <Timer id="startTimer" duration="45" repeat="false" />
+    <Timer id="serverTimer" duration="3" repeat="false" />
   </children>
 </component>

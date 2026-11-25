@@ -21,6 +21,8 @@ end sub
 
 sub Test_Server_EndpointEscapesAndValidates()
     AssertEqual(ZEndpoint("https://m.example/", ["Items", "abc"], { b: "x y", a: "1" }), "https://m.example/Items/abc?a=1&b=x%20y", "path and sorted query")
+    AssertEqual(ZEndpoint("https://m.example/", ["Videos", "id", "stream.mp4"]), "https://m.example/Videos/id/stream.mp4", "direct trailer route")
+    AssertEqual(ZEndpoint("https://m.example/", [".."]), "", "parent segment")
     AssertEqual(ZEndpoint("https://m.example/", ["Items", "../x"]), "", "unsafe path component")
 end sub
 

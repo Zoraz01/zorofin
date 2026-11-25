@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
   Apple TV notifications popover (RequestsView.swift NotificationInboxView)
-  under the bell: replies from the server's support agent, newest first.
-  Replies count as seen after a moment on screen; seen ones move under
+  under the bell: support replies and, with notificationReads v1, ready requests.
+  Rows count as seen after a moment on screen; seen ones move under
   "Hidden" the next time. Emits action = { type: close } or
   { type: unread, count }.
 -->
 <component name="NotificationsPanel" extends="Group">
   <interface>
+    <field id="snapshot" type="assocarray" onChange="onSnapshot" />
+    <field id="refreshFailed" type="boolean" alwaysNotify="true" onChange="onRefreshFailed" />
     <field id="action" type="assocarray" alwaysNotify="true" />
     <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
   <script type="text/brightscript" uri="pkg:/components/widgets/NotificationsPanel.brs" />

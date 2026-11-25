@@ -70,10 +70,19 @@ enum SessionVault {
     }
     var extensionEnabled: Bool { features.requests }
     var features = ServerFeatures()
+    /// The plugin's Calendar and Catch Up, when the operator turned them on.
+    var pluginExtras = PluginExtras.none
+    /// A title a Profile page (Calendar, Catch Up) asked the shell to open.
+    var pendingOpen: MediaItem?
+    /// A title to play through the ordinary player (Pick Together matches).
+    var pendingPlay: MediaItem?
+    let pickTogether = PickTogetherController()
+    var pendingBrowseDownloads = false
     var featuresChecked = false
     var featureError: String?
     var replies: [SupportReply] = []
     var requestNotices: [RequestAvailabilityNotice] = []
+    var accountNotificationReads: NotificationReadState?
     var requestReadIDs: Set<Int> = []
     var requestNoticeError: String?
     var loadingRequestNotices = false
@@ -87,8 +96,14 @@ enum SessionVault {
     private var requestNoticeRevision = 0
     private var lastRequestNoticeCheck = Date.distantPast
     var hasNotifications: Bool { features.notifications || features.requests }
-    var unreadRequestNotices: [RequestAvailabilityNotice] { requestNotices.filter { !requestReadIDs.contains($0.id) } }
-    var unreadReplies: [SupportReply] { replies.filter { !seenReplyKeys.contains($0.notificationKey) } }
+    func isRequestRead(_ id: Int) -> Bool { requestReadIDs.contains(id) || (features.notificationReads && accountNotificationReads?.requests.contains(id) == true) }
+    func isReplyRead(_ reply: SupportReply) -> Bool { seenReplyKeys.contains(reply.notificationKey) || (features.notificationReads && !reply.isAnnouncement && accountNotificationReads?.replies.contains(reply.accountReadKey) == true) }
+    var unreadRequestNotices: [RequestAvailabilityNotice] { requestNotices.filter { !isRequestRead($0.id) } }
+    var unreadReplies: [SupportReply] { replies.filter { !isReplyRead($0) } }
+    var readReplies: [SupportReply] {
+        var seen: Set<String> = []
+        return (replies.filter { isReplyRead($0) } + hiddenReplies).filter { seen.insert($0.notificationKey).inserted }
+    }
     var unreadNotificationCount: Int { unreadReplies.count + unreadRequestNotices.count }
     var loadingNotifications: Bool { loadingReplies || loadingRequestNotices }
     var replyError: String?
@@ -108,6 +123,18 @@ enum SessionVault {
     var viewerSettings: ViewerSettings?
     var settingsError: String?
     var preferencesReady = false
+    /// The server's looks (accent and card size for every viewer), if any.
+    var serverLooks: ServerLooks?
+    /// Whether this viewer saved their own settings on this device.
+    private var preferencesSaved = false
+    /// Poster size: the server's card size when it is the same for every
+    /// viewer, or until the viewer picks their own; otherwise theirs.
+    var posterScale: Double {
+        if let serverLooks, serverLooks.enforced || !preferencesSaved { return serverLooks.posterScale }
+        return preferences.posterScale
+    }
+    /// The server sets the poster size, so Settings doesn't offer it.
+    var cardSizeFromServer: Bool { serverLooks?.enforced == true }
     var profileImage: UIImage?
     private let preferenceStore = NativePreferenceStore()
     private var settingsTask: Task<Void, Never>?
@@ -118,7 +145,23 @@ enum SessionVault {
         settingsTask?.cancel(); settingsTask = nil
         accountSettingsTask?.cancel(); accountSettingsTask = nil; settingsRequestID = UUID()
         preferences = .init(); viewerSettings = nil; profileImage = nil
-        preferencesReady = false; settingsError = nil
+        preferencesReady = false; settingsError = nil; preferencesSaved = false
+        useLooks(session.flatMap { ServerLooksCache.standard.load($0.server) })
+    }
+    private func useLooks(_ looks: ServerLooks?) {
+        serverLooks = looks
+        ServerAccent.shared.set(looks?.accent)
+    }
+    /// Fetches the server's looks and keeps them for the next launch. A
+    /// server without them (or a failed check) keeps what was cached.
+    private func refreshLooks(_ client: JellyfinClient, expected: UUID) async {
+        guard let session else { return }
+        do {
+            let looks = try await client.serverLooks()
+            guard !Task.isCancelled, generation == expected else { return }
+            ServerLooksCache.standard.save(looks, server: session.server)
+            useLooks(looks)
+        } catch {}
     }
     private func beginSettings() {
         resetSettings()
@@ -127,8 +170,9 @@ enum SessionVault {
         settingsTask = Task {
             do {
                 let saved = try await preferenceStore.load(server: session.server, viewerID: session.viewer.id)
+                let hasSaved = await preferenceStore.hasSaved(server: session.server, viewerID: session.viewer.id)
                 guard !Task.isCancelled, generation == expected else { return }
-                preferences = saved
+                preferences = saved; preferencesSaved = hasSaved
             } catch {
                 guard !Task.isCancelled, generation == expected else { return }
                 settingsError = "Saved app settings could not be loaded. Defaults are in use until you save again."
@@ -164,7 +208,7 @@ enum SessionVault {
         let expected = generation
         try await preferenceStore.save(value, server: session.server, viewerID: session.viewer.id)
         guard !Task.isCancelled, generation == expected else { throw CancellationError() }
-        preferences = value; preferencesReady = true
+        preferences = value; preferencesReady = true; preferencesSaved = true
         if value.homeScreenPreviews == false { clearTopShelf() } else { refreshTopShelf() }
     }
     func clearLibraryCache() async throws {
@@ -203,12 +247,12 @@ enum SessionVault {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--demo") { showDemo(); return }
             #endif
-            if let active = connections.activeAccount, let session = active.session,
-               connections.accounts.filter({ $0.server.storageKey == session.server.storageKey }).count == 1 {
+            // Apple TV is shared, so it asks who's watching when the last server has
+            // several viewers. iPhone and iPad reopen the last account.
+            if let session = connections.launchSession(sharedDevice: Theme.isTV),
+               let active = connections.activeAccount {
                 setSession(session, name: active.serverName)
             }
-            // Shared devices choose an account at cold launch when the last server
-            // has multiple saved viewers. Returning from the background keeps playback.
         } catch { message = "Saved sign-ins could not be opened. Unlock your device and retry. Nothing has been replaced." }
     }
     private func persist(_ next: SavedConnections) throws {
@@ -294,6 +338,20 @@ enum SessionVault {
         DownloadManager.shared.configure(client: client)
         #endif
         resetExtensions(); homeRevision = 0; beginSettings()
+        // Start Home on the row source this server had last time, so a cold
+        // launch doesn't build basic rows and then replace them.
+        features.homeRowsContract = rememberedHomeContract
+    }
+    private var homeContractKey: String? {
+        session.map { "zorofin.homeRowsContract.\($0.server.storageKey).\($0.viewer.id)" }
+    }
+    private var rememberedHomeContract: HomeRowsContract? {
+        get { homeContractKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Int }.flatMap(HomeRowsContract.init(rawValue:)) }
+        set {
+            guard let key = homeContractKey else { return }
+            if let newValue { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
     }
     private func clearSession() {
         watchTogether.configure(nil)
@@ -335,8 +393,9 @@ enum SessionVault {
     }
 
     private func resetExtensions() {
+        accountNotificationReads = nil
         supportTask?.cancel(); supportTask = nil
-        features = .init(); featuresChecked = false; featureError = nil
+        features = .init(); pluginExtras = .none; pendingOpen = nil; pendingPlay = nil; pickTogether.reset(); pendingBrowseDownloads = false; featuresChecked = false; featureError = nil
         checkingFeatures = false; retryFeatures = false
         replies = []; hiddenReplies = []; seenReplyKeys = []; lastReplyCheck = .distantPast; replyError = nil; loadingReplies = false; readingReplyIDs = []; replyRevision = 0
         requestNotices = []; requestReadIDs = []; requestNoticeError = nil; loadingRequestNotices = false
@@ -349,10 +408,8 @@ enum SessionVault {
     func runExtensionUpdates() async {
         guard !isDemo else { return }
         let expectedGeneration = generation
-        var first = true
         while !Task.isCancelled && generation == expectedGeneration {
-            if first || !featuresChecked || retryFeatures { await checkFeatures() }
-            first = false
+            await checkFeatures()
             guard !Task.isCancelled, generation == expectedGeneration else { return }
             if hasNotifications { await refreshNotifications() }
             do { try await Task.sleep(for: .seconds(30)) } catch { return }
@@ -363,13 +420,29 @@ enum SessionVault {
         guard !checkingFeatures, !isDemo, let client else { return }
         let expectedGeneration = generation
         checkingFeatures = true
-        defer { if generation == expectedGeneration { checkingFeatures = false } }
+        let previousContract = features.homeRowsContract
+        defer {
+            if generation == expectedGeneration {
+                checkingFeatures = false
+                if previousContract != features.homeRowsContract {
+                    homeLibrary.rowLoadID = UUID(); homeLibrary.homeFeed = nil
+                    homeLibrary.homeError = nil; homeLibrary.rowsLoadedAt = .distantPast
+                    homeLibrary.rowsRevision = -1
+                }
+            }
+        }
         do {
             let result = try await client.discoverFeatures()
             guard !Task.isCancelled, generation == expectedGeneration else { return }
+            await refreshLooks(client, expected: expectedGeneration)
+            guard !Task.isCancelled, generation == expectedGeneration else { return }
             features = result.features
+            if !result.needsRetry || features.homeRowsContract != nil { rememberedHomeContract = features.homeRowsContract }
             if !features.notifications { replies = []; hiddenReplies = []; seenReplyKeys = []; replyError = nil }
             if !features.requests { requestNotices = []; requestReadIDs = []; requestNoticeError = nil; hasOlderRequestNotices = false }
+            let extras = (try? await client.pluginExtras()) ?? .none
+            guard !Task.isCancelled, generation == expectedGeneration else { return }
+            pluginExtras = extras
             featuresChecked = true; retryFeatures = result.needsRetry
             featureError = result.needsRetry ? "Some server extras could not be checked. Your library is still available." : nil
         } catch is CancellationError { }
@@ -378,7 +451,8 @@ enum SessionVault {
             if let failure = error as? ClientError {
                 switch failure {
                 case .unauthorized, .forbidden, .invalidResponse:
-                    features = .init(); replies = []; hiddenReplies = []; seenReplyKeys = []; replyError = nil
+                    features = .init(); pluginExtras = .none; replies = []; hiddenReplies = []; seenReplyKeys = []; replyError = nil
+                    rememberedHomeContract = nil
                     requestNotices = []; requestReadIDs = []; requestNoticeError = nil
                 default: break
                 }
@@ -389,6 +463,12 @@ enum SessionVault {
     }
 
     func refreshNotifications(force: Bool = false) async {
+        let expected = generation
+        if features.notificationReads, !isDemo, let client {
+            let remote = try? await client.notificationReads()
+            guard !Task.isCancelled, generation == expected else { return }
+            accountNotificationReads = remote
+        } else { accountNotificationReads = nil }
         async let support: Void = refreshReplies(force: force)
         async let requests: Void = refreshRequestNotices(force: force)
         _ = await (support, requests)
@@ -398,6 +478,7 @@ enum SessionVault {
         guard features.requests, !loadingRequestNotices, !isDemo, let client, let session,
               force || Date().timeIntervalSince(lastRequestNoticeCheck) >= 120 else { return }
         let expected = generation, revision = requestNoticeRevision
+        let account = features.notificationReads ? accountNotificationReads : nil
         loadingRequestNotices = true
         // Also throttle failures during the foreground loop; explicit Retry bypasses it.
         lastRequestNoticeCheck = Date()
@@ -410,14 +491,24 @@ enum SessionVault {
             if requestNotices.isEmpty { requestNotices = saved.requests }
             // Cached available items already have a history entry. Pending requests
             // are still rechecked; only a real availability transition adds an item.
-            let result = try await client.requestAvailabilityNotifications(readIDs: Set(saved.requests.map(\.id)).union(saved.requestsInitialized ? saved.readRequestIDs : []))
+            let result = try await client.requestAvailabilityNotifications(readIDs: account == nil ? Set(saved.requests.map(\.id)).union(saved.requestsInitialized ? saved.readRequestIDs : []) : [])
             guard !Task.isCancelled, generation == expected, features.requests,
                   revision == requestNoticeRevision, readingRequestIDs.isEmpty else { return }
-            let updated = try await notificationHistory.receiveRequests(result.notices, legacyReadIDs: readIDs,
+            let updated = try await notificationHistory.receiveRequests(result.notices, legacyReadIDs: readIDs, initializeSnapshot: account?.initialized != true,
                 server: session.server, viewerID: session.viewer.id)
             guard !Task.isCancelled, generation == expected, features.requests else { return }
             requestReadIDs.formUnion(updated.readRequestIDs); requestNotices = updated.requests
             hasOlderRequestNotices = result.hasOlder; requestNoticeError = nil
+            if let account, features.notificationReads {
+                let ready = Set(result.notices.map(\.id))
+                let migration = account.initialized ? updated.readRequestIDs.intersection(ready).subtracting(account.requests) : ready
+                if !account.initialized || !migration.isEmpty {
+                    if let synced = try? await client.markNotificationReads(requests: Array(migration), initialize: !account.initialized) {
+                        guard !Task.isCancelled, generation == expected, features.notificationReads else { return }
+                        accountNotificationReads = (accountNotificationReads ?? .init()).merging(synced)
+                    }
+                }
+            }
         } catch is CancellationError { }
         catch {
             guard !Task.isCancelled, generation == expected else { return }
@@ -439,6 +530,12 @@ enum SessionVault {
             // Merge rather than replace, so overlapping acknowledgement responses
             // cannot make a successfully read notice unread again.
             requestReadIDs.formUnion(ids); requestNoticeError = nil
+            if features.notificationReads, accountNotificationReads?.requests.contains(notice.id) != true, let client {
+                if let synced = try? await client.markNotificationReads(requests: [notice.id]) {
+                    guard !Task.isCancelled, generation == expected, features.notificationReads else { return }
+                    accountNotificationReads = (accountNotificationReads ?? .init()).merging(synced)
+                }
+            }
         } catch {
             guard !Task.isCancelled, generation == expected else { return }
             requestNoticeError = "This update could not be marked as read. Please try again."
@@ -456,17 +553,17 @@ enum SessionVault {
             let saved = try await notificationHistory.load(server: session.server, viewerID: session.viewer.id)
             guard !Task.isCancelled, generation == expectedGeneration, features.notifications else { return }
             hiddenReplies = saved.hiddenReplies; seenReplyKeys.formUnion(saved.seenReplyKeys)
-            let result = try await client.supportReplies()
+            let result = try await client.inboxMessages()
             guard !Task.isCancelled, generation == expectedGeneration, features.notifications else { return }
             // Discard a GET overlapping an acknowledgement; remove only after success.
             guard replyRevision == expectedRevision, readingReplyIDs.isEmpty else { return }
-            replies = result
-            replyError = nil
+            replies = result.keeping(replies)
+            replyError = result.partial ? "Some messages could not be refreshed." : nil
         } catch is CancellationError { }
         catch {
             guard !Task.isCancelled, generation == expectedGeneration else { return }
             if let failure = error as? ClientError, [.unauthorized, .forbidden].contains(failure) { replies = []; hiddenReplies = [] }
-            replyError = "Replies could not be refreshed."
+            replyError = "Messages could not be refreshed."
         }
     }
 
@@ -483,14 +580,20 @@ enum SessionVault {
         readingReplyIDs.insert(reply.id)
         defer { if generation == expectedGeneration { readingReplyIDs.remove(reply.id); replyRevision += 1 } }
         do {
-            // Automatic viewing is device-local. A ticket-only server ACK could
-            // accidentally acknowledge a newer reply that arrived while reading.
+            // Keep the local write even when account syncing is unavailable.
+            // The account ACK includes this exact reply version, never only a ticket ID.
             let saved = try await notificationHistory.seeReply(reply, server: session.server, viewerID: session.viewer.id)
             guard !Task.isCancelled, generation == expectedGeneration else { return }
             seenReplyKeys.formUnion(saved.seenReplyKeys); hiddenReplies = saved.hiddenReplies; replyError = nil
+            if features.notificationReads, !reply.isAnnouncement, accountNotificationReads?.replies.contains(reply.accountReadKey) != true, let client {
+                if let synced = try? await client.markNotificationReads(replies: [reply]) {
+                    guard !Task.isCancelled, generation == expectedGeneration, features.notificationReads else { return }
+                    accountNotificationReads = (accountNotificationReads ?? .init()).merging(synced)
+                }
+            }
         } catch {
             guard !Task.isCancelled, generation == expectedGeneration else { return }
-            replyError = "This reply could not be marked as read. Please try again."
+            replyError = "This message could not be marked as read. Please try again."
         }
     }
 
@@ -551,6 +654,13 @@ actor ArtworkCache {
         try Task.checkCancellation()
         if let image = images.object(forKey: key as NSString) { return image }
         return decode(data, key: key, width: width)
+    }
+    func homeCrest(client: JellyfinClient, path: String) async throws -> UIImage? {
+        let key = client.server.url.absoluteString + "/" + path
+        if let image = images.object(forKey: key as NSString) { return image }
+        let data = try await client.homeCrestData(path: path)
+        try Task.checkCancellation()
+        return decode(data, key: key, width: 240)
     }
     func requestImage(url: URL) async throws -> UIImage? {
         let key = "request-" + url.absoluteString

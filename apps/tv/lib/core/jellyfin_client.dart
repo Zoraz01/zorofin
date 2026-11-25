@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 import 'errors.dart';
 import 'models.dart';
+import 'library_browse.dart';
 import 'server_address.dart';
 import 'viewer_settings.dart';
 
@@ -14,7 +16,7 @@ class ClientIdentity {
   const ClientIdentity({
     required this.deviceId,
     required this.deviceName,
-    this.version = '0.1.0',
+    this.version = '1.5.0',
   });
 
   final String deviceId;
@@ -82,7 +84,11 @@ class JellyfinClient {
     bool authenticated = true,
     bool extensionToken = false,
     int? expectedStatus,
+
+    /// Longer than the usual wait, for files the server has to extract first.
+    Duration? wait,
   }) async {
+    final timeout = wait ?? this.timeout;
     if (authenticated && session == null) {
       throw const ClientError(ClientErrorKind.missingSession);
     }
@@ -111,7 +117,7 @@ class JellyfinClient {
     try {
       response = await http.Response.fromStream(
         await _http.send(request).timeout(timeout),
-      );
+      ).timeout(timeout);
     } on ClientError {
       rethrow;
     } catch (_) {
@@ -122,7 +128,12 @@ class JellyfinClient {
       if (expectedStatus != null && status != expectedStatus) {
         throw const ClientError(ClientErrorKind.invalidResponse);
       }
-      return response.body;
+      // Jellyfin sends ASS/SSA files with no charset; they are UTF-8, not
+      // the Latin-1 the HTTP default would assume.
+      final type = response.headers['content-type'] ?? '';
+      return type.contains('charset')
+          ? response.body
+          : utf8.decode(response.bodyBytes, allowMalformed: true);
     }
     if (status == 401) {
       // An optional server module refusing a call is not a signed-out
@@ -132,6 +143,105 @@ class JellyfinClient {
     }
     if (status == 403) throw const ClientError(ClientErrorKind.forbidden);
     throw ClientError(ClientErrorKind.unavailable, status);
+  }
+
+  /// Downloads a server-provided media reference (such as a subtitle
+  /// DeliveryUrl) as bytes. The address must resolve inside this server;
+  /// the token travels in the header, never in the URL.
+  Future<Uint8List> requestBytes(
+    String reference, {
+    int maxBytes = 64 * 1024 * 1024,
+
+    /// Tries again after a timeout or gateway error. The server keeps
+    /// extracting a subtitle track after a request gives up, so a later try
+    /// gets it once it is ready, even when one wait is too short for a long
+    /// film or a proxy cuts the request at 100 seconds.
+    int attempts = 1,
+  }) async {
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _requestBytesOnce(reference, maxBytes: maxBytes);
+      } on ClientError catch (e) {
+        final retryable =
+            e.kind == ClientErrorKind.network ||
+            (e.kind == ClientErrorKind.unavailable &&
+                const {502, 503, 504, 522, 524}.contains(e.status));
+        if (!retryable || attempt >= attempts) rethrow;
+      }
+    }
+  }
+
+  Future<Uint8List> _requestBytesOnce(
+    String reference, {
+    required int maxBytes,
+  }) async {
+    if (session == null) {
+      throw const ClientError(ClientErrorKind.missingSession);
+    }
+    if (session!.server != server || reference.contains(r'\')) {
+      throw const ClientError(ClientErrorKind.unsafeUrl);
+    }
+    final target = server.url.resolve(
+      reference.startsWith('/') ? reference.substring(1) : reference,
+    );
+    if (!server.contains(target)) {
+      throw const ClientError(ClientErrorKind.unsafeUrl);
+    }
+    const forbidden = {
+      'apikey',
+      'api_key',
+      'x-emby-token',
+      'token',
+      'access_token',
+    };
+    final query = {
+      for (final e in target.queryParametersAll.entries)
+        if (!forbidden.contains(e.key.toLowerCase())) e.key: e.value,
+    };
+    final uri = Uri(
+      scheme: target.scheme,
+      host: target.host,
+      port: target.hasPort ? target.port : null,
+      path: target.path,
+      queryParameters: query.isEmpty ? null : query,
+    );
+    final request = http.Request('GET', uri)
+      ..headers['Authorization'] = identity.authorization(session!.token)
+      ..followRedirects = false;
+    const mediaWait = Duration(seconds: 90);
+    final http.StreamedResponse response;
+    try {
+      // Jellyfin may finish extracting the whole subtitle track before sending
+      // response headers, even when video playback has already started.
+      response = await _http.send(request).timeout(mediaWait);
+    } catch (_) {
+      throw const ClientError(ClientErrorKind.network);
+    }
+    final status = response.statusCode;
+    if (status == 401) {
+      onUnauthorized?.call();
+      throw const ClientError(ClientErrorKind.unauthorized);
+    }
+    if (status < 200 || status >= 300) {
+      throw ClientError(ClientErrorKind.unavailable, status);
+    }
+    if ((response.contentLength ?? 0) > maxBytes) {
+      throw const ClientError(ClientErrorKind.invalidResponse);
+    }
+    final bytes = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in response.stream.timeout(mediaWait)) {
+        bytes.add(chunk);
+        if (bytes.length > maxBytes) {
+          throw const ClientError(ClientErrorKind.invalidResponse);
+        }
+      }
+    } on ClientError {
+      rethrow;
+    } catch (_) {
+      throw const ClientError(ClientErrorKind.network);
+    }
+    return bytes.takeBytes();
   }
 
   Future<T> request<T>(
@@ -235,6 +345,22 @@ class JellyfinClient {
 
   Future<Viewer> currentViewer() => request(Viewer.fromJson, ['Users', 'Me']);
 
+  /// Whether this viewer may download media, asked fresh every time (Apple
+  /// `contentDownloadPermission`). A saved login or cache never grants it;
+  /// unknown means no, and another viewer's answer can't authorize this one.
+  Future<bool> contentDownloadPermission() async {
+    final session = this.session;
+    if (session == null) {
+      throw const ClientError(ClientErrorKind.missingSession);
+    }
+    final json = await request((json) => json, ['Users', 'Me']);
+    if (json['Id'] != session.viewer.id) {
+      throw const ClientError(ClientErrorKind.invalidResponse);
+    }
+    final policy = json['Policy'];
+    return policy is Map && policy['EnableContentDownloading'] == true;
+  }
+
   Future<void> logout() async {
     await requestText(['Sessions', 'Logout'], method: 'POST');
   }
@@ -253,6 +379,7 @@ class JellyfinClient {
     int limit = 30,
     String? search,
     bool favorites = false,
+    LibraryBrowseOptions? options,
   }) async {
     return request(
       ItemPage.fromJson,
@@ -266,14 +393,38 @@ class JellyfinClient {
         'enableImageTypes': 'Primary,Backdrop,Thumb',
         'imageTypeLimit': '1',
         'includeItemTypes': type,
-        'sortBy': search == null ? 'DateCreated,SortName' : 'SortName',
-        'sortOrder': search == null ? 'Descending' : 'Ascending',
-        if (favorites) 'filters': 'IsFavorite',
+        'sortBy':
+            options?.sort.field ??
+            (search == null ? 'DateCreated,SortName' : 'SortName'),
+        'sortOrder':
+            options?.sort.order ??
+            (search == null ? 'Descending' : 'Ascending'),
+        if (favorites || options?.unwatched == true)
+          'filters': [
+            if (favorites) 'IsFavorite',
+            if (options?.unwatched == true) 'IsUnplayed',
+          ].join(','),
+        if (options != null && options.genre.isNotEmpty)
+          'genres': options.genre,
         if (search != null)
           'searchTerm': search.length > 256 ? search.substring(0, 256) : search,
       },
     );
   }
+
+  Future<List<String>> libraryGenres(String type) => request(
+    (json) =>
+        ((json['Items'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map((v) => v['Name'])
+            .whereType<String>()
+            .where((v) => v.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort(),
+    ['Genres'],
+    query: {..._user(), 'recursive': 'true', 'includeItemTypes': type},
+  );
 
   Future<ItemPage> resume() async => request(
     ItemPage.fromJson,
@@ -351,6 +502,88 @@ class JellyfinClient {
       'addCurrentProgram': 'true',
     },
   );
+
+  /// Guide indexing and schedule reads never open a tuner.
+  Future<ItemPage> guideChannels({int start = 0}) => request(
+    ItemPage.fromJson,
+    ['LiveTv', 'Channels'],
+    query: {
+      ..._user(),
+      'startIndex': '${start < 0 ? 0 : start}',
+      'limit': '200',
+      'sortBy': 'ChannelNumber,SortName',
+      'sortOrder': 'Ascending',
+      'enableFavoriteSorting': 'false',
+      'enableUserData': 'true',
+      'addCurrentProgram': 'false',
+      'enableImages': 'true',
+      'imageTypeLimit': '1',
+    },
+  );
+
+  Future<List<LiveProgram>> guidePrograms(
+    List<String> channelIds,
+    DateTime start,
+  ) async {
+    final ids = channelIds.toSet().toList()..sort();
+    if (ids.isEmpty ||
+        ids.length > 40 ||
+        ids.any((id) => id.isEmpty || id.contains(','))) {
+      throw const ClientError(ClientErrorKind.invalidResponse);
+    }
+    final end = start.add(const Duration(hours: 2));
+    final result = <LiveProgram>[], seen = <String>{};
+    var offset = 0;
+    for (var page = 0; page < 20; page++) {
+      final data = await request(
+        (json) => json,
+        ['LiveTv', 'Programs'],
+        query: {
+          ..._user(),
+          'channelIds': ids.join(','),
+          'minEndDate': start.toUtc().toIso8601String(),
+          'maxStartDate': end.toUtc().toIso8601String(),
+          'startIndex': '$offset',
+          'limit': '200',
+          'sortBy': 'StartDate,SortName',
+          'sortOrder': 'Ascending',
+          'enableTotalRecordCount': 'true',
+          'enableImages': 'false',
+          'fields': 'Overview,Genres',
+        },
+      );
+      final rows = data['Items'];
+      if (rows is! List || rows.length > 200) {
+        throw const ClientError(ClientErrorKind.invalidResponse);
+      }
+      var additions = 0;
+      for (final row in rows) {
+        if (row is! Map<String, dynamic>) {
+          throw const ClientError(ClientErrorKind.invalidResponse);
+        }
+        final p = LiveProgram.fromJson(row);
+        final key = [p.id, p.channelId, p.name, p.start, p.end].join('|');
+        if (!seen.add(key)) continue;
+        additions++;
+        if (ids.contains(p.channelId) &&
+            p.hasSchedule &&
+            p.start!.isBefore(end) &&
+            p.end!.isAfter(start)) {
+          result.add(p);
+        }
+      }
+      offset += rows.length;
+      final total = data['TotalRecordCount'] as int?;
+      if (rows.isEmpty ||
+          (total == null ? rows.length < 200 : offset >= total)) {
+        return result;
+      }
+      if (additions == 0) {
+        throw const ClientError(ClientErrorKind.invalidResponse);
+      }
+    }
+    throw const ClientError(ClientErrorKind.invalidResponse);
+  }
 
   /// Up to eight upcoming guide entries for one channel; does not open a tuner.
   Future<List<LiveProgram>> livePrograms(
@@ -519,6 +752,28 @@ class JellyfinClient {
         ['Users', userId, 'Images', 'Primary'],
         {'maxWidth': '$width', 'quality': '85', 'tag': ?tag},
       );
+
+  /// Bounded, same-server artwork. Never send authenticated URLs to a launcher.
+  Future<Uint8List?> recommendationArtwork(Uri uri) async {
+    if (session == null || session!.server != server || !server.contains(uri)) {
+      throw const ClientError(ClientErrorKind.unsafeUrl);
+    }
+    final request = http.Request('GET', uri)
+      ..headers.addAll(authHeaders)
+      ..followRedirects = false;
+    final response = await _http.send(request).timeout(timeout);
+    if (response.statusCode != 200 ||
+        (response.contentLength ?? 0) > 2 * 1024 * 1024) {
+      await response.stream.listen(null).cancel();
+      return null;
+    }
+    final bytes = BytesBuilder();
+    await for (final chunk in response.stream.timeout(timeout)) {
+      bytes.add(chunk);
+      if (bytes.length > 2 * 1024 * 1024) return null;
+    }
+    return bytes.takeBytes();
+  }
 
   /// Artwork URL on this server. Images are fetched with [authHeaders].
   Uri image(

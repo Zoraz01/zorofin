@@ -60,6 +60,16 @@ void main() {
       'https://example.com/jf/Items/abc-1?userId=u',
     );
     expect(
+      server.endpoint(['live-tv-logos', 'art', 'events.json']).path,
+      '/jf/live-tv-logos/art/events.json',
+    );
+    for (final bad in ['..', '.', 'a..b', '%2e%2e', 'a/b', 'a\\b']) {
+      expect(
+        () => server.endpoint([bad]),
+        throwsKind(ClientErrorKind.unsafeUrl),
+      );
+    }
+    expect(
       () => server.endpoint(['Items', '../x']),
       throwsKind(ClientErrorKind.unsafeUrl),
     );

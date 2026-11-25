@@ -63,6 +63,40 @@ import ZorofinCore
 /// Runs the shipping player view with a generated local video, never a saved
 /// account or server. Bounds checks are not physical rotation acceptance.
 final class PlayerLayoutTests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // Release always uses this branch. Debug comparison preferences on a
+        // physical phone must not silently change what these tests exercise.
+        guard ProcessInfo.processInfo.arguments.contains("--custom-player") else {
+            XCTFail("Hosted player tests require --custom-player; rebuild the dedicated test scheme")
+            throw NSError(domain: "PlayerLayoutTests", code: 2)
+        }
+    }
+
+    @MainActor private func activeScene() async throws -> UIWindowScene {
+        try await waitFor("foreground-active scene", seconds: 15) {
+            UIApplication.shared.connectedScenes.contains {
+                $0 is UIWindowScene && $0.activationState == .foregroundActive
+            }
+        }
+        return try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+    }
+
+    @MainActor private func renderedSurface(in controller: UIViewController, window: UIWindow) async throws -> UIView {
+        try await waitFor("attached custom AVPlayerLayer surface", seconds: 15) {
+            guard window.windowScene?.activationState == .foregroundActive,
+                  controller.view.window === window, !controller.isBeingPresented,
+                  controller.transitionCoordinator == nil else { return false }
+            controller.view.layoutIfNeeded()
+            guard let surface = self.videoView(in: controller.view), surface.window === window,
+                  surface.bounds.width > 0, surface.bounds.height > 0,
+                  let layer = surface.layer as? AVPlayerLayer else { return false }
+            return layer.player != nil
+        }
+        return try XCTUnwrap(videoView(in: controller.view))
+    }
+
     @MainActor private func waitFor(_ description: String, seconds: Double = 10,
                                    condition: () async -> Bool) async throws {
         let deadline = ProcessInfo.processInfo.systemUptime + seconds
@@ -101,7 +135,8 @@ final class PlayerLayoutTests: XCTestCase {
     }
 
     @MainActor func testVideoBoundsSurviveRepeatedViewportChanges() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let scene = try await activeScene()
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let model = AppModel()
         model.showDemo()
         let presentation = PlaybackPresentation(item: PreviewLibrary.episodes[2], options: .init())
@@ -118,12 +153,13 @@ final class PlayerLayoutTests: XCTestCase {
             host.view.removeFromSuperview()
             host.removeFromParent()
             window.isHidden = true
+            previousWindow?.makeKeyAndVisible()
         }
 
         host.view.frame = CGRect(x: 0, y: 0, width: 430, height: 932)
         host.view.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(200))
-        let surface = try XCTUnwrap(videoView(in: host.view))
+        let surface = try await renderedSurface(in: host, window: window)
         let layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
         let player = try XCTUnwrap(layer.player)
         let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "player-preparation", withExtension: "mp4"))
@@ -131,28 +167,38 @@ final class PlayerLayoutTests: XCTestCase {
             allowsLiveResourcesWhilePaused: false, isActive: { true })
         try await PlayerPreparation.run(driver, startSeconds: 1.25, primePausedFrame: true, recoverPausedHLS: false)
 
-        // 15 Pro Max and 16 Pro logical sizes, both landscape directions,
-        // repeated return to portrait, and resizing while the decoded item stays.
+        // Stale 15 Pro Max/16 Pro portrait and landscape host frames, including
+        // offsets, must not move the picture away from the actual window. Real
+        // orientation changes are covered by the full-screen rotation test.
         let sizes: [CGSize] = [
             .init(width: 430, height: 932), .init(width: 932, height: 430),
             .init(width: 430, height: 932), .init(width: 932, height: 430),
             .init(width: 402, height: 874), .init(width: 874, height: 402),
             .init(width: 402, height: 874), .init(width: 430, height: 932)]
+        let origins: [CGPoint] = [.zero, .init(x: 37, y: 83), .init(x: -29, y: -61)]
+        let frames = sizes.flatMap { size in origins.map { CGRect(origin: $0, size: size) } }
         let item = try XCTUnwrap(player.currentItem)
-        for size in sizes {
-            host.view.frame = CGRect(origin: .zero, size: size)
+        for frame in frames {
+            host.view.frame = frame
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
             try await Task.sleep(for: .milliseconds(100))
-            XCTAssertTrue(videoView(in: host.view) === surface, "Rotation must retain the video surface")
-            XCTAssertTrue(player.currentItem === item, "Rotation must retain the decoded item")
-            let safe = host.view.safeAreaLayoutGuide.layoutFrame
-            let actual = surface.convert(surface.bounds, to: host.view)
-            XCTAssertEqual(actual.width, safe.width, accuracy: 1, "Video width at \(size)")
-            XCTAssertEqual(actual.height, safe.height, accuracy: 1, "Video height at \(size)")
-            XCTAssertEqual(actual.midX, safe.midX, accuracy: 1, "Video horizontal alignment at \(size)")
-            XCTAssertEqual(actual.midY, safe.midY, accuracy: 1, "Video vertical alignment at \(size)")
+            XCTAssertTrue(videoView(in: host.view) === surface, "Host changes must retain the video surface")
+            XCTAssertTrue(surface.layer === layer && layer.player === player, "Host changes must retain the layer/player")
+            XCTAssertTrue(player.currentItem === item, "Host changes must retain the decoded item")
+            let safe = window.safeAreaLayoutGuide.layoutFrame
+            let actual = surface.convert(surface.bounds, to: window)
+            XCTAssertEqual(actual.width, safe.width, accuracy: 1, "Video width at host \(frame)")
+            XCTAssertEqual(actual.height, safe.height, accuracy: 1, "Video height at host \(frame)")
+            XCTAssertEqual(actual.midX, safe.midX, accuracy: 1, "Video horizontal alignment at host \(frame)")
+            XCTAssertEqual(actual.midY, safe.midY, accuracy: 1, "Video vertical alignment at host \(frame)")
+            XCTAssertEqual(player.rate, 0, "Host changes must preserve paused playback")
+            XCTAssertEqual(player.currentTime().seconds, 1.25, accuracy: 0.2)
             XCTAssertEqual(layer.videoGravity, .resizeAspect)
+            XCTAssertGreaterThan(layer.videoRect.height, 0)
+            XCTAssertEqual(layer.videoRect.width / layer.videoRect.height, 16.0 / 9, accuracy: 0.01)
+            XCTAssertEqual(layer.videoRect.midX, surface.bounds.midX, accuracy: 1)
+            XCTAssertEqual(layer.videoRect.midY, surface.bounds.midY, accuracy: 1)
         }
     }
 
@@ -198,7 +244,7 @@ final class PlayerLayoutTests: XCTestCase {
     }
 
     @MainActor func testFullScreenRotationRetainsVideoAndRestoresPortrait() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let scene = try await activeScene()
         let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
         let presenter = UIViewController()
@@ -222,7 +268,7 @@ final class PlayerLayoutTests: XCTestCase {
             throw NSError(domain: "PlayerLayoutTests", code: 1)
         }
         defer { presenter.dismiss(animated: false) }
-        let surface = try XCTUnwrap(videoView(in: host.view))
+        let surface = try await renderedSurface(in: host, window: window)
         let layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
         let player = try XCTUnwrap(layer.player)
         let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "player-preparation", withExtension: "mp4"))
@@ -260,7 +306,7 @@ final class PlayerLayoutTests: XCTestCase {
     }
 
     @MainActor func testSwiftUICoverMatchesWindowThroughSizeClassChanges() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let scene = try await activeScene()
         let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
         let state = PlayerCoverState()
@@ -278,7 +324,7 @@ final class PlayerLayoutTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         let cover = try XCTUnwrap(root.presentedViewController)
-        let surface = try XCTUnwrap(videoView(in: cover.view))
+        let surface = try await renderedSurface(in: cover, window: window)
         let layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
         let player = try XCTUnwrap(layer.player)
         let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "player-preparation", withExtension: "mp4"))
@@ -322,7 +368,7 @@ final class PlayerLayoutTests: XCTestCase {
             transport: transport)
         model.session = model.client?.session
         model.preferencesReady = true
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let scene = try await activeScene()
         let previousWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
         let state = PlayerCoverState()
@@ -340,7 +386,7 @@ final class PlayerLayoutTests: XCTestCase {
         try await waitFor("completed cover presentation") {
             !cover.isBeingPresented && cover.transitionCoordinator == nil
         }
-        let surface = try XCTUnwrap(videoView(in: cover.view))
+        let surface = try await renderedSurface(in: cover, window: window)
         let layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
         let player = try XCTUnwrap(layer.player)
         let startupDeadline = ProcessInfo.processInfo.systemUptime + 60
@@ -431,7 +477,7 @@ final class PlayerLayoutTests: XCTestCase {
             session: .init(server: address, viewer: .init(id: "layout-viewer", name: "Fixture"), token: "synthetic", deviceID: "layout"),
             transport: transport)
         model.session = model.client?.session; model.preferencesReady = true
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let scene = try await activeScene()
         let previousWindow = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
         let state = PlayerCoverState()
         let root = UIHostingController(rootView: ProductionPlayerHarness(state: state, model: model))
@@ -447,7 +493,7 @@ final class PlayerLayoutTests: XCTestCase {
             return self.videoView(in: cover.view) != nil
         }
         let cover = try XCTUnwrap(root.presentedViewController)
-        let surface = try XCTUnwrap(videoView(in: cover.view)), layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
+        let surface = try await renderedSurface(in: cover, window: window), layer = try XCTUnwrap(surface.layer as? AVPlayerLayer)
         let player = try XCTUnwrap(layer.player)
         let trace = PlayerRotationTrace(window: window, cover: cover, surface: surface, controls: { state.controls })
         state.onControlsChange = { [weak trace] in trace?.capture("controls-change") }
@@ -538,5 +584,61 @@ final class PlayerLayoutTests: XCTestCase {
         trace.mark("dismissed")
         let requests = await transport.requests
         XCTAssertTrue(requests.contains("/Sessions/Playing/Stopped"))
+    }
+}
+
+private actor HomeCapabilitiesGate: HTTPTransport {
+    let blocked: Bool
+    private var started = false
+    private var observer: CheckedContinuation<Void, Never>?
+    private var gate: CheckedContinuation<Void, Never>?
+    init(blocked: Bool = false) { self.blocked = blocked }
+    func waitForRead() async {
+        if started { return }
+        await withCheckedContinuation { observer = $0 }
+    }
+    func release() { gate?.resume(); gate = nil }
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        started = true; observer?.resume(); observer = nil
+        if blocked { await withCheckedContinuation { gate = $0 } }
+        let payload = Data(#"{"schemaVersion":1,"features":{"homeRows":{"version":2,"enabled":true}}}"#.utf8)
+        return (payload, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+@MainActor final class HomeRowsSwitchoverTests: XCTestCase {
+    private func client(_ transport: any HTTPTransport) throws -> JellyfinClient {
+        let server = try ServerAddress("https://example.test/jellyfin")
+        return JellyfinClient(server: server, identity: .init(deviceID: "fixture", deviceName: "Test"),
+            session: .init(server: server, viewer: .init(id: "viewer", name: "Viewer"), token: "fixture", deviceID: "fixture"),
+            transport: transport)
+    }
+    func testCapabilityChangeRetiresVisibleRowsAndPendingLoadIdentity() async throws {
+        let model = AppModel()
+        model.client = try client(HomeCapabilitiesGate())
+        model.features = .init(homeRowsContract: .legacy)
+        model.homeLibrary.rowsContract = .legacy
+        model.homeLibrary.homeFeed = HomeFeed(generatedAt: "fixture", preferences: .init(), rows: [])
+        let oldLoad = model.homeLibrary.rowLoadID
+        await model.checkFeatures()
+        XCTAssertEqual(model.features.homeRowsContract, .plugin)
+        XCTAssertNil(model.homeLibrary.homeFeed)
+        XCTAssertNotEqual(model.homeLibrary.rowLoadID, oldLoad)
+        XCTAssertEqual(model.homeLibrary.rowsRevision, -1)
+    }
+    func testLateCapabilityResponseCannotChangeTheNewAccount() async throws {
+        let gate = HomeCapabilitiesGate(blocked: true), model = AppModel()
+        model.client = try client(gate)
+        let pending = Task { await model.checkFeatures() }
+        await gate.waitForRead()
+        model.generation = UUID()
+        model.features = .init()
+        model.homeLibrary = HomeLibraryState()
+        let currentLoad = model.homeLibrary.rowLoadID
+        await gate.release()
+        await pending.value
+        XCTAssertNil(model.features.homeRowsContract)
+        XCTAssertNil(model.homeLibrary.homeFeed)
+        XCTAssertEqual(model.homeLibrary.rowLoadID, currentLoad)
     }
 }

@@ -9,7 +9,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
-const libs = ['Utils', 'Jellyfin', 'HomeLogic', 'LiveTvStreams', 'Quality', 'LiveGuide'].map((n) => path.join(root, 'source', 'lib', `${n}.brs`));
+const libs = ['Utils', 'DeviceProfile', 'Jellyfin', 'HomeLogic', 'LiveTvStreams', 'Quality', 'LiveGuide', 'LiveEvents', 'Extras', 'NotificationReads', 'PickTogether', 'PlayerExtras', 'Store'].map((n) => path.join(root, 'source', 'lib', `${n}.brs`));
 const testFiles = fs.readdirSync(__dirname).filter((f) => f.endsWith('.test.brs')).sort().map((f) => path.join(__dirname, f));
 const names = [];
 for (const file of testFiles) {

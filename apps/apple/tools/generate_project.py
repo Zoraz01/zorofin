@@ -8,9 +8,9 @@ import plistlib
 ROOT = Path(__file__).resolve().parents[1]
 # Both platform targets belong to one App Store Connect record.
 APP_BUNDLE_ID = "org.zorofin.app"
-# Public release candidate; advance the build number for every upload.
-MARKETING_VERSION = "1.2"
-CURRENT_PROJECT_VERSION = "49"
+# Platform releases can advance independently within the shared store record.
+# Advance the relevant build number for every upload; Top Shelf follows tvOS.
+RELEASE_VERSIONS = {"iOS": ("1.5", "64"), "tvOS": ("1.5", "65")}
 # App Store validation permits a single suffix component for embedded extensions.
 TOP_SHELF_BUNDLE_ID = APP_BUNDLE_ID + ".topshelf"
 objects = {}
@@ -55,6 +55,11 @@ for path in sources + resources:
     refs[relative] = obj(relative, "PBXFileReference", lastKnownFileType=kind, path=relative, sourceTree="<group>")
 
 package = obj("CorePackage", "XCLocalSwiftPackageReference", relativePath="Core")
+# On-device playback for files AVPlayer can't open (App/OnDevicePlayer.swift).
+# LGPL-3.0 with an App Store exception; see THIRD_PARTY_NOTICES.md.
+aether_package = obj("AetherEnginePackage", "XCRemoteSwiftPackageReference",
+                     repositoryURL="https://github.com/superuser404notfound/AetherEngine",
+                     requirement={"kind": "upToNextMinorVersion", "minimumVersion": "7.73.0"})
 products = obj("Products", "PBXGroup", children=[], name="Products", sourceTree="<group>")
 main = obj("Main", "PBXGroup", children=list(refs.values()) + [products], sourceTree="<group>")
 targets = []
@@ -68,6 +73,7 @@ for config in ["Debug", "Release"]:
 project_config_list = obj("ProjectConfigs", "XCConfigurationList", buildConfigurations=project_configs, defaultConfigurationIsVisible="0", defaultConfigurationName="Release")
 
 for platform in ["iOS", "tvOS"]:
+    marketing_version, build_number = RELEASE_VERSIONS[platform]
     name = "Zorofin-" + platform
     product = obj(name + "Product", "PBXFileReference", explicitFileType="wrapper.application", includeInIndex="0", path=name + ".app", sourceTree="BUILT_PRODUCTS_DIR")
     objects[products]["children"].append(product)
@@ -78,8 +84,10 @@ for platform in ["iOS", "tvOS"]:
     resource_builds = [obj(name + path.relative_to(ROOT).as_posix(), "PBXBuildFile", fileRef=refs[path.relative_to(ROOT).as_posix()]) for path in platform_resources]
     core_product = obj(name + "CoreProduct", "XCSwiftPackageProductDependency", package=package, productName="ZorofinCore")
     core_build = obj(name + "CoreBuild", "PBXBuildFile", productRef=core_product)
+    aether_product = obj(name + "AetherProduct", "XCSwiftPackageProductDependency", package=aether_package, productName="AetherEngine")
+    aether_build = obj(name + "AetherBuild", "PBXBuildFile", productRef=aether_product)
     phases = [obj(name + "Sources", "PBXSourcesBuildPhase", buildActionMask="2147483647", files=source_builds, runOnlyForDeploymentPostprocessing="0"),
-              obj(name + "Frameworks", "PBXFrameworksBuildPhase", buildActionMask="2147483647", files=[core_build], runOnlyForDeploymentPostprocessing="0"),
+              obj(name + "Frameworks", "PBXFrameworksBuildPhase", buildActionMask="2147483647", files=[core_build, aether_build], runOnlyForDeploymentPostprocessing="0"),
               obj(name + "Resources", "PBXResourcesBuildPhase", buildActionMask="2147483647", files=resource_builds, runOnlyForDeploymentPostprocessing="0")]
     configs = []
     for config in ["Debug", "Release"]:
@@ -92,13 +100,15 @@ for platform in ["iOS", "tvOS"]:
                     "TVOS_DEPLOYMENT_TARGET" if platform == "tvOS" else "IPHONEOS_DEPLOYMENT_TARGET": "18.0",
                     "SWIFT_EMIT_LOC_STRINGS": "YES", "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
                     "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"],
-                    "MARKETING_VERSION": MARKETING_VERSION, "CURRENT_PROJECT_VERSION": CURRENT_PROJECT_VERSION}
+                    "MARKETING_VERSION": marketing_version, "CURRENT_PROJECT_VERSION": build_number}
         if platform == "tvOS":
             settings["CODE_SIGN_ENTITLEMENTS"] = "Config/tvOS.entitlements"
+            # AetherEngine's libdovi ships an arm64-only tvOS simulator slice.
+            settings["EXCLUDED_ARCHS[sdk=appletvsimulator*]"] = "x86_64"
         configs.append(obj(name + config, "XCBuildConfiguration", name=config, buildSettings=settings))
     config_list = obj(name + "Configs", "XCConfigurationList", buildConfigurations=configs, defaultConfigurationIsVisible="0", defaultConfigurationName="Release")
     target = obj(name, "PBXNativeTarget", buildConfigurationList=config_list, buildPhases=phases, buildRules=[], dependencies=[],
-                 name=name, productName=name, productReference=product, productType="com.apple.product-type.application", packageProductDependencies=[core_product])
+                 name=name, productName=name, productReference=product, productType="com.apple.product-type.application", packageProductDependencies=[core_product, aether_product])
     targets.append(target)
     scheme_dir = ROOT / "Zorofin.xcodeproj/xcshareddata/xcschemes"
     scheme_dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +125,7 @@ for platform in ["iOS", "tvOS"]:
 
 # A separate, credential-free extension supplies Apple TV Home Screen previews.
 name = "Zorofin-TopShelf"
+marketing_version, build_number = RELEASE_VERSIONS["tvOS"]
 ext_source = obj("TopShelf/ContentProvider.swift", "PBXFileReference", lastKnownFileType="sourcecode.swift", path="TopShelf/ContentProvider.swift", sourceTree="<group>")
 objects[main]["children"].append(ext_source)
 ext_privacy = obj("TopShelf/PrivacyInfo.xcprivacy", "PBXFileReference", lastKnownFileType="file", path="TopShelf/PrivacyInfo.xcprivacy", sourceTree="<group>")
@@ -133,7 +144,7 @@ for config in ["Debug", "Release"]:
                 "TARGETED_DEVICE_FAMILY": "3", "TVOS_DEPLOYMENT_TARGET": "18.0", "APPLICATION_EXTENSION_API_ONLY": "YES",
                 "SKIP_INSTALL": "YES", "ENABLE_USER_SCRIPT_SANDBOXING": "YES", "SWIFT_EMIT_LOC_STRINGS": "YES",
                 "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"],
-                "MARKETING_VERSION": MARKETING_VERSION, "CURRENT_PROJECT_VERSION": CURRENT_PROJECT_VERSION}
+                "MARKETING_VERSION": marketing_version, "CURRENT_PROJECT_VERSION": build_number}
     configs.append(obj(name + config, "XCBuildConfiguration", name=config, buildSettings=settings))
 config_list = obj(name + "Configs", "XCConfigurationList", buildConfigurations=configs, defaultConfigurationIsVisible="0", defaultConfigurationName="Release")
 ext_target = obj(name, "PBXNativeTarget", buildConfigurationList=config_list, buildPhases=phases, buildRules=[], dependencies=[],
@@ -182,6 +193,42 @@ app_reference = f'<BuildableReference BuildableIdentifier="primary" BlueprintIde
 </Scheme>
 ''')
 
+# Separate phone runner for the existing-account Release journey. Keep the
+# iPad-only target above unchanged; neither runner belongs to shipping archives.
+phone_ui_name = "Zorofin-iPhoneUITests"
+phone_ui_path = "UITests/IPhoneAcceptanceTests.swift"
+phone_ui_ref = obj(phone_ui_path, "PBXFileReference", lastKnownFileType="sourcecode.swift", path=phone_ui_path, sourceTree="<group>")
+objects[main]["children"].append(phone_ui_ref)
+phone_ui_product = obj(phone_ui_name + "Product", "PBXFileReference", explicitFileType="wrapper.cfbundle", includeInIndex="0", path=phone_ui_name + ".xctest", sourceTree="BUILT_PRODUCTS_DIR")
+objects[products]["children"].append(phone_ui_product)
+phone_ui_phases = [obj(phone_ui_name + "Sources", "PBXSourcesBuildPhase", buildActionMask="2147483647", files=[obj(phone_ui_name + "Source", "PBXBuildFile", fileRef=phone_ui_ref)], runOnlyForDeploymentPostprocessing="0"),
+             obj(phone_ui_name + "Frameworks", "PBXFrameworksBuildPhase", buildActionMask="2147483647", files=[], runOnlyForDeploymentPostprocessing="0"),
+             obj(phone_ui_name + "Resources", "PBXResourcesBuildPhase", buildActionMask="2147483647", files=[], runOnlyForDeploymentPostprocessing="0")]
+phone_ui_configs = []
+for config in ["Debug", "Release"]:
+    settings = {"PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "org.zorofin.app.iphoneuitests",
+                "GENERATE_INFOPLIST_FILE": "YES", "CODE_SIGN_STYLE": "Automatic", "SDKROOT": "iphoneos",
+                "SUPPORTED_PLATFORMS": "iphoneos", "TARGETED_DEVICE_FAMILY": "1", "IPHONEOS_DEPLOYMENT_TARGET": "18.0",
+                "TEST_TARGET_NAME": "Zorofin-iOS", "ENABLE_TESTING_SEARCH_PATHS": "YES", "SKIP_INSTALL": "YES",
+                "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"]}
+    phone_ui_configs.append(obj(phone_ui_name + config, "XCBuildConfiguration", name=config, buildSettings=settings))
+phone_ui_config_list = obj(phone_ui_name + "Configs", "XCConfigurationList", buildConfigurations=phone_ui_configs, defaultConfigurationIsVisible="0", defaultConfigurationName="Release")
+phone_ui_proxy = obj(phone_ui_name + "Proxy", "PBXContainerItemProxy", containerPortal=identifier("Project"), proxyType="1", remoteGlobalIDString=identifier("Zorofin-iOS"), remoteInfo="Zorofin-iOS")
+phone_ui_dependency = obj(phone_ui_name + "Dependency", "PBXTargetDependency", target=identifier("Zorofin-iOS"), targetProxy=phone_ui_proxy)
+phone_ui_target = obj(phone_ui_name, "PBXNativeTarget", buildConfigurationList=phone_ui_config_list, buildPhases=phone_ui_phases, buildRules=[], dependencies=[phone_ui_dependency], name=phone_ui_name, productName=phone_ui_name, productReference=phone_ui_product, productType="com.apple.product-type.bundle.ui-testing")
+targets.append(phone_ui_target)
+phone_ui_reference = f'<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{phone_ui_target}" BuildableName="{phone_ui_name}.xctest" BlueprintName="{phone_ui_name}" ReferencedContainer="container:Zorofin.xcodeproj"/>'
+app_reference = f'<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{identifier("Zorofin-iOS")}" BuildableName="Zorofin-iOS.app" BlueprintName="Zorofin-iOS" ReferencedContainer="container:Zorofin.xcodeproj"/>'
+(scheme_dir / "Zorofin-iPhone-UI.xcscheme").write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="2700" version="1.3">
+  <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries>
+    <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">{app_reference}</BuildActionEntry>
+    <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">{phone_ui_reference}</BuildActionEntry>
+  </BuildActionEntries></BuildAction>
+  <TestAction buildConfiguration="Release" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO"><Testables><TestableReference skipped="NO" parallelizable="NO">{phone_ui_reference}</TestableReference></Testables></TestAction>
+</Scheme>
+''')
+
 # Hosted UIKit/SwiftUI player checks use a generated test pattern only. The
 # target, fixture and test scheme are excluded from both shipping archives.
 player_test_name = "Zorofin-PlayerTests"
@@ -225,13 +272,13 @@ player_test_reference = f'<BuildableReference BuildableIdentifier="primary" Blue
     <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">{app_reference}</BuildActionEntry>
     <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">{player_test_reference}</BuildActionEntry>
   </BuildActionEntries></BuildAction>
-  <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO"><Testables><TestableReference skipped="NO" parallelizable="NO">{player_test_reference}</TestableReference></Testables></TestAction>
+  <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO"><Testables><TestableReference skipped="NO" parallelizable="NO">{player_test_reference}</TestableReference></Testables><CommandLineArguments><CommandLineArgument argument="--custom-player" isEnabled="YES"/></CommandLineArguments></TestAction>
 </Scheme>
 ''')
 
-project = obj("Project", "PBXProject", attributes={"LastUpgradeCheck": "2700", "BuildIndependentTargetsInParallel": "YES", "TargetAttributes": {ui_target: {"TestTargetID": identifier("Zorofin-iOS")}}},
+project = obj("Project", "PBXProject", attributes={"LastUpgradeCheck": "2700", "BuildIndependentTargetsInParallel": "YES", "TargetAttributes": {ui_target: {"TestTargetID": identifier("Zorofin-iOS")}, phone_ui_target: {"TestTargetID": identifier("Zorofin-iOS")}}},
               buildConfigurationList=project_config_list, compatibilityVersion="Xcode 15.0", developmentRegion="en", hasScannedForEncodings="0",
-              knownRegions=["en", "Base"], mainGroup=main, productRefGroup=products, projectDirPath="", projectRoot="", targets=targets, packageReferences=[package])
+              knownRegions=["en", "Base"], mainGroup=main, productRefGroup=products, projectDirPath="", projectRoot="", targets=targets, packageReferences=[package, aether_package])
 output = {"archiveVersion": "1", "classes": {}, "objectVersion": "60", "objects": objects, "rootObject": project}
 (ROOT / "Zorofin.xcodeproj/project.pbxproj").write_text("// !$*UTF8*$!\n" + encode(output) + "\n")
 

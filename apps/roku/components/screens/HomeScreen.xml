@@ -15,6 +15,7 @@
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/HomeLogic.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/RowsSupport.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/Page.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/HomeScreen.brs" />

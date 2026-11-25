@@ -386,7 +386,7 @@ class RequestsScreenState extends State<RequestsScreen> {
             ),
           ),
         if (_loading && _isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(40),
             child: Center(child: CircularProgressIndicator(color: Zoro.jade)),
           ),
@@ -531,15 +531,31 @@ class RequestsScreenState extends State<RequestsScreen> {
           ),
         ),
       ),
-    for (final item in _activity)
-      _ActivityRow(
-        item: item,
-        detail: _queue?.label(item),
-        requestedBy: _mine ? null : item.requestedBy,
-        onPressed: item.kind == null || item.tmdbId == null
-            ? null
-            : () => _openTitle(item.kind!, item.tmdbId!),
-      ),
+    LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 18.0;
+        final columns = constraints.maxWidth >= 1000 ? 2 : 1;
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: 8,
+          children: [
+            for (final item in _activity)
+              SizedBox(
+                width: width,
+                child: _ActivityRow(
+                  item: item,
+                  detail: _queue?.label(item),
+                  requestedBy: _mine ? null : item.requestedBy,
+                  onPressed: item.kind == null || item.tmdbId == null
+                      ? null
+                      : () => _openTitle(item.kind!, item.tmdbId!),
+                ),
+              ),
+          ],
+        );
+      },
+    ),
   ];
 
   List<Widget> _personalPreview() {
@@ -817,7 +833,7 @@ class _ActivityRow extends StatelessWidget {
           duration: Zoro.focusDuration,
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: focused ? Zoro.panel : Colors.transparent,
+            color: focused || !compact ? Zoro.panel : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: focused ? Zoro.jade : Colors.transparent,
@@ -853,7 +869,7 @@ class _ActivityRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(status, style: Zoro.font(19, color: Zoro.jade)),
-                    if (!compact && detail != null)
+                    if (!compact && detail != null && detail != status)
                       Text(detail!, style: Zoro.font(19, color: Zoro.muted)),
                     if (requestedBy != null)
                       Text(

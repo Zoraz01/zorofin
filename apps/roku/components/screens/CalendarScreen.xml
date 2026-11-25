@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Calendar (plugin extra, web zorofin-extras-pages.js): what Sonarr and
+  Radarr expect over the next four weeks, one shelf per local day. Titles
+  already on the server open their details.
+-->
+<component name="CalendarScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/Page.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/CalendarScreen.brs" />
+  <children>
+    <Group id="page" />
+    <Group id="statusGroup" visible="false">
+      <Label id="statusTitle" width="1920" translation="[0,520]" horizAlign="center" color="0xF5F7F5FF" />
+      <Label id="statusDetail" width="1100" translation="[410,572]" horizAlign="center" wrap="true" maxLines="3" color="0xBBC5BDFF" />
+    </Group>
+  </children>
+</component>

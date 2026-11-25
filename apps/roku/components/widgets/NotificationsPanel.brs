@@ -9,36 +9,73 @@ sub init()
     m.replies = []
     m.seenTimer = m.top.findNode("seenTimer")
     m.seenTimer.observeField("fire", "markSeen")
-    m.status.text = "Loading…"
-    task = CreateObject("roSGNode", "JellyfinTask")
-    task.request = { cmd: "supportReplies" }
-    task.observeField("response", "onReplies")
-    task.control = "RUN"
-    m.task = task
-end sub
-
-sub onReplies(event as object)
-    r = event.getData()
-    if not r.ok then
-        m.status.text = "Couldn't refresh. Press OK to try again."
-        m.retry = true
-        return
-    end if
-    m.retry = false
-    m.replies = r.replies
-    seen = ZSeenReplies()
+    m.scope = ZNotificationScope(m.global.session)
     m.fresh = []
     m.old = []
-    for each reply in r.replies
-        if seen[ZReplyKey(reply)] = true then m.old.push(reply) else m.fresh.push(reply)
+    m.displayed = {}
+    m.dwelled = {}
+    m.status.text = "Loading…"
+end sub
+
+function displayKey(notice as object) as string
+    if notice.kind = "request" then return "request:" + ZStr(notice.id)
+    return "reply:" + ZReplyKey(notice)
+end function
+
+sub onSnapshot(event as object)
+    r = event.getData()
+    if r = invalid or r.scope <> m.scope then return
+    m.retry = false
+    m.fresh = []
+    m.old = []
+    for each row in r.rows.fresh
+        m.displayed[displayKey(row)] = true
+        m.fresh.push(row)
+    end for
+    for each row in r.rows.old
+        if m.displayed[displayKey(row)] = true then m.fresh.push(row) else m.old.push(row)
     end for
     build()
-    if m.fresh.count() > 0 then m.seenTimer.control = "start"
+    scheduleSeen()
+end sub
+
+sub onRefreshFailed()
+    m.retry = true
+    if m.rows.count() = 0 then m.status.text = "Couldn't refresh. Press OK to try again."
+end sub
+
+sub scheduleSeen()
+    visibleRows = []
+    visibleRows.append(m.fresh)
+    if m.showHidden then visibleRows.append(m.old)
+    for each row in visibleRows
+        if m.dwelled[displayKey(row)] <> true then
+            m.seenTimer.control = "start"
+            return
+        end if
+    end for
 end sub
 
 sub markSeen()
-    ZMarkRepliesSeen(m.fresh)
-    m.top.action = { type: "unread", count: 0 }
+    ' The existing 0.9-second panel dwell rule, guarded against a closed panel
+    ' or a different signed-in server/account/session.
+    if m.top.getParent() = invalid or m.scope <> ZNotificationScope(m.global.session) then return
+    replies = []
+    requests = []
+    visibleRows = []
+    visibleRows.append(m.fresh)
+    if m.showHidden then visibleRows.append(m.old)
+    for each row in visibleRows
+        key = displayKey(row)
+        if m.dwelled[key] <> true then
+            m.dwelled[key] = true
+            if row.kind = "request" then requests.push(row.id) else replies.push(row)
+        end if
+    end for
+    if requests.count() + replies.count() = 0 then return
+    ZMarkRepliesSeen(replies)
+    ZMarkRequestsSeen(requests)
+    m.top.action = { type: "seen", scope: m.scope, requests: requests, replies: replies }
 end sub
 
 sub build()
@@ -105,13 +142,14 @@ end sub
 ' Apple NotificationReplyRow: "Support reply", the title or issue, the message.
 function addReply(reply as object, y as integer) as integer
     theme = ZTheme()
-    expanded = m.expanded <> invalid and m.expanded[reply.id + reply.updatedAt] = true
+    expanded = m.expanded <> invalid and m.expanded[ZStr(reply.id) + reply.updatedAt] = true
     g = CreateObject("roSGNode", "Group")
     g.translation = [0, y]
     label = CreateObject("roSGNode", "Label")
     label.font = ZFont(20)
     label.color = theme.jade
     label.text = "Support reply"
+    if reply.kind = "request" then label.text = "Request available"
     label.translation = [44, 12]
     icon = ZPoster("pkg:/images/icons/support.png", 22, 22, 14, 14)
     icon.blendColor = theme.jade
@@ -143,7 +181,7 @@ function addReply(reply as object, y as integer) as integer
         ref = CreateObject("roSGNode", "Label")
         ref.font = ZFont(18)
         ref.color = theme.muted
-        ref.text = "Reference: " + reply.id
+        ref.text = "Reference: " + ZStr(reply.id)
         ref.translation = [14, h - 6]
         h = h + 30
     end if
@@ -203,7 +241,8 @@ function onKeyEvent(key as string, press as boolean) as boolean
         paint()
     else if key = "OK" then
         if m.retry = true then
-            init()
+            m.status.text = "Loading…"
+            m.top.action = { type: "refresh" }
             return true
         end if
         if m.focus < m.rows.count() then
@@ -212,10 +251,11 @@ function onKeyEvent(key as string, press as boolean) as boolean
                 m.showHidden = not m.showHidden
             else
                 if m.expanded = invalid then m.expanded = {}
-                k = r.reply.id + r.reply.updatedAt
+                k = ZStr(r.reply.id) + r.reply.updatedAt
                 m.expanded[k] = not (m.expanded[k] = true)
             end if
             build()
+            scheduleSeen()
         end if
     end if
     ' The popover is modal.

@@ -24,6 +24,7 @@ sub build()
         { id: "shows", text: "TV Shows" }
     ]
     if m.top.showLive then entries.push({ id: "live", text: "Live TV" })
+    if m.top.showRequests then entries.push({ id: "requests", text: "Requests" })
     m.tabs.removeChildrenIndex(m.tabs.getChildCount(), 0)
     m.tools.removeChildrenIndex(m.tools.getChildCount(), 0)
     m.items = []

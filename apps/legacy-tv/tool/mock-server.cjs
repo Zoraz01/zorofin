@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // A small fake Jellyfin server plus a static host for the app, for screenshot
-// validation (tool/validate.cjs) and local development. Uses synthetic
-// artwork and an optional, locally generated WebM clip.
+// validation (tool/validate.cjs) and local development. No real media: artwork
+// is generated SVG and /Videos/*/stream serves an empty response.
 //
 //   node apps/legacy-tv/tool/mock-server.cjs [appPort=8730] [apiPort=8731]
 const http = require('node:http');
@@ -78,25 +78,7 @@ ${kind === 'Primary' && !wide ? `<text x="40" y="${ht - 70}" font-family="Arial"
 function page(list, total) { return { Items: list, TotalRecordCount: total === undefined ? list.length : total }; }
 function strip(item) { const { seasons, episodes, ...rest } = item; return rest; }
 
-function body(req, done) {
-  let value = '';
-  req.on('data', chunk => { value += chunk; });
-  req.on('end', () => done(JSON.parse(value || '{}')));
-}
-
-function media(req, res, clip) {
-  if (!clip) { res.writeHead(404); return res.end(); }
-  const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
-  const start = range ? Number(range[1]) : 0;
-  const end = range && range[2] ? Math.min(Number(range[2]), clip.length - 1) : clip.length - 1;
-  if (start > end) { res.writeHead(416, { 'Content-Range': 'bytes */' + clip.length }); return res.end(); }
-  const headers = { 'Content-Type': 'video/webm', 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 };
-  if (range) headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + clip.length;
-  res.writeHead(range ? 206 : 200, headers);
-  res.end(clip.subarray(start, end + 1));
-}
-
-function api(req, res, state) {
+function api(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname, q = url.searchParams;
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -105,28 +87,17 @@ function api(req, res, state) {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const json = (data, status) => { res.writeHead(status || 200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
   let m;
-  if (p === '/System/Info/Public') return state.offline ? json({}, 503) :
-    json({ Id: 'mock', ServerName: 'Mock Zorofin', Version: '10.11.0', ProductName: 'Jellyfin Server' });
-  if (p === '/Users/Me') {
-    const token = /Token="tok-([^"]+)"/.exec(req.headers.authorization || '');
-    const name = Object.keys(users).find(key => token && users[key] === token[1]);
-    if (!name || state.expired[name]) return json({}, 401);
-    return json({ Id: users[name], Name: name, Policy: { IsAdministrator: name === 'Claude Test' } });
+  if (p === '/System/Info/Public') return json({ Id: 'mock', ServerName: 'Mock Zorofin', Version: '10.11.0', ProductName: 'Jellyfin Server' });
+  if (p === '/Users/AuthenticateByName') {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      const name = (JSON.parse(body || '{}').Username || 'Claude Test');
+      users[name] = users[name] || 'u' + hash(name);
+      json({ AccessToken: 'tok-' + users[name], User: { Id: users[name], Name: name } });
+    });
+    return;
   }
-  if (p === '/Zorofin/Capabilities') {
-    const enabled = { version: 1, enabled: true };
-    return json({ schemaVersion: 1, features: { playbackReports: enabled, pickTogether: enabled, accountApprovals: enabled } });
-  }
-  if (p === '/Zorofin/PlaybackReports' && req.method === 'POST') return body(req, report => {
-    state.reports.push(report);
-    res.writeHead(204); res.end();
-  });
-  if (p === '/Users/AuthenticateByName') return body(req, data => {
-    const name = data.Username || 'Claude Test';
-    users[name] = users[name] || 'u' + hash(name);
-    delete state.expired[name];
-    json({ AccessToken: 'tok-' + users[name], User: { Id: users[name], Name: name } });
-  });
   if (p === '/Zorofin/Home/Rows') {
     const card = (item, subtitle, extra) => Object.assign({ id: item.Id, item: strip(item), subtitle: subtitle || '', badges: [] }, extra || {});
     return json({ schemaVersion: 1, rows: [
@@ -162,29 +133,13 @@ function api(req, res, state) {
   }
   if (p === '/QuickConnect/Initiate') return json({ Code: '482913', Secret: 's' });
   if (p === '/QuickConnect/Connect') return json({ Authenticated: false });
-  if (p === '/QuickConnect/Authorize' && req.method === 'POST') {
-    const approved = q.get('code') === '482913' && !!q.get('userId');
-    if (approved) state.authorizations++;
-    return json(approved);
-  }
   if (p === '/UserItems/Resume') return json(page(resume.map(strip)));
   if (p === '/Shows/NextUp') return json(page(nextUp.map(strip)));
   if (p === '/Items/Latest') return json((q.get('includeItemTypes') || '').includes('Movie') ? movies.map(strip) : shows.map(strip));
   if ((m = /^\/Items\/([^/]+)\/Images\/(\w+)$/.exec(p))) { const it = items[m[1]]; if (!it) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'max-age=3600' }); return res.end(svg(it, m[2], q.get('fillWidth'))); }
-  if ((m = /^\/Items\/([^/]+)\/PlaybackInfo$/.exec(p))) return body(req, options => {
-    const direct = options.EnableDirectPlay;
-    const source = { Id: m[1], SupportsDirectPlay: direct, MediaStreams: [] };
-    if (!direct) source.TranscodingUrl = '/Videos/' + m[1] + '/compatible';
-    state.playbackRequests.push({ id: m[1], direct, streamCopy: options.AllowVideoStreamCopy });
-    json({ PlaySessionId: 'ps-' + state.playbackRequests.length, MediaSources: [source] });
-  });
-  if ((m = /^\/Items\/([^/]+)$/.exec(p))) {
-    const item = items[m[1]];
-    if (!item) return json({}, 404);
-    return json(Object.assign({}, strip(item), q.get('fields') === 'Chapters' && item.Type === 'Movie' ?
-      { Chapters: [{ Name: 'Opening', StartPositionTicks: 0 }, { Name: 'Second act', StartPositionTicks: 25 * TICKS }, { Name: 'Finale', StartPositionTicks: 65 * TICKS }] } : {}));
-  }
+  if ((m = /^\/Items\/([^/]+)\/PlaybackInfo$/.exec(p))) return json({ PlaySessionId: 'ps', MediaSources: [{ Id: m[1], SupportsDirectPlay: true, MediaStreams: [] }] });
+  if ((m = /^\/Items\/([^/]+)$/.exec(p))) return items[m[1]] ? json(strip(items[m[1]])) : json({}, 404);
   if ((m = /^\/Shows\/([^/]+)\/Seasons$/.exec(p))) return json(page(items[m[1]].seasons.map(strip)));
   if ((m = /^\/Shows\/([^/]+)\/Episodes$/.exec(p))) { const s = items[m[1]]; return json(page((s.episodes[q.get('seasonId')] || firstEpisode(s)).map(strip))); }
   if (p === '/Items') {
@@ -199,7 +154,7 @@ function api(req, res, state) {
     return json(page(list.slice(0, Number(q.get('limit') || 100)).map(strip)));
   }
   if (p.startsWith('/Sessions/') || p.startsWith('/UserPlayedItems/')) { res.writeHead(204); return res.end(); }
-  if (/^\/Videos\//.test(p)) return media(req, res, state.clip);
+  if (/^\/Videos\//.test(p)) { res.writeHead(404); return res.end(); }
   json({ error: 'not mocked', path: p }, 404);
 }
 
@@ -215,11 +170,10 @@ function app(req, res) {
   });
 }
 
-function start(appPort, apiPort, clipPath) {
-  const state = { clip: clipPath ? fs.readFileSync(clipPath) : null, offline: false, reports: [], playbackRequests: [], expired: {}, authorizations: 0 };
+function start(appPort, apiPort) {
   const a = http.createServer(app).listen(appPort, '127.0.0.1');
-  const b = http.createServer((req, res) => api(req, res, state)).listen(apiPort, '127.0.0.1');
-  return { close() { a.close(); b.close(); }, items, shows, movies, state };
+  const b = http.createServer(api).listen(apiPort, '127.0.0.1');
+  return { close() { a.close(); b.close(); }, items, shows, movies };
 }
 
 module.exports = { start };

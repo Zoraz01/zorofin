@@ -43,6 +43,7 @@ public extension MediaItem {
     public private(set) var episodes: [MediaItem] = []
     public private(set) var selectedSeasonID = ""
     public private(set) var currentEpisodeID: String?
+    public private(set) var targetingCancelled = false
     public private(set) var seriesID = ""
     public private(set) var loadingSeasons = false
     public private(set) var loadingEpisodes = false
@@ -54,21 +55,33 @@ public extension MediaItem {
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var offset = 0
     @ObservationIgnored private var initialized = false
+    @ObservationIgnored private var target: MediaItem?
 
     public init(library: any EpisodeLibrary) { self.library = library }
     public var selectedSeason: MediaItem? { seasons.first { $0.id == selectedSeasonID } }
     public func cancel() { revision = UUID(); loadingSeasons = false; loadingEpisodes = false }
 
-    public func load(_ item: MediaItem, force: Bool = false) async {
+    public func cancelTargeting() { targetingCancelled = true }
+
+    public func load(_ item: MediaItem, preferredEpisode: MediaItem? = nil, force: Bool = false) async {
+        let preferredTarget = item.isEpisode ? item : preferredEpisode.flatMap { episode in
+            episode.isEpisode && episode.seriesId == item.episodeSeriesID &&
+                (item.type != "Season" || episode.seasonId == item.id) ? episode : nil
+        }
         if !force, initialized, context?.id == item.id, context?.seasonId == item.seasonId,
-           context?.parentIndexNumber == item.parentIndexNumber, context?.episodeSeriesID == item.episodeSeriesID {
+           context?.parentIndexNumber == item.parentIndexNumber, context?.episodeSeriesID == item.episodeSeriesID,
+           preferredTarget == nil || target?.id == preferredTarget?.id {
             await resumeSelectedSeason()
             return
         }
+        let sameContext = context?.id == item.id && context?.episodeSeriesID == item.episodeSeriesID
+        let rememberedSeason = sameContext && targetingCancelled ? selectedSeasonID : nil
         cancel()
         let request = revision
+        if !sameContext { targetingCancelled = false }
+        target = preferredTarget
         context = item; initialized = false; seasons = []; episodes = []; selectedSeasonID = ""
-        currentEpisodeID = item.isEpisode ? item.id : nil
+        currentEpisodeID = preferredTarget?.id
         hasMore = false; total = nil; error = nil
         guard let seriesID = item.episodeSeriesID else { return }
         self.seriesID = seriesID; loadingSeasons = true
@@ -81,21 +94,44 @@ public extension MediaItem {
                 if $0.indexNumber != $1.indexNumber { return ($0.indexNumber ?? .max) < ($1.indexNumber ?? .max) }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
-            var preferred = item.type == "Season" ? item.id : item.seasonId
-            var preferredNumber = item.parentIndexNumber
-            if item.isSeries, let recent = try? await library.recentlyPlayedEpisode(seriesID: seriesID) {
-                preferred = recent.seasonId; preferredNumber = recent.parentIndexNumber
+            var preferred = rememberedSeason ?? (item.type == "Season" ? item.id : target?.seasonId ?? item.seasonId)
+            var preferredNumber = target?.parentIndexNumber ?? item.parentIndexNumber
+            if item.isSeries, target == nil, let recent = try? await library.recentlyPlayedEpisode(seriesID: seriesID) {
+                target = recent; currentEpisodeID = recent.id
+                if rememberedSeason == nil { preferred = recent.seasonId; preferredNumber = recent.parentIndexNumber }
             }
             guard valid(request) else { return }
             let chosen = seasons.first { $0.id == preferred } ??
                 ((item.isEpisode || item.isSeries) ? seasons.first { $0.indexNumber == preferredNumber && preferredNumber != nil } : nil) ??
                 seasons.first { ($0.indexNumber ?? 0) > 0 } ?? seasons.first
             loadingSeasons = false; initialized = true
-            if let chosen { await selectSeason(chosen.id) }
+            if let chosen {
+                await selectSeason(chosen.id)
+                // Empty regular seasons cannot strand a series with no history.
+                if item.isSeries, target == nil {
+                    for next in seasons.drop(while: { $0.id != chosen.id }).dropFirst() {
+                        guard !Task.isCancelled, !targetingCancelled, context?.id == item.id,
+                              episodes.isEmpty, error == nil else { break }
+                        await selectSeason(next.id)
+                    }
+                    if !targetingCancelled, context?.id == item.id, episodes.isEmpty, error == nil {
+                        await selectSeason(chosen.id)
+                    }
+                }
+            }
         } catch {
             guard valid(request) else { return }
             loadingSeasons = false; self.error = "Seasons couldn’t load. Try again."
         }
+    }
+
+    /// Explicit navigation back to playback/recent history, independent of the browsing season.
+    public func returnToCurrentEpisode() async {
+        guard let target,
+              let season = seasons.first(where: { $0.id == target.seasonId }) ??
+                seasons.first(where: { $0.indexNumber == target.parentIndexNumber && target.parentIndexNumber != nil }) else { return }
+        targetingCancelled = false
+        await selectSeason(season.id)
     }
 
     public func selectSeason(_ id: String) async {
@@ -111,9 +147,13 @@ public extension MediaItem {
         if episodes.isEmpty && hasMore && error == nil { await loadMore() }
         // Center the episode being viewed, even when it falls beyond the first page.
         // Each page becomes usable immediately; changing season/leaving cancels this search.
-        if let context, context.isEpisode,
-           context.seasonId == selectedSeasonID || (context.seasonId == nil && context.parentIndexNumber == selectedSeason?.indexNumber) {
-            while valid(request), !loadingEpisodes, hasMore, error == nil, !episodes.contains(where: { $0.id == context.id }) { await loadMore() }
+        if let target,
+           target.seasonId == selectedSeasonID || (target.seasonId == nil && target.parentIndexNumber == selectedSeason?.indexNumber) {
+            var pages = 0
+            while valid(request), !targetingCancelled, !loadingEpisodes, hasMore, error == nil,
+                  !episodes.contains(where: { $0.id == target.id }), pages < 100 {
+                pages += 1; await loadMore()
+            }
         }
     }
 

@@ -21,7 +21,14 @@
   <script type="text/brightscript" uri="pkg:/source/lib/LiveGuide.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/LiveTvScreen.brs" />
   <children>
-    <ButtonBar id="controls" translation="[96,140]" align="left" spacing="12" />
+    <ButtonBar id="modes" translation="[96,140]" align="left" spacing="12" />
+    <ButtonBar id="controls" translation="[96,212]" align="left" spacing="12" visible="false" />
+    <Group id="browse" translation="[0,224]">
+      <Shelf id="sports" landscape="true" itemComponent="LiveEventCard" title="Sports &amp; live events" visible="false" />
+      <!-- Kept hidden: the owner removed "On now" rows from every app (Nov 24). -->
+      <Shelf id="onNow" landscape="true" itemComponent="LiveEventCard" title="" visible="false" />
+      <Label id="browseStatus" translation="[96,26]" width="1728" color="0xBBC5BDFF" />
+    </Group>
     <LiveStreamsStrip id="strip" translation="[96,224]" visible="false" />
     <Group id="preview" translation="[96,224]">
       <Label id="previewName" maxLines="1" color="0xF5F7F5FF" />

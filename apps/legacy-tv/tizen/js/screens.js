@@ -29,7 +29,7 @@
     if (app().hasLiveTv) tabs.push(['Live TV', function () { app().go('live', null, true); }]);
     var s = client().session || {};
     var name = s.userName || 'Profile';
-    tabs.push([name, function () { app().openMenu(); }, 'profile']);
+    tabs.push([name, function () { app().go('me', null, true); }, 'profile']);
     var items = tabs.map(function (t) {
       var b = ui.button(t[0], 'tab' + (t[2] ? ' tab-' + t[2] : '') + (t[0] === active || (t[2] && active === t[2]) ? ' current' : ''), t[1]);
       if (t[2] === 'profile') {
@@ -169,27 +169,14 @@
       panel.appendChild(el('h1', '', adding ? 'Add a profile' : 'Sign in'));
       panel.appendChild(el('p', 'muted', app().serverName ? 'to ' + app().serverName : ''));
       var name = el('input', 'field');
-      name.type = 'text'; name.placeholder = 'Username'; name.value = params.userName || ''; name.setAttribute('autocomplete', 'off');
+      name.type = 'text'; name.placeholder = 'Username'; name.setAttribute('autocomplete', 'off');
       var pass = el('input', 'field');
       pass.type = 'password'; pass.placeholder = 'Password';
       var submit = ui.button('Sign in', 'primary wide');
       var quick = ui.button('Use Quick Connect', 'wide');
       var change = ui.button(adding ? 'Cancel' : 'Change server', 'wide subtle');
       var note = status('');
-      var poll = null, alive = true, busy = false;
-      var existing = client(), auth = new Z.Client(existing.base, null);
-      function signedIn(err, session) {
-        if (!alive || client() !== existing) return;
-        busy = false;
-        if (err || !session || !session.token) {
-          note.className = 'status error';
-          note.textContent = err && err.status === 401 ? 'Wrong username or password.' : errorText(err) || 'Sign-in could not be completed.';
-          return;
-        }
-        existing.session = session;
-        app().saveSession();
-        app().go('home', null, true);
-      }
+      var poll = null;
       [name, pass].forEach(function (input, i) {
         input.activate = function () { input.focus(); };
         input.addEventListener('keydown', function (e) {
@@ -197,38 +184,28 @@
         });
       });
       submit.activate = function () {
-        if (busy) return;
-        if (poll) { clearInterval(poll); poll = null; }
-        busy = true;
         note.className = 'status'; note.textContent = 'Signing in…';
-        auth.signIn(name.value.replace(/^\s+|\s+$/g, ''), pass.value, signedIn);
+        client().signIn(name.value.replace(/^\s+|\s+$/g, ''), pass.value, function (err) {
+          if (err) { note.className = 'status error'; note.textContent = err.status === 401 ? 'Wrong username or password.' : errorText(err); return; }
+          app().saveSession();
+          app().go('home', null, true);
+        });
       };
       quick.activate = function () {
-        if (busy) return;
-        if (poll) { clearInterval(poll); poll = null; }
-        busy = true;
-        auth.quickConnectStart(function (err, data) {
-          if (!alive) return;
-          busy = false;
+        client().quickConnectStart(function (err, data) {
           if (err || !data || !data.Code) { note.className = 'status error'; note.textContent = 'Quick Connect is off on this server.'; return; }
           note.className = 'status code';
           note.textContent = 'On a signed-in phone or computer, open Quick Connect and enter ' + data.Code;
-          var checking = false;
-          var ticket = poll = setInterval(function () {
-            if (checking || poll !== ticket) return;
-            checking = true;
-            auth.quickConnectState(data.Secret, function (e, state) {
-              checking = false;
-              if (!alive || poll !== ticket) return;
-              if (e && (e.status === 401 || e.status === 404)) {
-                clearInterval(poll); poll = null;
-                note.className = 'status error'; note.textContent = 'That code expired. Request a new one.';
-                return;
-              }
+          if (poll) clearInterval(poll);
+          poll = setInterval(function () {
+            client().quickConnectState(data.Secret, function (e, state) {
               if (e || !state || !state.Authenticated) return;
               clearInterval(poll); poll = null;
-              busy = true;
-              auth.quickConnectFinish(data.Secret, signedIn);
+              client().quickConnectFinish(data.Secret, function (e2) {
+                if (e2) { note.className = 'status error'; note.textContent = errorText(e2); return; }
+                app().saveSession();
+                app().go('home', null, true);
+              });
             });
           }, 3000);
         });
@@ -244,7 +221,7 @@
       var zones = [name, pass, submit, quick, change].map(function (n) { return { items: [n], kind: 'buttons' }; });
       var focus = new ui.Focus(page, zones, { topMargin: 0 });
       focus.start(0);
-      return { focus: focus, leave: function () { alive = false; if (poll) clearInterval(poll); }, back: function () { if (adding) app().back(); else app().exit(); } };
+      return { focus: focus, leave: function () { if (poll) clearInterval(poll); }, back: function () { if (adding) app().back(); else app().exit(); } };
     }
   };
 
@@ -331,7 +308,7 @@
             var c = item.zCard;
             if (row.id === 'sports') {
               var when = airLabel(c.startsAt, c.endsAt);
-              return { title: item.Name, meta: [c.subtitle, when === 'Live now' ? '' : when].filter(Boolean).join('  ·  '),
+              return { homeGame: c, title: item.Name, meta: [c.subtitle, when === 'Live now' ? '' : when].filter(Boolean).join('  ·  '),
                 badge: when === 'Live now' ? 'LIVE' : '', badgeClass: 'live', progress: false };
             }
             var out = { meta: c.subtitle || undefined };
@@ -626,6 +603,39 @@
     }
   };
 
+  // ---------- profile menu (Pick Together, switch profile, settings) ----------
+
+  var me = {
+    render: function (page, params, screen) {
+      var top = header('profile');
+      page.appendChild(top.node);
+      var s = client().session || {};
+      var panel = el('section', 'panel left me');
+      var who = el('div', 'me-who');
+      who.appendChild(avatar(s.userId, s.userName, 'big'));
+      var text = el('div', 'me-text');
+      text.appendChild(el('h1', '', s.userName || ''));
+      text.appendChild(el('p', 'muted', (app().serverName ? app().serverName + '  ·  ' : '') + client().base.replace(/^https?:\/\//, '')));
+      who.appendChild(text);
+      panel.appendChild(who);
+      var others = app().accounts().length > 1;
+      var buttons = [
+        ui.button('Pick Together', 'wide primary', function () { app().go('pick'); }),
+        ui.button(others ? 'Switch profile' : 'Add a profile', 'wide', function () { app().go(others ? 'profiles' : 'signin', others ? null : { add: true }); }),
+        ui.button('Sign out of ' + (s.userName || 'this profile'), 'wide', function () { app().signOut(); }),
+        ui.button('Change server', 'wide subtle', function () { app().signOut(true); })
+      ];
+      buttons.forEach(function (b) { panel.appendChild(b); });
+      panel.appendChild(el('p', 'muted small', 'Zorofin for older Samsung TVs ' + Z.VERSION));
+      page.appendChild(panel);
+      var zones = [top.zone].concat(buttons.map(function (b) { return { items: [b], kind: 'buttons' }; }));
+      var focus = new ui.Focus(page, zones, { topMargin: 0 });
+      screen.focus = focus;
+      focus.start(1);
+      return { back: function () { app().go('home', null, true); } };
+    }
+  };
+
   // ---------- Who's watching? ----------
 
   // Remembers what the signed-in profile was watching. Like Roku, this TV
@@ -677,7 +687,6 @@
       logo.alt = 'Zorofin';
       wrap.appendChild(logo);
       wrap.appendChild(el('h1', 'pb-title', 'Who’s watching?'));
-      if (params.expired) wrap.appendChild(el('p', 'pb-notice', 'Sign in again to use ' + (params.expired.userName || 'this profile') + '.'));
       var card = el('div', 'pb-card');
       var thumb = el('div', 'pb-thumb');
       var bar = el('div', 'pb-bar');
@@ -692,19 +701,14 @@
       wrap.appendChild(card);
 
       var list = el('div', 'pb-list');
-      var current = params.expired ? params.expired.userId : client().session && client().session.userId;
+      var current = client().session && client().session.userId;
       var accounts = app().accounts();
       var tiles = accounts.map(function (a) {
         var tile = el('div', 'profile-tile');
         tile.appendChild(profileSquare(a));
         tile.appendChild(el('div', 'profile-name', a.userName || ''));
         tile.account = a;
-        tile.activate = function () {
-          if (params.expired && params.expired.userId === a.userId) {
-            return app().go('signin', { add: true, userName: a.userName });
-          }
-          app().useAccount(a);
-        };
+        tile.activate = function () { app().useAccount(a); };
         list.appendChild(tile);
         return tile;
       });
@@ -957,6 +961,6 @@
     }
   };
 
-  Z.screens = { connect: connect, signin: signin, home: home, details: details, library: library, search: search, profiles: profiles, live: live, pick: pick };
-  Z.screenHelpers = { errorText: errorText, openItem: openItem, avatar: avatar, airLabel: airLabel, clock: clock };
+  Z.screens = { connect: connect, signin: signin, home: home, details: details, library: library, search: search, me: me, profiles: profiles, live: live, pick: pick };
+  Z.screenHelpers = { errorText: errorText, openItem: openItem, airLabel: airLabel, clock: clock };
 })(this);

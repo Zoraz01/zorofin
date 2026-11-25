@@ -438,6 +438,7 @@ struct SavedServersView: View {
     @State private var operationID = UUID()
     @FocusState private var focusedAccount: UUID?
     @Namespace private var accountFocus
+    @State private var spotlights = ProfileSpotlights()
 
     private var preferredAccountID: UUID? {
         model.connections.accounts.first(where: { model.isCurrent($0) })?.id
@@ -446,51 +447,9 @@ struct SavedServersView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if model.signedIn {
-                    HStack {
-                        Spacer()
-                        Button("Done") { cancel(); dismiss() }.buttonStyle(AccountUtilityButtonStyle())
-                    }.padding(.horizontal, Theme.isTV ? Theme.gutter : 24).padding(.vertical, 16)
-                    #if os(tvOS)
-                    // Extend the header's focus region across its empty space so
-                    // Up from the left-hand account list can reach Done at right.
-                    .focusSection()
-                    #endif
-                }
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Theme.isTV ? 22 : 18) {
-                        Text(isManaging ? "Manage accounts" : "Who’s watching?")
-                            .font(Theme.font(Theme.isTV ? 42 : 30, weight: .bold, relativeTo: .largeTitle))
-                            .accessibilityAddTraits(.isHeader)
-                            .padding(.bottom, Theme.isTV ? 18 : 10)
-                        if let error {
-                            Text(error).foregroundStyle(.orange).accessibilityIdentifier("server-switch-error")
-                        }
-                        ForEach(model.connections.accounts) { account in accountRow(account) }
-                        if model.connections.accounts.isEmpty {
-                            Text("Add an account to get started.").foregroundStyle(Theme.muted)
-                        }
-                        if !model.connections.servers.isEmpty && !isManaging {
-                            Button(action: addAccount) {
-                                HStack(spacing: Theme.isTV ? 28 : 20) {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: Theme.isTV ? 32 : 24, weight: .medium))
-                                        .frame(width: Theme.isTV ? 96 : 72, height: Theme.isTV ? 72 : 56)
-                                    Text("Add account").font(Theme.font(Theme.isTV ? 26 : 18, weight: .medium))
-                                }
-                            }.buttonStyle(AccountUtilityButtonStyle()).disabled(busyID != nil)
-                                .accessibilityIdentifier("add-account")
-                        }
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: Theme.isTV ? 36 : 24) { accountActions }
-                            VStack(alignment: .leading, spacing: 12) { accountActions }
-                        }.padding(.top, Theme.isTV ? 22 : 10)
-                        if busyID != nil { Button("Cancel") { cancel() }.buttonStyle(AccountUtilityButtonStyle()) }
-                    }.frame(maxWidth: Theme.isTV ? 820 : 640, alignment: .leading)
-                        .padding(Theme.isTV ? Theme.gutter : 24)
-                        .frame(maxWidth: .infinity, alignment: Theme.isTV ? .leading : .center)
-                }
+            Group {
+                // Editing keeps the plain list; choosing a profile uses the backdrop.
+                if isManaging || model.connections.accounts.isEmpty { listLayout } else { backdropLayout }
             }
             #if os(tvOS)
             .focusScope(accountFocus)
@@ -529,6 +488,171 @@ struct SavedServersView: View {
         .onChange(of: model.connections.accounts.isEmpty) { _, empty in
             if empty { isManaging = false }
         }
+    }
+
+    private var listLayout: some View {
+        VStack(spacing: 0) {
+            if model.signedIn {
+                HStack {
+                    Spacer()
+                    Button("Done") { cancel(); dismiss() }.buttonStyle(AccountUtilityButtonStyle())
+                }.padding(.horizontal, Theme.isTV ? Theme.gutter : 24).padding(.vertical, 16)
+                #if os(tvOS)
+                // Extend the header's focus region across its empty space so
+                // Up from the left-hand account list can reach Done at right.
+                .focusSection()
+                #endif
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: Theme.isTV ? 22 : 18) {
+                    Text(isManaging ? "Manage accounts" : "Who’s watching?")
+                        .font(Theme.font(Theme.isTV ? 42 : 30, weight: .bold, relativeTo: .largeTitle))
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.bottom, Theme.isTV ? 18 : 10)
+                    if let error {
+                        Text(error).foregroundStyle(.orange).accessibilityIdentifier("server-switch-error")
+                    }
+                    ForEach(model.connections.accounts) { account in accountRow(account) }
+                    if model.connections.accounts.isEmpty {
+                        Text("Add an account to get started.").foregroundStyle(Theme.muted)
+                    }
+                    if !model.connections.servers.isEmpty && !isManaging {
+                        Button(action: addAccount) {
+                            HStack(spacing: Theme.isTV ? 28 : 20) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: Theme.isTV ? 32 : 24, weight: .medium))
+                                    .frame(width: Theme.isTV ? 96 : 72, height: Theme.isTV ? 72 : 56)
+                                Text("Add account").font(Theme.font(Theme.isTV ? 26 : 18, weight: .medium))
+                            }
+                        }.buttonStyle(AccountUtilityButtonStyle()).disabled(busyID != nil)
+                            .accessibilityIdentifier("add-account")
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Theme.isTV ? 36 : 24) { accountActions }
+                        VStack(alignment: .leading, spacing: 12) { accountActions }
+                    }.padding(.top, Theme.isTV ? 22 : 10)
+                    if busyID != nil { Button("Cancel") { cancel() }.buttonStyle(AccountUtilityButtonStyle()) }
+                }.frame(maxWidth: Theme.isTV ? 820 : 640, alignment: .leading)
+                    .padding(Theme.isTV ? Theme.gutter : 24)
+                    .frame(maxWidth: .infinity, alignment: Theme.isTV ? .leading : .center)
+            }
+        }
+    }
+
+    /// The account whose art is behind the picker: the focused profile on TV,
+    /// the current one on touch screens.
+    private var spotlightAccount: SavedAccount? {
+        let id = Theme.isTV ? (focusedAccount ?? preferredAccountID) : preferredAccountID
+        return model.connections.accounts.first { $0.id == id }
+    }
+
+    private var backdropLayout: some View {
+        let shown = spotlightAccount
+        let spot = shown.flatMap { spotlights.spotlight[$0.id] }
+        return ZStack(alignment: .topLeading) {
+            ProfileBackdrop(image: shown.flatMap { spotlights.backdrop[$0.id] },
+                fallback: shown.map { SceneAvatar.name(for: $0.viewer.id) },
+                key: shown.map { "\($0.id)-\(spot?.backdrop?.cacheKey ?? "none")" } ?? "none")
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: Theme.isTV ? 28 : 12) {
+                    Brand()
+                    Spacer()
+                    if Theme.isTV {
+                        Button("Manage accounts") { isManaging = true; error = nil }
+                            .buttonStyle(AccountUtilityButtonStyle()).disabled(busyID != nil)
+                            .accessibilityIdentifier("manage-accounts")
+                        Button { signIn = SignIn() } label: { Text("Add server") }
+                            .buttonStyle(AccountUtilityButtonStyle()).disabled(busyID != nil)
+                            .accessibilityIdentifier("add-server")
+                    }
+                    if model.signedIn {
+                        Button("Done") { cancel(); dismiss() }.buttonStyle(AccountUtilityButtonStyle())
+                    }
+                }
+                #if os(tvOS)
+                .focusSection()
+                #endif
+                if Theme.isTV {
+                    Spacer(minLength: 40)
+                    backdropHeading(shown: shown, spot: spot)
+                    Spacer(minLength: 40)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 44) {
+                            ForEach(model.connections.accounts) { account in profileTile(account) }
+                            addProfileTile
+                        }.padding(.vertical, 24).padding(.horizontal, 16)
+                    }.scrollClipDisabled()
+                    #if os(tvOS)
+                    .focusSection()
+                    #endif
+                    .padding(.horizontal, -16).padding(.bottom, 40)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Spacer().frame(height: 250)
+                            backdropHeading(shown: shown, spot: spot)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92, maximum: 110), spacing: 16, alignment: .top)],
+                                      alignment: .leading, spacing: 20) {
+                                ForEach(model.connections.accounts) { account in profileTile(account) }
+                                addProfileTile
+                            }.padding(.top, 28)
+                            HStack(spacing: 20) { accountActions }.padding(.top, 28)
+                        }.padding(.bottom, 32)
+                    }.scrollIndicators(.hidden)
+                }
+            }.padding(.horizontal, Theme.isTV ? Theme.gutter : 24).padding(.top, Theme.isTV ? 24 : 8)
+        }
+        .task(id: model.connections.accounts.map(\.id)) {
+            await spotlights.load(model.connections.accounts, model: model)
+        }
+    }
+
+    @ViewBuilder private func backdropHeading(shown: SavedAccount?, spot: ProfileSpotlight?) -> some View {
+        VStack(alignment: .leading, spacing: Theme.isTV ? 28 : 16) {
+            Text("Who’s watching?")
+                .font(Theme.font(Theme.isTV ? 64 : 32, weight: .bold, relativeTo: .largeTitle))
+                .accessibilityAddTraits(.isHeader)
+            if let error {
+                Text(error).foregroundStyle(.orange).accessibilityIdentifier("server-switch-error")
+            }
+            if let shown, let spot {
+                ProfileSpotlightCard(name: shown.viewer.name, spotlight: spot, thumbnail: spotlights.thumbnail[shown.id])
+                    .id(shown.id).transition(.opacity)
+            } else {
+                // Keeps the row from jumping when focus moves to a profile with no history.
+                Color.clear.frame(height: Theme.isTV ? 117 : 54)
+            }
+            if busyID != nil { Button("Cancel") { cancel() }.buttonStyle(AccountUtilityButtonStyle()) }
+        }.animation(.easeInOut(duration: 0.3), value: shown?.id)
+    }
+
+    private func profileTile(_ account: SavedAccount) -> some View {
+        Button { choose(account) } label: {
+            ProfileTileLabel(account: account, current: model.isCurrent(account) && model.signedIn,
+                busy: busyID == account.id, focused: Theme.isTV ? focusedAccount == account.id : model.isCurrent(account))
+        }.buttonStyle(AccountSelectionButtonStyle()).disabled(busyID != nil)
+            .focused($focusedAccount, equals: account.id)
+            #if os(tvOS)
+            .prefersDefaultFocus(account.id == preferredAccountID, in: accountFocus)
+            #endif
+            .accessibilityIdentifier("saved-account-\(account.id)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(account.viewer.name), \(account.server.url.absoluteString)")
+            .accessibilityValue(busyID == account.id ? "Connecting" : model.isCurrent(account) ? "Current account" : account.session == nil ? "Sign in again" : "")
+            .accessibilityHint("Opens this account’s library.")
+    }
+
+    private var addProfileTile: some View {
+        Button(action: addAccount) {
+            VStack(spacing: Theme.isTV ? 20 : 10) {
+                Image(systemName: "plus").font(.system(size: Theme.isTV ? 52 : 32, weight: .light))
+                    .foregroundStyle(Theme.muted)
+                    .frame(width: ProfileTileLabel.size, height: ProfileTileLabel.size)
+                    .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: ProfileTileLabel.size * 0.22))
+                Text("Add").font(Theme.font(Theme.isTV ? 26 : 15, weight: .medium)).foregroundStyle(Theme.muted)
+            }.frame(width: ProfileTileLabel.size)
+        }.buttonStyle(ProfileAddButtonStyle()).disabled(busyID != nil || model.connections.servers.isEmpty)
+            .accessibilityIdentifier("add-account").accessibilityLabel("Add account")
     }
 
     @ViewBuilder private var accountActions: some View {
@@ -679,5 +803,200 @@ private struct AccountUtilityButtonStyle: ButtonStyle {
                 Rectangle().fill(focused ? Theme.jade : .clear).frame(height: 3)
             }
             .contentShape(Rectangle()).opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+// MARK: - Who's watching backdrop
+
+/// Per-profile "was watching" data for the picker. Cached spotlights and art
+/// show first; each profile then refreshes with its own saved session, one at
+/// a time, so a TV with several profiles never fires a burst of requests.
+@MainActor @Observable final class ProfileSpotlights {
+    private(set) var spotlight: [UUID: ProfileSpotlight] = [:]
+    private(set) var backdrop: [UUID: UIImage] = [:]
+    private(set) var thumbnail: [UUID: UIImage] = [:]
+
+    static let store: ProfileSpotlightStore = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return ProfileSpotlightStore(directory: base.appendingPathComponent("ProfileSpotlights", isDirectory: true))
+    }()
+
+    func load(_ accounts: [SavedAccount], model: AppModel) async {
+        let store = Self.store
+        store.prune(keeping: Set(accounts.map(\.id)))
+        for account in accounts {
+            guard let cached = store.load(account.id) else { continue }
+            spotlight[account.id] = cached
+            if let key = cached.backdrop?.cacheKey, let data = store.loadImage(account.id, tag: key) {
+                backdrop[account.id] = UIImage(data: data)
+            }
+        }
+        guard !model.isDemo else { return }
+        for account in accounts {
+            guard !Task.isCancelled, let session = account.session else { continue }
+            let client = JellyfinClient(server: account.server,
+                identity: .init(deviceID: session.deviceID, deviceName: model.deviceName), session: session)
+            let fresh: ProfileSpotlight?
+            do { fresh = try await client.profileSpotlight() }
+            catch { continue } // Offline or signed out: the cached art stays.
+            guard !Task.isCancelled else { return }
+            let previous = spotlight[account.id]
+            store.save(fresh, for: account.id)
+            spotlight[account.id] = fresh
+            guard let fresh else { backdrop[account.id] = nil; thumbnail[account.id] = nil; continue }
+            if let source = fresh.backdrop, previous?.backdrop != source || backdrop[account.id] == nil,
+               let data = try? await client.image(itemID: source.itemID, kind: source.kind, tag: source.tag,
+                                                  width: Theme.isTV ? 1920 : 1280),
+               let image = UIImage(data: data) {
+                store.saveImage(data, for: account.id)
+                backdrop[account.id] = image
+            } else if fresh.backdrop == nil { backdrop[account.id] = nil }
+            if let source = fresh.thumbnail,
+               let image = try? await model.imageCache.image(key: "spotlight-\(account.server.storageKey)-\(source.cacheKey)",
+                    client: client, itemID: source.itemID, kind: source.kind, tag: source.tag, width: 480) {
+                thumbnail[account.id] = image
+            }
+        }
+    }
+}
+
+/// Full-bleed art of what the focused profile was watching, dimmed toward
+/// the text. Without history, a soft wash of that profile's scene avatar.
+private struct ProfileBackdrop: View {
+    let image: UIImage?
+    let fallback: String?
+    let key: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.nativeReduceMotion) private var appReduceMotion
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                Theme.background
+                Group {
+                    if let image {
+                        Image(uiImage: image).resizable().scaledToFill()
+                    } else if let fallback, let scene = UIImage(named: "scene-\(fallback)") {
+                        Image(uiImage: scene).resizable().scaledToFill().blur(radius: 40).opacity(0.45)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height * (Theme.isTV ? 1 : 0.72))
+                .clipped().id(key).transition(.opacity)
+                if Theme.isTV {
+                    LinearGradient(stops: [.init(color: Theme.background.opacity(0.94), location: 0),
+                                           .init(color: Theme.background.opacity(0.72), location: 0.38),
+                                           .init(color: Theme.background.opacity(0.12), location: 0.7),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(stops: [.init(color: Theme.background.opacity(0.97), location: 0),
+                                           .init(color: Theme.background.opacity(0.55), location: 0.34),
+                                           .init(color: .clear, location: 0.6)],
+                                   startPoint: .bottom, endPoint: .top)
+                } else {
+                    LinearGradient(stops: [.init(color: Theme.background, location: 0),
+                                           .init(color: Theme.background, location: 0.4),
+                                           .init(color: Theme.background.opacity(0.55), location: 0.62),
+                                           .init(color: Theme.background.opacity(0.1), location: 0.85),
+                                           .init(color: Theme.background.opacity(0.5), location: 1)],
+                                   startPoint: .bottom, endPoint: .top)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .animation(reduceMotion || appReduceMotion ? nil : .easeInOut(duration: 0.45), value: key)
+        .accessibilityHidden(true)
+    }
+}
+
+/// "Maya was watching" with a 16:9 thumbnail and resume progress.
+private struct ProfileSpotlightCard: View {
+    let name: String
+    let spotlight: ProfileSpotlight
+    let thumbnail: UIImage?
+    private var size: CGSize { Theme.isTV ? CGSize(width: 208, height: 117) : CGSize(width: 96, height: 54) }
+
+    var body: some View {
+        HStack(spacing: Theme.isTV ? 22 : 12) {
+            Theme.panel.frame(width: size.width, height: size.height)
+                .overlay { if let thumbnail { Image(uiImage: thumbnail).resizable().scaledToFill() } }
+                .overlay(alignment: .bottomLeading) {
+                    if let progress = spotlight.progress {
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(.white.opacity(0.25))
+                            Rectangle().fill(Theme.jade).frame(width: size.width * progress)
+                        }.frame(height: Theme.isTV ? 5 : 3)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.isTV ? 12 : 8))
+            VStack(alignment: .leading, spacing: Theme.isTV ? 4 : 2) {
+                Text("\(name) was watching").font(Theme.font(Theme.isTV ? 22 : 13)).foregroundStyle(Theme.muted)
+                Text(spotlight.detail.isEmpty ? spotlight.title : "\(spotlight.title) · \(spotlight.detail)")
+                    .font(Theme.font(Theme.isTV ? 30 : 16, weight: .semibold)).lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A rounded-square avatar with the name under it. On TV the focused profile
+/// grows and gets a white ring; on touch screens the ring marks the current one.
+private struct ProfileTileLabel: View {
+    static var size: CGFloat { Theme.isTV ? 176 : 92 }
+    let account: SavedAccount
+    let current: Bool
+    let busy: Bool
+    let focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.nativeReduceMotion) private var appReduceMotion
+
+    var body: some View {
+        let size = Self.size, gap: CGFloat = Theme.isTV ? 11 : 5.5
+        VStack(spacing: Theme.isTV ? 20 : 10) {
+            SavedAccountAvatar(account: account, size: size)
+                .overlay {
+                    RoundedRectangle(cornerRadius: size * 0.22 + gap)
+                        .stroke(focused ? Theme.text : .clear, lineWidth: Theme.isTV ? 5 : 2.5).padding(-gap)
+                }
+                .overlay {
+                    if busy {
+                        RoundedRectangle(cornerRadius: size * 0.22).fill(Theme.background.opacity(0.7))
+                        ProgressView().tint(Theme.text)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if current && Theme.isTV && !busy {
+                        Image(systemName: "checkmark").font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Theme.background).frame(width: 34, height: 34)
+                            .background(Theme.jade, in: Circle()).offset(x: 6, y: 6)
+                    }
+                }
+                .opacity(Theme.isTV && !focused ? 0.82 : 1)
+                .scaleEffect(Theme.isTV && focused && !reduceMotion && !appReduceMotion ? 1.08 : 1)
+                .animation(reduceMotion || appReduceMotion ? nil : NavigationMotion.focus, value: focused)
+            VStack(spacing: 2) {
+                Text(account.viewer.name)
+                    .font(Theme.font(Theme.isTV ? 26 : 15, weight: focused ? .semibold : .medium))
+                    .foregroundStyle(focused ? Theme.text : Theme.muted).lineLimit(1)
+                if account.session == nil {
+                    Text("Sign in again").font(Theme.font(Theme.isTV ? 18 : 12)).foregroundStyle(Theme.jade)
+                }
+            }.padding(.top, Theme.isTV && focused ? 8 : 0)
+        }.frame(width: size).contentShape(Rectangle())
+    }
+}
+
+private struct ProfileAddButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var focused
+    func makeBody(configuration: Configuration) -> some View {
+        let size = ProfileTileLabel.size, gap: CGFloat = Theme.isTV ? 11 : 5.5
+        configuration.label
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: size * 0.22 + gap)
+                    .stroke(focused ? Theme.text : .clear, lineWidth: Theme.isTV ? 5 : 2.5)
+                    .frame(width: size + gap * 2, height: size + gap * 2).offset(y: -gap)
+            }
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

@@ -89,11 +89,13 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
       child: SettingsScaffold(
         title: _creating ? 'Start a group' : 'Watch together',
         actions: [
-          ZoroButton(
-            label: _hasInnerStep ? 'Back' : 'Done',
-            onPressed: () =>
-                _hasInnerStep ? _stepBack() : Navigator.of(context).maybePop(),
-          ),
+          if (!CompactSettings.of(context))
+            ZoroButton(
+              label: _hasInnerStep ? 'Back' : 'Done',
+              onPressed: () => _hasInnerStep
+                  ? _stepBack()
+                  : Navigator.of(context).maybePop(),
+            ),
         ],
         children: [
           if (widget.preview)
@@ -137,23 +139,26 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Your group', style: Zoro.font(20, color: Zoro.muted)),
+            Text(
+              'Your group',
+              style: settingsFont(context, 20, color: Zoro.muted),
+            ),
             const SizedBox(height: 6),
             Text(
               joined.groupName,
-              style: Zoro.font(30, weight: FontWeight.w600),
+              style: settingsFont(context, 30, weight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Text(
               item?.displayTitle ?? 'Choose something to watch',
-              style: Zoro.font(22, color: Zoro.muted),
+              style: settingsFont(context, 22, color: Zoro.muted),
             ),
             if (joined.state == 'Waiting')
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   'Waiting for others…',
-                  style: Zoro.font(22, color: Zoro.jade),
+                  style: settingsFont(context, 22, color: Zoro.jade),
                 ),
               ),
           ],
@@ -170,7 +175,8 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
                 backgroundColor: Zoro.jade,
                 child: Text(
                   name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
-                  style: Zoro.font(
+                  style: settingsFont(
+                    context,
                     22,
                     weight: FontWeight.w700,
                     color: Zoro.background,
@@ -178,7 +184,7 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
                 ),
               ),
               const SizedBox(width: 14),
-              Text(name, style: Zoro.font(24)),
+              Text(name, style: settingsFont(context, 24)),
             ],
           ),
         ),
@@ -188,7 +194,7 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
           child: Text(
             'Leave this group?',
-            style: Zoro.font(26, weight: FontWeight.w600),
+            style: settingsFont(context, 26, weight: FontWeight.w600),
           ),
         ),
         SettingsAction(
@@ -277,6 +283,6 @@ class _Lead extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-    child: Text(text, style: Zoro.font(24, color: Zoro.muted)),
+    child: Text(text, style: settingsFont(context, 24, color: Zoro.muted)),
   );
 }

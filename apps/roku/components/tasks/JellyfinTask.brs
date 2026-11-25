@@ -27,12 +27,26 @@ sub execute()
         guidePrograms: CmdGuidePrograms,
         playback: CmdPlayback,
         report: CmdReport,
+        playbackProblem: CmdPlaybackProblem,
+        ping: CmdPing,
         nextEpisode: CmdNextEpisode,
         setPlayed: CmdSetPlayed,
         setFavorite: CmdSetFavorite,
         resolve: CmdResolve,
         liveStreams: CmdLiveStreams,
+        liveNow: CmdLiveNow,
+        looks: CmdLooks,
+        extras: CmdExtras,
+        calendar: CmdCalendar,
+        catchUp: CmdCatchUp,
+        catchUpAct: CmdCatchUpAct,
+        pick: CmdPick,
+        trailer: CmdTrailer,
         supportReplies: CmdSupportReplies,
+        inbox: CmdInbox,
+        requestBrowse: CmdRequestBrowse,
+        requestChoice: CmdRequestChoice,
+        notificationReadsWrite: CmdNotificationReadsWrite,
         submitSupport: CmdSubmitSupport,
         authorizeQuickConnect: CmdAuthorizeQuickConnect,
         viewerSettings: CmdViewerSettings,
@@ -40,14 +54,27 @@ sub execute()
         languages: CmdLanguages,
         changePassword: CmdChangePassword
     }
+    if cmd = "requestBrowse" or cmd = "requestChoice" then
+        if req.scope = "" or req.scope <> ZNotificationScope(m.session) or not ZContains([1, 2], req.version) or req.version <> m.global.features.requests then
+            m.top.response = { ok: false, error: "stale" }
+            return
+        end if
+    end if
     handler = handlers[cmd]
     if handler = invalid then
         m.top.response = { ok: false, error: "invalid", cmd: cmd }
         return
     end if
+    if cmd = "inbox" or cmd = "notificationReadsWrite" then
+        if ZStr(req.scope) = "" or ZStr(req.scope) <> ZNotificationScope(m.session) then
+            m.top.response = { ok: false, scope: ZStr(req.scope), error: "stale" }
+            return
+        end if
+    end if
     result = handler(req)
     if result = invalid then result = { ok: false, error: "invalid" }
     result.cmd = cmd
+    if cmd = "inbox" or cmd = "notificationReadsWrite" then result.scope = ZNotificationScope(m.session)
     m.top.response = result
 end sub
 
@@ -75,11 +102,11 @@ end function
 
 ' Authenticated call on the session's server. Zorofin module routes also
 ' get X-Jellyfin-Token, which the plugin and companion read.
-function Api(method as string, path as object, query = invalid as dynamic, body = invalid as dynamic, extension = false as boolean) as object
+function Api(method as string, path as object, query = invalid as dynamic, body = invalid as dynamic, extension = false as boolean, timeoutMs = 20000 as integer) as object
     url = ZEndpoint(ServerBase(), path, query)
     headers = AuthHeaders()
     if extension then headers["X-Jellyfin-Token"] = ZStr(m.session.token)
-    return ZHttp(method, url, headers, body)
+    return ZHttp(method, url, headers, body, timeoutMs)
 end function
 
 function Fail(r as object) as object
@@ -253,6 +280,8 @@ function CmdViews(req as object) as object
 end function
 
 function CmdHome(req as object) as object
+    cachePath = HomeSnapshotPath()
+    if req.cold = true then ReadHomeSnapshot(cachePath)
     uid = ViewerId()
     features = Capabilities()
     root = CreateObject("roSGNode", "ContentNode")
@@ -260,7 +289,10 @@ function CmdHome(req as object) as object
 
     ' Library views drive the tab bar and the "Recently added" rows.
     views = Api("GET", ["UserViews"], { userId: uid })
-    if not views.ok then return Fail(views)
+    if not views.ok then
+        if cachePath <> "" and (views.status = 401 or views.status = 403) then DeleteFile(cachePath)
+        return Fail(views)
+    end if
     viewList = []
     if ZIsArray(views.json.Items) then viewList = views.json.Items
 
@@ -286,14 +318,31 @@ function CmdHome(req as object) as object
         if rows <> invalid and rows.count() > 0 then
             usedServerFeed = true
             for each section in rows
-                landscape = section.id = "continue-watching"
+                ' Wide cards for Continue Watching and live sports, as on the
+                ' other apps: channel art is 16:9 and a game shows two crests.
+                landscape = section.id = "continue-watching" or section.id = "sports"
                 row = MakeRow(section.title, section.id, landscape)
                 for each card in section.cards
                     node = ZItemNode(card.item, base)
+                    if section.id = "sports" and card.game <> invalid then
+                        ' Crests are public files on the viewer's own server: no token.
+                        node.game = {
+                            title: card.game.title, status: card.game.status,
+                            crests: [ZEndpoint(base, card.game.crests[0].split("/")), ZEndpoint(base, card.game.crests[1].split("/"))]
+                        }
+                    end if
                     split = ZSplitBadges(card.badges)
                     if split.quality.count() > 0 then node.badges = split.quality
                     node.contextBadges = split.context
-                    if card.subtitle <> "" then node.caption = card.subtitle
+                    ' One line under the title, as on Apple: a short movie's
+                    ' length or a live card's program, else the row's badge.
+                    label = ""
+                    if section.id = "short-movies" or section.id = "sports" then
+                        label = card.subtitle
+                    else if split.context.count() > 0 then
+                        label = split.context[0]
+                    end if
+                    if label <> "" then node.caption = label
                     row.appendChild(node)
                 end for
                 root.appendChild(row)
@@ -311,6 +360,8 @@ function CmdHome(req as object) as object
         bannerRow.appendChild(banner)
         root.insertChild(bannerRow, 0)
     end if
+    SaveProfileSpotlight(root)
+    WriteHomeSnapshot(cachePath, root)
     m.top.content = root
     nav = []
     for each v in viewList
@@ -318,6 +369,33 @@ function CmdHome(req as object) as object
     end for
     return { ok: true, views: nav, features: features, hasBanner: banner <> invalid, serverFeed: usedServerFeed }
 end function
+
+'' Remembers what this profile was watching, for the Who's watching backdrop.
+' Roku never fetches other profiles' history; each refreshes on its own Home.
+sub SaveProfileSpotlight(root as object)
+    s = m.session
+    if s = invalid or ZStr(s.userId) = "" then return
+    key = "spotlight:" + LCase(ZStr(s.serverId) + ":" + ZStr(s.userId))
+    cards = []
+    for i = 0 to root.getChildCount() - 1
+        row = root.getChild(i)
+        if row <> invalid and row.id = "continue-watching" then
+            for j = 0 to row.getChildCount() - 1
+                if j >= 6 then exit for
+                cards.push(row.getChild(j).getFields())
+            end for
+            exit for
+        end if
+    end for
+    spot = ZProfileSpotlight(cards)
+    sec = CreateObject("roRegistrySection", "zorofin")
+    if spot = invalid then
+        sec.Delete(key)
+    else
+        sec.Write(key, FormatJson(spot))
+    end if
+    sec.Flush()
+end sub
 
 ' Home without the plugin: Continue Watching, the optional legacy server rows,
 ' then recently added per library.
@@ -743,7 +821,7 @@ end function
 function CmdPlayback(req as object) as object
     uid = ViewerId()
     id = ZStr(req.id)
-    info = Api("GET", ["Items", id], { userId: uid, fields: "MediaSources,MediaStreams,Overview" })
+    info = Api("GET", ["Items", id], { userId: uid, fields: "MediaSources,MediaStreams,Overview,Chapters" })
     if not info.ok then return Fail(info)
     json = info.json
     kind = ZStr(json.Type)
@@ -858,6 +936,7 @@ function CmdPlayback(req as object) as object
         audioTracks: audio,
         subtitles: subtitles,
         segments: segments,
+        chapters: ZChapters(json),
         backdrop: ZItemNode(json, base).backdropUrl,
         maxBitrate: device.maxBitrate,
         streamBitrate: StreamBitrate(source, method),
@@ -910,6 +989,21 @@ function CmdReport(req as object) as object
     return { ok: r.ok, event: req.event }
 end function
 
+' One playback problem for the server owner (Zorofin plugin). 404 means the
+' owner turned collection off and 429 that this viewer sent enough: both
+' tell the app to stay quiet for the rest of the run.
+function CmdPlaybackProblem(req as object) as object
+    r = Api("POST", ["Zorofin", "PlaybackReports"], invalid, req.body, true, 8000)
+    return { ok: r.ok, refused: r.status = 404 or r.status = 429 }
+end function
+
+' Whether the server answers at all. The player asks after a stream breaks,
+' to tell a dropped connection from a stream that cannot play.
+function CmdPing(req as object) as object
+    r = Api("GET", ["System", "Info", "Public"], invalid, invalid, false, 4000)
+    return { ok: true, reachable: r.status > 0 }
+end function
+
 function CmdNextEpisode(req as object) as object
     if ZStr(req.seriesId) = "" then return { ok: true, next: invalid }
     r = Api("GET", ["Shows", req.seriesId, "Episodes"], { userId: ViewerId(), startItemId: req.id, limit: 2, fields: "Overview", isMissing: false, enableImageTypes: "Primary,Thumb", imageTypeLimit: 1 })
@@ -941,9 +1035,334 @@ end function
 
 ' Deep links: find what a contentId is so the scene can open or play it.
 function CmdResolve(req as object) as object
-    r = Api("GET", ["Items", ZStr(req.id)], { userId: ViewerId() })
+    action = ZDeepLinkAction(req.mediaType)
+    id = ZDeepLinkId(req.id)
+    if action = "invalid" or id = "" then return { ok: false, error: "invalid" }
+    r = Api("GET", ["Items", id], { userId: ViewerId() })
     if not r.ok then return Fail(r)
-    return { ok: true, id: r.json.Id, type: ZStr(r.json.Type), position: ZNum(ZGet(r.json, "UserData", "PlaybackPositionTicks"), 0), mediaType: req.mediaType }
+    item = r.json
+    kind = ZStr(item.Type)
+    ' Series and season links play the smart bookmark (Roku certification);
+    ' with no episodes to play they open the show's details.
+    if kind = "Series" or kind = "Season" then
+        episode = BookmarkEpisode(item)
+        if episode <> invalid then item = episode
+    end if
+    ' Folders and other items a link can't open count as invalid links
+    ' (Jellyfin answers the all-zero id with the user's root folder).
+    if ZDeepLinkTarget(item.Type) = "" then return { ok: false, error: "invalid" }
+    return { ok: true, id: ZStr(item.Id), type: ZStr(item.Type), position: ZNum(ZGet(item, "UserData", "PlaybackPositionTicks"), 0), mediaType: ZStr(req.mediaType) }
+end function
+
+function BookmarkEpisode(item as object) as dynamic
+    seriesId = ZStr(item.Id)
+    query = { userId: ViewerId(), fields: "UserData", enableUserData: true }
+    if item.Type = "Season" then
+        seriesId = ZStr(item.SeriesId)
+        query.seasonId = ZStr(item.Id)
+    else
+        ' Next up already accounts for watched and in-progress episodes.
+        n = Api("GET", ["Shows", "NextUp"], { userId: ViewerId(), seriesId: seriesId, limit: 1, enableResumable: true, enableRewatching: false, fields: "UserData" })
+        if n.ok and ZIsArray(n.json.Items) and n.json.Items.count() > 0 then return n.json.Items[0]
+    end if
+    if seriesId = "" then return invalid
+    r = Api("GET", ["Shows", seriesId, "Episodes"], query)
+    if not r.ok then return invalid
+    return ZBookmarkEpisode(r.json.Items)
+end function
+
+' MARK: Calendar and Catch Up (plugin extras)
+
+function CmdExtras(req as object) as object
+    r = Api("GET", ["Zorofin", "Extras"], invalid, invalid, true, 8000)
+    if not r.ok then return { ok: true, extras: ZParseExtras(invalid) }
+    return { ok: true, extras: ZParseExtras(r.json) }
+end function
+
+' Four weeks from today as shelves, one per local day (including empty dates). Titles already on the
+' server open their details; the rest are announcements only.
+function CmdCalendar(req as object) as object
+    offset = ZGuideLocalOffset()
+    now = ZNowSeconds()
+    r = Api("GET", ["Zorofin", "Arr", "Calendar"], { start: ZCalendarKey(now, offset), days: 28 }, invalid, true)
+    if not r.ok then return Fail(r)
+    items = invalid
+    if ZIsMap(r.json) then items = r.json.items
+    filter = ZStr(req.filter, "all")
+    root = CreateObject("roSGNode", "ContentNode")
+    eventCount = 0
+    for each group in ZCalendarGroups(items, now, offset, filter, 28)
+        row = MakeRow(group.label, "day-" + group.day, false)
+        for each e in group.events
+            node = CreateObject("roSGNode", "ZItem")
+            node.id = ZStr(e.itemId)
+            node.itemType = "Movie"
+            if e.kind = "episode" then node.itemType = "Series"
+            node.title = ZStr(e.title)
+            node.caption = ZCalendarCaption(e, offset)
+            poster = ZStr(e.posterUrl)
+            if Left(LCase(poster), 8) <> "https://" then poster = ""
+            node.HDPosterUrl = poster
+            node.FHDPosterUrl = poster
+            badges = []
+            badge = ZCalendarBadge(e)
+            if badge <> "" then badges.push(badge)
+            if e.hasFile = true then badges.push("On the server")
+            node.badges = badges
+            row.appendChild(node)
+        end for
+        eventCount = eventCount + group.events.count()
+        root.appendChild(row)
+    end for
+    m.top.content = root
+    return { ok: true, days: root.getChildCount(), events: eventCount }
+end function
+
+' Sixty random unplayed titles with a plot, minus liked and skipped ones.
+function CmdCatchUp(req as object) as object
+    kinds = ZStr(req.kinds, "Movie,Series")
+    r = Api("GET", ["Items"], {
+        userId: ViewerId(), includeItemTypes: kinds, recursive: true, sortBy: "Random",
+        limit: 60, hasOverview: true, imageTypeLimit: 1, enableImageTypes: "Backdrop,Logo,Primary",
+        excludeLocationTypes: "Virtual", enableUserData: true,
+        fields: "Overview,ProductionYear,OfficialRating,CommunityRating,RunTimeTicks,ChildCount,Genres"
+    })
+    if not r.ok then return Fail(r)
+    skips = []
+    if ZIsArray(req.skips) then skips = req.skips
+    base = ServerBase()
+    root = CreateObject("roSGNode", "ContentNode")
+    taste = Api("GET", ["Zorofin", "Companion", "recommendations", "taste"], invalid, invalid, true)
+    liked = {}
+    if taste.ok then
+        liked = ZTasteSet(taste.json)
+        if liked = invalid then return { ok: false, error: "invalid" }
+    else if taste.status <> 403 and taste.status <> 404 then
+        return Fail(taste)
+    end if
+    for each json in ZCatchUpQueue(r.json.Items, skips, liked)
+        node = ZItemNode(json, base)
+        ' The metadata line already shows the year; the caption is seasons only.
+        node.caption = ""
+        if json.Type = "Series" then
+            seasons = Int(ZNum(json.ChildCount, 0))
+            if seasons = 1 then node.caption = "1 season" else if seasons > 1 then node.caption = seasons.toStr() + " seasons"
+        end if
+        root.appendChild(node)
+    end for
+    m.top.content = root
+    return { ok: true, count: root.getChildCount(), canLike: taste.ok }
+end function
+
+function CmdCatchUpAct(req as object) as object
+    id = ZStr(req.id)
+    action = ZStr(req.action)
+    if action = "like" then
+        r = Api("POST", ["Zorofin", "Companion", "recommendations", "taste"], invalid, { itemId: id, action: action }, true)
+        if not r.ok then return Fail(r)
+        liked = ZTasteSet(r.json)
+        if liked = invalid then return { ok: false, error: "invalid" }
+        return { ok: liked.doesExist(LCase(id.replace("-", ""))), action: action }
+    end if
+    if action <> "skip" then return { ok: false, error: "invalid" }
+    Api("POST", ["Zorofin", "Extras", "CatchUp", "Log"], invalid, { itemId: id, action: action }, true, 6000)
+    return { ok: true, id: id, action: action }
+end function
+
+' MARK: Pick Together (TV host)
+
+' One call for the TV host: create (display: true), state (since version),
+' host actions (start, next-round, end). Returns the parsed session, or
+' { unchanged: true }, or a short error with ended: true when the group is gone.
+' A refused companion call is never a signed-out session.
+function CmdPick(req as object) as object
+    action = ZStr(req.action)
+    root = ["Zorofin", "Companion", "pickTogether"]
+    id = ZStr(req.id)
+    seat = ZStr(req.seat)
+    if action = "create" then
+        kind = ZStr(req.kind)
+        if kind <> "movie" and kind <> "series" then return { ok: false, error: "invalid" }
+        r = Api("POST", root.concat(["sessions"]), invalid, { kind: kind, display: true }, true, 15000)
+    else
+        if Len(id) <> 32 then return { ok: true, failed: ZPickError(404) }
+        query = {}
+        if seat <> "" then query.seat = seat
+        if action = "state" then
+            if req.since <> invalid then query.since = ZStr(req.since)
+            r = Api("GET", root.concat(["sessions", id]), query, invalid, true, 15000)
+        else if ZContains(["start", "next-round", "end"], action) then
+            body = {}
+            if seat <> "" then body.seat = seat
+            r = Api("POST", root.concat(["sessions", id, action]), invalid, body, true, 15000)
+        else
+            return { ok: false, error: "invalid" }
+        end if
+    end if
+    if not r.ok then return { ok: true, failed: ZPickError(r.status) }
+    if ZIsMap(r.json) and ZBool(r.json.unchanged) then return { ok: true, unchanged: true }
+    session = ZPickSession(r.json)
+    if session = invalid then return { ok: true, failed: { text: "The server sent something unexpected. Try again.", ended: false } }
+    return { ok: true, session: session }
+end function
+
+' Home trailer previews: the first direct-play local trailer of a movie or
+' show, or no url. Never reported as playback.
+function CmdTrailer(req as object) as object
+    id = ZStr(req.id)
+    if id = "" then return { ok: true, url: "" }
+    r = Api("GET", ["Items", id, "LocalTrailers"], { userId: ViewerId() }, invalid, false, 8000)
+    if not r.ok or not ZIsArray(r.json) or r.json.count() = 0 then return { ok: true, id: id, url: "" }
+    trailer = r.json[0]
+    sources = trailer.MediaSources
+    if not ZIsArray(sources) or sources.count() = 0 then
+        full = Api("GET", ["Items", ZStr(trailer.Id)], { userId: ViewerId(), fields: "MediaSources" }, invalid, false, 8000)
+        if not full.ok or not ZIsMap(full.json) then return { ok: true, id: id, url: "" }
+        trailer = full.json
+        sources = trailer.MediaSources
+    end if
+    if not ZIsArray(sources) or sources.count() = 0 then return { ok: true, id: id, url: "" }
+    source = sources[0]
+    if not ZTrailerCompatible(source) then return { ok: true, id: id, url: "" }
+    sourceId = ZStr(source.Id, ZStr(trailer.Id))
+    url = ZEndpoint(ServerBase(), ["Videos", ZStr(trailer.Id), "stream.mp4"], { static: "true", mediaSourceId: sourceId, api_key: ZStr(m.session.token) })
+    caption = invalid
+    for each stream in source.MediaStreams
+        if stream.Type = "Subtitle" and ZContains(["srt", "subrip", "vtt", "webvtt"], LCase(ZStr(stream.Codec))) and ZNum(stream.Index, -1) >= 0 then
+            path = ["Videos", ZStr(trailer.Id), sourceId, "Subtitles", stream.Index.toStr(), "0", "Stream.vtt"]
+            caption = { TrackName: ZEndpoint(ServerBase(), path, { api_key: ZStr(m.session.token) }), Language: ZStr(stream.Language, "und"), Description: "Trailer captions" }
+            exit for
+        end if
+    end for
+    return { ok: true, id: id, url: url, caption: caption }
+end function
+
+' MARK: Server looks
+
+' The companion's published web look (public file, no viewer data).
+' A 404 means an older companion: the app keeps its own look.
+function CmdLooks(req as object) as object
+    base = ServerBase()
+    if base = "" then return { ok: false, error: "invalid" }
+    r = ZHttp("GET", ZLooksUrl(base), {}, invalid, 6000)
+    if r.status = 404 then return { ok: true, looks: { accent: "", cardScale: 0.0 }, server: base }
+    if not r.ok then return Fail(r)
+    looks = ZParseLooks(r.json)
+    if looks = invalid then looks = { accent: "", cardScale: 0.0 }
+    return { ok: true, looks: looks, server: base }
+end function
+
+' MARK: Live now (playable guide events + companion settings)
+
+function CmdLiveNow(req as object) as object
+    base = ServerBase()
+    feed = invalid
+    scoresStatus = 0
+    if req.sports = true and req.scores <> false then
+        s = Api("GET", ["Zorofin", "Companion", "sportsEvents", "live"], { window: "today" }, invalid, true, 4000)
+        scoresStatus = s.status
+        if s.ok then
+            feed = ZLiveParseFeed(s.json)
+            if feed = invalid and req.programs <> true then return { ok: false, error: "invalid" }
+        else if s.status = 401 or (req.programs <> true and s.status <> 404 and s.status <> 403) then
+            return Fail(s)
+        end if
+    end if
+    channels = []
+    start = 0
+    for page = 1 to 20
+        r = Api("GET", ["LiveTv", "Channels"], {
+            userId: ViewerId(), startIndex: start, limit: 200, addCurrentProgram: true,
+            fields: "Overview,Genres", enableUserData: true, enableImages: true, imageTypeLimit: 1,
+            enableImageTypes: "Primary,Thumb,Backdrop", enableTotalRecordCount: true
+        })
+        if not r.ok then return Fail(r)
+        items = r.json.Items
+        if not ZIsArray(items) then items = []
+        channels.append(items)
+        start = start + items.count()
+        total = Int(ZNum(r.json.TotalRecordCount, 0))
+        if items.count() < 200 or (total > 0 and start >= total) then exit for
+    end for
+    now = ZNowSeconds()
+    events = ZLiveSelect(channels, now, feed = invalid)
+    if feed <> invalid then events = ZLiveArrange(events, feed)
+    ' Artwork is optional decoration after game selection. A missing events.json
+    ' never removes a card. A matched fixture can supply its own photo or crests.
+    art = invalid
+    if events.count() > 0 then
+        if ZIsMap(req.art) then
+            art = req.art
+        else
+            a = ZHttp("GET", ZLiveArtUrl(base, "/live-tv-logos/art/events.json?v=" + Int(now / 300).toStr()), {}, invalid, 4000)
+            art = { version: 0 }
+            if a.ok and ZIsMap(a.json) and a.json.version = 2 and ZIsArray(a.json.events) then art = { version: 2, events: a.json.events }
+        end if
+        ZLiveApplyArtwork(events, art, false)
+    end if
+    byId = {}
+    for each c in channels
+        if ZIsMap(c) then byId[ZStr(c.Id)] = c
+    end for
+    repeatedArt = ZLiveRepeatedProgramArt(events, byId)
+    row = MakeRow("Sports & live events", "live-now", true)
+    for each e in events
+        if feed = invalid and row.getChildCount() >= 20 then exit for
+        c = byId[e.id]
+        node = ZItemNode(c, base)
+        node.itemType = "TvChannel"
+        picture = ""
+        logos = invalid
+        if e.artwork <> invalid and e.artwork.image <> "" then
+            picture = ZLiveArtUrl(base, e.artwork.image)
+        else if e.artwork <> invalid and e.artwork.logos.count() = 2 then
+            logos = [ZLiveArtUrl(base, e.artwork.logos[0]), ZLiveArtUrl(base, e.artwork.logos[1])]
+        else
+            image = ZLiveProgramImage(c, repeatedArt)
+            if image <> invalid then picture = ZImageUrl(base, image.item, image.kind, image.tag, 480)
+        end if
+        node.landscapeUrl = picture
+        node.HDPosterUrl = picture
+        logoTag = ZGet(c, "ImageTags", "Primary")
+        node.logoUrl = ZImageUrl(base, e.id, "Primary", logoTag, 240)
+        node.live = {
+            name: e.name, competition: e.competition, kind: e.kind, channel: e.channel, number: e.number,
+            start: e.start, finish: e.finish, favoriteTeam: e.favoriteTeam, score: e.score, logos: logos
+        }
+        row.appendChild(node)
+    end for
+    if req.programs = true then
+        programs = MakeRow("On now", "on-now", true)
+        for each c in channels
+            if programs.getChildCount() >= 100 then exit for
+            p = c.CurrentProgram
+            if not ZIsMap(p) then continue for
+            start = ZIsoToSeconds(p.StartDate)
+            finish = ZIsoToSeconds(p.EndDate)
+            if start <= 0 or start > now or finish <= now then continue for
+            id = ZStr(c.Id)
+            if id = "" then continue for
+            node = ZItemNode(c, base)
+            node.itemType = "TvChannel"
+            image = ZLiveProgramImage(c)
+            picture = ""
+            if image <> invalid then picture = ZImageUrl(base, image.item, image.kind, image.tag, 480)
+            node.landscapeUrl = picture
+            node.HDPosterUrl = picture
+            node.logoUrl = ZImageUrl(base, id, "Primary", ZGet(c, "ImageTags", "Primary"), 240)
+            node.live = { name: ZStr(p.Name, ZStr(c.Name)), channel: ZStr(c.Name), number: ZStr(c.ChannelNumber), start: start, finish: finish, onNow: true, isLive: p.IsLive = true }
+            programs.appendChild(node)
+        end for
+        browse = CreateObject("roSGNode", "ContentNode")
+        browse.appendChild(row)
+        browse.appendChild(programs)
+        m.top.content = browse
+    else
+        m.top.content = row
+    end if
+    source = "guide"
+    if feed <> invalid then source = "companion"
+    return { ok: true, count: row.getChildCount(), scoresStatus: scoresStatus, art: art, source: source }
 end function
 
 ' MARK: Live TV streams (companion liveTvStreams module, version 1)
@@ -951,9 +1370,18 @@ end function
 function CmdLiveStreams(req as object) as object
     query = { deviceId: ZStr(m.session.deviceId) }
     if ZStr(req.channelId) <> "" then query.channelId = ZStr(req.channelId)
-    r = Api("GET", ["Zorofin", "Companion", "liveTvStreams", "status"], query, invalid, true)
-    if not r.ok then return Fail(r)
-    status = ZLtsParse(r.json)
+    route = ZLtsRoute(m.global.features)
+    if route = "companion" then
+        r = Api("GET", ["Zorofin", "Companion", "liveTvStreams", "status"], query, invalid, true)
+        if not r.ok then return Fail(r)
+        status = ZLtsParse(r.json)
+    else if route = "legacy" then
+        r = Api("GET", ["support", "live-tv", "status"], query, invalid, true)
+        if not r.ok then return Fail(r)
+        status = ZLtsParseLegacy(r.json, ZStr(req.channelId))
+    else
+        return { ok: false, error: "unsupported" }
+    end if
     if status = invalid then return { ok: false, error: "invalid" }
     return { ok: true, channelId: ZStr(req.channelId), status: status }
 end function
@@ -981,6 +1409,95 @@ function CmdSupportReplies(req as object) as object
         })
     end for
     return { ok: true, replies: replies }
+end function
+
+' Read-only inbox refresh. Each result is tied to the session captured by this
+' task; the UI must reject a response after an account/server switch.
+function CmdInbox(req as object) as object
+    features = req.features
+    if not ZIsMap(features) then features = {}
+    reads = invalid
+    if ZNum(features.notificationReads, 0) = 1 then
+        state = Api("GET", ["Zorofin", "Notifications", "Read"], invalid, invalid, true, 5000)
+        if state.ok then reads = ZParseNotificationReads(state.json)
+    end if
+    replies = []
+    repliesOk = true
+    if ZNum(features.notifications, 0) = 1 then
+        result = CmdSupportReplies({})
+        repliesOk = result.ok = true
+        if repliesOk then replies = result.replies
+    end if
+    notices = []
+    version = Int(ZNum(features.requests, 0))
+    requestsEnabled = ZNum(features.notificationReads, 0) = 1 and ZContains([1, 2], version)
+    requestsOk = not requestsEnabled
+    requestsComplete = false
+    if requestsEnabled then
+        result = InboxReadyRequests(version)
+        requestsOk = result.ok = true
+        requestsComplete = requestsOk
+        if requestsOk then notices = result.notices
+    end if
+    return { ok: (ZNum(features.notifications, 0) = 1 and repliesOk) or requestsComplete, repliesOk: repliesOk, replies: replies, requestsOk: requestsOk, requestsComplete: requestsComplete, notices: notices, reads: reads }
+end function
+
+function InboxReadyRequests(version as integer) as object
+    activityPath = ["Zorofin", "Requests", "activity"]
+    titleBase = ["Zorofin", "Requests"]
+    if version = 1 then
+        activityPath = ["JellyfinEnhanced", "arr", "requests"]
+        titleBase = ["JellyfinEnhanced", "jellyseerr"]
+    end if
+    candidates = []
+    seen = {}
+    for page = 0 to 1
+        r = Api("GET", activityPath, { userOnly: true, take: 50, skip: page * 50, filter: "all" }, invalid, true, 5000)
+        if not r.ok then return Fail(r)
+        if not ZIsMap(r.json) or not ZIsArray(r.json.requests) then return { ok: false }
+        if r.json.requests.count() > 50 or ZNum(r.json.totalPages, 1) > 10000 then return { ok: false }
+        for each item in r.json.requests
+            if ZIsMap(item) and ZNotificationRequestId(item.id) and ZContains([2, 5], Int(ZNum(item.requestStatus, 0))) then
+                if ZContains(["movie", "tv"], ZStr(item.type)) and ZNum(item.tmdbId, 0) > 0 and seen[item.id.toStr()] <> true then
+                    seen[item.id.toStr()] = true
+                    candidates.push(item)
+                end if
+            end if
+        end for
+        if page + 1 >= ZNum(r.json.totalPages, 1) then exit for
+    end for
+    notices = []
+    details = {}
+    for each item in candidates
+        key = item.type + ":" + ZStr(item.tmdbId)
+        detail = details[key]
+        if detail = invalid then
+            path = []
+            path.append(titleBase)
+            path.append([item.type, ZStr(item.tmdbId)])
+            r = Api("GET", path, invalid, invalid, true, 5000)
+            if not r.ok then return Fail(r)
+            if not ZIsMap(r.json) then return { ok: false }
+            detail = r.json
+            details[key] = detail
+        end if
+        notice = ZReadyRequest(item, detail)
+        if notice <> invalid then notices.push(notice)
+    end for
+    return { ok: true, notices: notices }
+end function
+
+function CmdNotificationReadsWrite(req as object) as object
+    if ZNum(req.version, 0) <> 1 then return { ok: false, error: "unsupported" }
+    if not ZIsArray(req.requests) or not ZIsArray(req.replies) then return { ok: false, error: "invalid" }
+    reads = invalid
+    for each body in ZNotificationBatches(req.requests, req.replies, req.initialize = true)
+        r = Api("POST", ["Zorofin", "Notifications", "Read"], invalid, body, true, 5000)
+        if not r.ok then return Fail(r)
+        reads = ZParseNotificationReads(r.json)
+        if reads = invalid then return { ok: false, error: "invalid" }
+    end for
+    return { ok: true, reads: reads }
 end function
 
 ' One POST only: a lost receipt must never create a duplicate ticket.

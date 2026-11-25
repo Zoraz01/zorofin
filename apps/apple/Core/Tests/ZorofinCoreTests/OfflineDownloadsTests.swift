@@ -131,3 +131,87 @@ private func episode(_ id: String, season: Int, number: Int, series: String = "s
         #expect(query.contains(.init(name: "playSessionId", value: "play")) && query.contains(.init(name: "deviceId", value: "device")))
     }
 }
+
+private actor DownloadPolicyTransport: HTTPTransport {
+    private var responses: [(Int, String)]
+    private(set) var requests: [URLRequest] = []
+    init(_ responses: [(Int, String)]) { self.responses = responses }
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        guard !responses.isEmpty else { throw ClientError.network }
+        let (status, body) = responses.removeFirst()
+        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+@Suite("Fresh download permission") struct DownloadPermissionTests {
+    private func client(_ transport: any HTTPTransport, savedPermission: Bool? = true,
+                        cache: LibraryResponseCache? = nil) throws -> JellyfinClient {
+        let server = try ServerAddress("https://media.example/base")
+        var policy = ViewerPolicy(); policy.enableContentDownloading = savedPermission
+        return JellyfinClient(server: server, identity: .init(deviceID: "device", deviceName: "Fixture"),
+            session: .init(server: server, viewer: .init(id: "viewer", name: "Viewer", policy: policy),
+                           token: "fixture-token", deviceID: "device"), transport: transport, responseCache: cache)
+    }
+
+    @Test(arguments: [
+        #"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":false}}"#,
+        #"{"Id":"viewer","Name":"Viewer","Policy":{}}"#,
+        #"{"Id":"viewer","Name":"Viewer"}"#,
+        #"{"Id":"viewer","Name":"Viewer","Policy":{"IsAdministrator":true}}"#,
+        #"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":null}}"#,
+    ]) func savedAllowNeverOverridesFreshDeniedOrUnknown(_ body: String) async throws {
+        let transport = DownloadPolicyTransport([(200, body)])
+        #expect(try await !client(transport).contentDownloadPermission())
+        let requests = await transport.requests
+        #expect(requests.count == 1)
+        #expect(requests.first?.url?.absoluteString == "https://media.example/base/Users/Me")
+        #expect(requests.first?.httpMethod == "GET")
+        #expect(requests.first?.value(forHTTPHeaderField: "Authorization")?.contains("fixture-token") == true)
+    }
+
+    @Test func freshAllowOverridesSavedDenyAndRevocationIsNotCached() async throws {
+        let transport = DownloadPolicyTransport([
+            (200, #"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":true}}"#),
+            (200, #"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":false}}"#),
+        ])
+        let server = try ServerAddress("https://media.example/base")
+        let cache = LibraryResponseCache(server: server, viewerID: "viewer")
+        let client = try client(transport, savedPermission: false, cache: cache)
+        #expect(try await client.contentDownloadPermission())
+        #expect(try await !client.contentDownloadPermission())
+        #expect(await transport.requests.count == 2)
+    }
+
+    @Test func anotherViewerCannotAuthorizeThisSession() async throws {
+        let transport = DownloadPolicyTransport([
+            (200, #"{"Id":"other","Name":"Other","Policy":{"EnableContentDownloading":true}}"#),
+        ])
+        let client = try client(transport)
+        await #expect(throws: ClientError.invalidResponse) { try await client.contentDownloadPermission() }
+    }
+
+    @Test(arguments: [401, 403, 503]) func httpFailuresNeverGrantDownload(_ status: Int) async throws {
+        let transport = DownloadPolicyTransport([(status, "{}")])
+        let client = try client(transport)
+        let expected: ClientError = status == 401 ? .unauthorized : status == 403 ? .forbidden : .unavailable(status)
+        await #expect(throws: expected) { try await client.contentDownloadPermission() }
+    }
+
+    @Test func malformedPolicyAndTransportFailureNeverUseSavedAllow() async throws {
+        let transport = DownloadPolicyTransport([
+            (200, #"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":"true"}}"#),
+        ])
+        let client = try client(transport)
+        await #expect(throws: ClientError.invalidResponse) { try await client.contentDownloadPermission() }
+        await #expect(throws: ClientError.network) { try await client.contentDownloadPermission() }
+    }
+
+    @Test func legacySavedPolicyStillDecodesWithoutGrantingPermission() throws {
+        let policy = try JSONDecoder().decode(ViewerPolicy.self, from: Data(#"{"isAdministrator":false}"#.utf8))
+        #expect(policy.enableContentDownloading == nil)
+        let wire = try Wire.decoder().decode(Viewer.self,
+            from: Data(#"{"Id":"viewer","Name":"Viewer","Policy":{"EnableContentDownloading":true}}"#.utf8))
+        #expect(wire.policy?.enableContentDownloading == true)
+    }
+}

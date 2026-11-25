@@ -228,7 +228,7 @@ struct RequestsView: View {
                                 LazyHStack(alignment: .top, spacing: Theme.isTV ? 24 : 14) {
                                     ForEach(titles, id: \.identity) { title in
                                         requestCard(title, focusID: "\(row.id)-\(title.identity)")
-                                            .frame(width: (Theme.isTV ? 210 : 144) * model.preferences.posterScale)
+                                            .frame(width: (Theme.isTV ? 210 : 144) * model.posterScale)
                                     }
                                 }.padding(8)
                             }.scrollIndicators(.hidden)
@@ -379,6 +379,7 @@ private struct RequestDetailsView: View {
     @State private var entries: [RequestJournal.Entry] = []
     @State private var activity: RequestActivityItem?
     @State private var download: String?
+    @State private var downloadProgress: Double?
     @State private var loading = true
     @State private var updating = false
     @State private var sending = false
@@ -423,8 +424,9 @@ private struct RequestDetailsView: View {
         if unconfirmed { return "Confirmation pending" }
         if activity?.statusLabel == "Available" { return "Ready to watch" }
         if let download { return download }
-        if let activity { return activity.statusLabel }
-        if receiptStatus == 1 { return "Awaiting approval" }
+        if let activity { return activity.statusLabel == "Requested" && activity.requestStatus == 2 ? "Processing" : activity.statusLabel }
+        if receiptStatus == 1 { return "Pending approval" }
+        if receiptStatus == 2 { return "Processing" }
         if let title, title.mediaInfo?.status == 5 || title.mediaInfo?.status4k == 5 { return "Ready to watch" }
         if let outcome { return outcome }
         return title?.status() ?? "Status unavailable"
@@ -524,6 +526,38 @@ private struct RequestDetailsView: View {
         }.buttonStyle(ZoroButtonStyle(primary: true)).disabled(!canSend)
             .accessibilityIdentifier("request-submit").requestFocusSection()
     }
+    private var progressStage: String? {
+        let label = statusLabel
+        if unconfirmed { return nil }
+        if label == "Ready to watch" { return "Ready to watch" }
+        if label == "Pending approval" || label == "Awaiting approval" { return "Pending approval" }
+        if label.hasPrefix("Downloading") || label == "Download paused" || label == "Download needs attention" || label == "Adding to library" { return "Downloading" }
+        if label == "Processing" || label == "Requested" || label == "Download queued" { return "Processing" }
+        if label == "Request received" { return "Request received" }
+        return nil
+    }
+    @ViewBuilder private var requestStages: some View {
+        if let current = progressStage {
+            let steps = ["Request received"] + (current == "Pending approval" ? ["Pending approval"] : []) + ["Processing", "Downloading", "Ready to watch"]
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(steps, id: \.self) { step in
+                    HStack(spacing: 12) {
+                        Image(systemName: step == current ? "record.circle.fill" : "circle")
+                            .foregroundStyle(step == current ? Theme.jade : Theme.muted)
+                        Text(step).foregroundStyle(step == current ? Theme.text : Theme.muted)
+                    }.font(Theme.font(Theme.isTV ? 22 : 15, weight: step == current ? .semibold : .regular))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(step + (step == current ? ", current status" : ""))
+                }
+                if statusLabel.hasPrefix("Downloading") {
+                    if let value = downloadProgress, value.isFinite, value >= 0 {
+                        ProgressView(value: min(100, value) / 100).tint(Theme.jade)
+                            .accessibilityLabel("Download progress")
+                    } else { ProgressView("Downloading…") }
+                }
+            }.padding(.vertical, 8).accessibilityIdentifier("request-progress-stages")
+        }
+    }
     private var requestStatus: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
@@ -539,6 +573,7 @@ private struct RequestDetailsView: View {
             }.frame(maxWidth: .infinity, alignment: .leading).padding(18)
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
                 .accessibilityIdentifier("request-current-status")
+            requestStages
             Button {
                 model.requestsLibrary.category = "activity"; model.requestsLibrary.mine = true
                 model.requestsLibrary.query = ""; model.requestsLibrary.page = 1; dismiss()
@@ -647,11 +682,11 @@ private struct RequestDetailsView: View {
             let saved = try await service.journal.entries().filter { $0.intent.mediaId == selection.titleID && $0.intent.mediaType == selection.kind }
             let activityPage = try? await client.requestActivity(mine: true)
             let personal = activityPage?.requests.first { $0.tmdbId == selection.titleID && $0.kind == selection.kind }
-            var queueLabel: String?
-            if let personal { queueLabel = try? await client.requestQueue().label(for: personal) }
+            var queueDownload: RequestQueue.Download?
+            if let personal { queueDownload = try? await client.requestQueue().download(for: personal) }
             guard !Task.isCancelled, expected == model.generation, loadID == currentLoad else { return }
             title = fresh; quota = freshQuota; settings = seasonSettings; entries = saved
-            activity = personal; download = queueLabel; error = nil
+            activity = personal; download = queueDownload?.label; downloadProgress = queueDownload?.progress; error = nil
             blocked = saved.contains { $0.receiptID == nil }; unconfirmed = blocked
             if blocked { outcome = nil }
             else if !saved.isEmpty { outcome = "Request received" }
@@ -886,16 +921,16 @@ struct NotificationInboxView: View {
     @State private var openTask: Task<Void, Never>?
     @FocusState private var closeFocused: Bool
     private var newRequests: [RequestAvailabilityNotice] {
-        model.requestNotices.filter { !model.requestReadIDs.contains($0.id) || sessionRequestIDs.contains($0.id) }
+        model.requestNotices.filter { !model.isRequestRead($0.id) || sessionRequestIDs.contains($0.id) }
     }
     private var oldRequests: [RequestAvailabilityNotice] {
-        model.requestNotices.filter { model.requestReadIDs.contains($0.id) && !sessionRequestIDs.contains($0.id) }
+        model.requestNotices.filter { model.isRequestRead($0.id) && !sessionRequestIDs.contains($0.id) }
     }
     private var newReplies: [SupportReply] {
-        model.replies.filter { !model.seenReplyKeys.contains($0.notificationKey) || sessionReplyKeys.contains($0.notificationKey) }
+        model.replies.filter { !model.isReplyRead($0) || sessionReplyKeys.contains($0.notificationKey) }
     }
     private var oldReplies: [SupportReply] {
-        model.hiddenReplies.filter { !sessionReplyKeys.contains($0.notificationKey) }
+        model.readReplies.filter { !sessionReplyKeys.contains($0.notificationKey) }
     }
     private var historyCount: Int { oldRequests.count + oldReplies.count }
     var body: some View {
@@ -1021,17 +1056,17 @@ private struct NotificationReplyRow: View {
     var body: some View {
         Button { expanded.toggle() } label: {
             VStack(alignment: .leading, spacing: 6) {
-                Label { Text("Support reply") } icon: { InterfaceIcon(name: "support", size: Theme.isTV ? 22 : 18) }
+                Label { Text(reply.sourceLabel) } icon: { InterfaceIcon(name: reply.isAnnouncement ? "bell" : "support", size: Theme.isTV ? 22 : 18) }
                     .foregroundStyle(Theme.jade)
                 Text(reply.affectedMedia?.isEmpty == false ? reply.affectedMedia! : reply.issueType)
                     .fontWeight(.semibold).lineLimit(2)
                 Text(reply.message).foregroundStyle(Theme.muted).lineLimit(expanded ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
-                if expanded { Text("Reference: \(reply.id)").foregroundStyle(Theme.muted) }
+                if expanded && !reply.isAnnouncement { Text("Reference: \(reply.id)").foregroundStyle(Theme.muted) }
             }.font(Theme.font(Theme.isTV ? 20 : 14)).multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 .background(Theme.background.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
-        }.buttonStyle(ArtworkButtonStyle()).accessibilityHint("Show or hide the full reply")
+        }.buttonStyle(ArtworkButtonStyle()).accessibilityHint("Show or hide the full message")
     }
 }
 

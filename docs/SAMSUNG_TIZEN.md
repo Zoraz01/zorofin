@@ -67,6 +67,41 @@ adds `video_player_tizen` and `shared_preferences_tizen`, and runs
 `build/tizen/`. The shared `pubspec.lock` is not touched, because flutter-tizen
 resolves packages with a newer Flutter than the LG and Android builds use.
 
+## Samsung playback retest
+
+The native TPK now negotiates H.264 and HEVC in supported containers and
+advertises compatible AAC, AC-3, and E-AC-3. The runner checks the local commercial model code.
+Recognized 55–85 inch Q80B models enable 4K HEVC, HDR10, HDR10+ and HLG.
+Hybrid Dolby Vision titles can use their advertised HDR10/HDR10+ base layer.
+Unknown models use the 1080p SDR profile. For a model-confirmed Q80B tester
+whose firmware returns a generic model name, pass
+`--dart-define=ZOROFIN_TIZEN_Q80B=true` to `build_tpk.sh` for its dedicated
+candidate. Keep that flag out of general distribution. The existing UHD-only
+flag enables 4K SDR. See Samsung’s [Q80B specifications](https://images.samsung.com/is/content/samsung/assets/au/tvs/product-specs/q80b-2022-product-specs.pdf)
+and [2022 TV decoder limits](https://developer.samsung.com/smarttv/develop/specifications/media-specifications/2022-tv-video-specifications.html).
+
+Samsung native open and seek commands have timeouts. If direct playback of a
+movie or episode hits a decoder error, the app tries one compatible Jellyfin
+HLS stream at the last known position. Jellyfin can copy compatible video into
+that stream. Stop reporting and encoder cleanup keep the original session ID
+when the player closes. Android and LG continue using their existing profiles.
+
+For a Q80B retest, install in place with the same Samsung signing identity.
+Retry the same title and remote action where playback froze. Try a known
+1080p H.264/AAC file and a 4K SDR HEVC MKV. In Playback info record Direct Play,
+Direct Stream or Transcode, plus video and audio codec and subtitle selection.
+Test Play/Pause, two quick seeks, and Back, then reopen the title and check
+Resume. Note whether the TV's Home button still works during a freeze. Share
+only the model, firmware and behavior. Leave device identifiers and account
+details out of screenshots or reports.
+
+Run the simulated decoder regressions from `apps/tv`:
+
+```sh
+flutter test --dart-define=ZOROFIN_TIZEN_TV=true \
+  test/player_lifecycle_test.dart test/playback_capabilities_test.dart
+```
+
 ## Testing without a Samsung TV
 
 - The Tizen TV emulator needs x86 hardware virtualization (Intel VT-x or

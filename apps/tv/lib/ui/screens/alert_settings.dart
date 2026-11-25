@@ -6,7 +6,6 @@ import '../../core/errors.dart';
 import '../../core/jellyfin_client.dart';
 import '../../core/server_extras.dart';
 import '../../core/viewer_settings.dart';
-import '../theme.dart';
 import 'settings_screen.dart';
 
 /// Email and push alert sections of Notification settings (Apple
@@ -108,7 +107,7 @@ class _AlertSettingsFieldsState extends State<AlertSettingsFields> {
           padding: const EdgeInsets.fromLTRB(8, 10, 8, 6),
           child: Text(
             _error!,
-            style: Zoro.font(20, color: const Color(0xFFFF8A80)),
+            style: settingsFont(context, 20, color: const Color(0xFFFF8A80)),
           ),
         ),
     ];

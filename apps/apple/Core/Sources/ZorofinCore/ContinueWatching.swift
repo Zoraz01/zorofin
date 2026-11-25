@@ -1,7 +1,7 @@
 import Foundation
 
-/// Resume positions and the server's next episodes form one Home shelf. A show
-/// with an unfinished episode keeps that episode instead of a second series card.
+/// The server's Next Up order leads one Home shelf. Matching unfinished episodes
+/// retain their resume position at that rank; remaining resume titles follow.
 public struct ContinueWatchingFeed: Sendable {
     public let items: [MediaItem]
     public let isPartial: Bool
@@ -11,12 +11,27 @@ public struct ContinueWatchingFeed: Sendable {
         var ids: Set<String> = [], series: Set<String> = []
         var selected: [MediaItem] = []
         let cap = min(40, max(0, limit))
-        let candidates = resume.filter { $0.type == "Movie" || $0.isEpisode } +
-            nextUp.filter { $0.isEpisode && $0.userData?.played != true }
+        func showID(_ item: MediaItem) -> String? {
+            guard item.isEpisode, let show = item.seriesId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !show.isEmpty else { return nil }
+            return show
+        }
+        let resumable = resume.filter { !$0.id.isEmpty && !$0.name.isEmpty && ($0.type == "Movie" || $0.isEpisode) }
+        var resumeByID: [String: MediaItem] = [:], resumeBySeries: [String: MediaItem] = [:]
+        for item in resumable where item.isEpisode {
+            if resumeByID[item.id] == nil { resumeByID[item.id] = item }
+            if let show = showID(item), resumeBySeries[show] == nil { resumeBySeries[show] = item }
+        }
+        // Next Up already ranks shows by the server's viewing history, including
+        // season transitions. Do not bury those suggestions behind old resumes.
+        let upcoming = nextUp.filter { !$0.id.isEmpty && !$0.name.isEmpty && $0.isEpisode && $0.userData?.played != true }
+        let candidates = upcoming.map { item in
+            resumeByID[item.id] ?? showID(item).flatMap { resumeBySeries[$0] } ?? item
+        } + resumable
         for item in candidates {
             guard selected.count < cap else { break }
             guard !item.id.isEmpty, !item.name.isEmpty, !ids.contains(item.id) else { continue }
-            let show = item.isEpisode ? item.seriesId?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+            let show = showID(item)
             if let show, !show.isEmpty, series.contains(show) { continue }
             ids.insert(item.id)
             if let show, !show.isEmpty { series.insert(show) }

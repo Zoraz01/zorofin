@@ -95,7 +95,7 @@ struct LiveTVStreamsStrip: View {
     @State private var status: LiveTVStreams?
     var body: some View {
         Group {
-            if model.features.liveTvStreams, let status, !status.streams.isEmpty {
+            if model.features.liveTvStreams, let status {
                 VStack(alignment: .leading, spacing: Theme.isTV ? 14 : 10) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Theme.isTV ? 24 : 12) {

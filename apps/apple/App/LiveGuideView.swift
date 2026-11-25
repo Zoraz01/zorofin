@@ -37,7 +37,12 @@ struct LiveGuideView: View {
     @Environment(\.dynamicTypeSize) private var textSize
     let back: () -> Void
     let play: (MediaItem, PlaybackOptions) -> Void
+    var embedded = false
     private var state: LiveGuideState { model.liveGuide }
+    #if os(iOS)
+    @State private var showDatePicker = false
+    @State private var draftDate = Date.now
+    #endif
     @State private var selection: GuideSelection?
     @State private var pendingChannel: MediaItem?
     @FocusState private var focusedSlot: String?
@@ -95,7 +100,7 @@ struct LiveGuideView: View {
     private var controls: some View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
-                if !Theme.isTV {
+                if !Theme.isTV && !embedded {
                     Button(action: back) { Image(systemName: "chevron.left").frame(width: 44, height: 48) }
                         .buttonStyle(.plain).accessibilityLabel("Back to Home")
                     Text("Live TV").font(Theme.font(28, weight: .bold))
@@ -116,7 +121,7 @@ struct LiveGuideView: View {
             }
             if !Theme.isTV { searchField }
             HStack(spacing: Theme.isTV ? 16 : 8) {
-                dateMenu
+                dateControl
                 Spacer(minLength: 0)
                 Button { move(-1) } label: { Image(systemName: "chevron.left").frame(width: 48, height: 48) }
                     .buttonStyle(FlatOptionStyle()).accessibilityLabel("Previous two hours")
@@ -143,6 +148,51 @@ struct LiveGuideView: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
     }
     private var lastDay: Date { Calendar.current.date(byAdding: .day, value: 7, to: Calendar.current.startOfDay(for: .now))! }
+    @ViewBuilder private var dateControl: some View {
+        #if os(iOS)
+        Button {
+            draftDate = min(max(state.window.start, Calendar.current.startOfDay(for: .now)), lastDay.addingTimeInterval(-1)); showDatePicker = true
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(Calendar.current.isDateInToday(state.window.start) ? "Today" : state.window.start.formatted(.dateTime.month(.abbreviated).day()), systemImage: "calendar")
+                Text(timeRange).font(Theme.font(12)).foregroundStyle(Theme.muted)
+            }
+        }.buttonStyle(FlatOptionStyle()).accessibilityLabel("Choose guide date and time")
+            .accessibilityIdentifier("guide-date")
+            .sheet(isPresented: $showDatePicker) { dateSheet }
+        #else
+        dateMenu
+        #endif
+    }
+    #if os(iOS)
+    private var dateSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        Button("Today") { draftDate = .now; applyGuideDate() }.buttonStyle(ZoroButtonStyle())
+                        Button("Tomorrow") { draftDate = Calendar.current.date(byAdding: .day, value: 1, to: .now) ?? .now; applyGuideDate() }.buttonStyle(ZoroButtonStyle())
+                    }
+                    DatePicker("Date", selection: $draftDate,
+                               in: Calendar.current.startOfDay(for: .now)...lastDay.addingTimeInterval(-1), displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                    DatePicker("Time", selection: $draftDate, displayedComponents: .hourAndMinute)
+                        .datePickerStyle(.compact).frame(minHeight: Theme.target)
+                }.padding(Theme.gutter)
+            }.background(Theme.background).foregroundStyle(Theme.text).navigationTitle("Guide date")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showDatePicker = false } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Show programs") { applyGuideDate() } }
+                }
+        }.tint(Theme.jade).preferredColorScheme(.dark)
+    }
+    private func applyGuideDate() {
+        let start = Calendar.current.startOfDay(for: .now)
+        state.followsNow = false
+        state.window = .init(start: min(lastDay.addingTimeInterval(-LiveGuideWindow.duration), max(start, draftDate)))
+        state.refresh += 1; showDatePicker = false
+    }
+    #endif
     private var dateMenu: some View {
         Menu {
             ForEach(0..<7, id: \.self) { offset in

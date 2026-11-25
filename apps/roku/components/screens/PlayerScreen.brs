@@ -1,4 +1,5 @@
 sub init()
+    m.top.findNode("upNextLabel").color = ZAccent()
     m.video = m.top.findNode("video")
     m.loading = m.top.findNode("loading")
     m.skip = m.top.findNode("skip")
@@ -21,6 +22,15 @@ sub init()
     m.tickTimer.observeField("fire", "onTick")
     m.startTimer = m.top.findNode("startTimer")
     m.startTimer.observeField("fire", "onStartTimeout")
+    m.serverTimer = m.top.findNode("serverTimer")
+    m.serverTimer.observeField("fire", "askServer")
+    m.video.observeField("bufferingStatus", "onBuffering")
+    m.recover = invalid
+    m.dry = []
+    m.dryAt = 0
+    m.lastGood = 0
+    m.subtitleOffset = 0
+    m.appliedOffset = 0
     m.info = invalid
     m.started = false
     m.stopped = false
@@ -77,6 +87,38 @@ sub onPlayback(event as object)
         return
     end if
     m.info = r
+    ' The first open of a title follows what was last picked for its show.
+    ' Nothing has played yet, so a different audio track is simply asked for.
+    if m.request.remembered <> true and not r.isLive then
+        m.request.remembered = true
+        m.memorySubtitle = invalid
+        memory = ZTrackMemory(trackShow())
+        if ZIsMap(memory) then m.subtitleOffset = ZClampTiming(memory.offset)
+        pick = ZPickTracks(memory, r.audioTracks, r.subtitles)
+        again = false
+        if m.request.audioIndex = invalid and pick.audio <> invalid and pick.audio <> r.audioIndex then
+            m.request.audioIndex = pick.audio
+            m.request.forceTranscode = true
+            again = true
+        end if
+        if m.request.subtitleIndex = invalid and pick.subtitle <> invalid then
+            m.memorySubtitle = pick.subtitle
+            for each s in r.subtitles
+                ' Image subtitles (PGS and similar) are burned in by the server.
+                if s.index = pick.subtitle and s.url = "" then
+                    m.memorySubtitle = invalid
+                    m.burnedIn = true
+                    m.request.subtitleIndex = pick.subtitle
+                    m.request.forceTranscode = true
+                    again = true
+                end if
+            end for
+        end if
+        if again then
+            requestPlayback()
+            return
+        end if
+    end if
     m.top.findNode("loadingTitle").text = r.title
     m.top.findNode("cover").uri = r.backdrop
     content = CreateObject("roSGNode", "ContentNode")
@@ -92,6 +134,10 @@ sub onPlayback(event as object)
     ' External text subtitles are side-loaded; the chosen one is switched on.
     tracks = []
     m.subtitleUrl = ""
+    m.appliedOffset = m.subtitleOffset
+    for each s in r.subtitles
+        if s.url <> "" then s.url = ZSubtitleUrlShifted(s.url, m.subtitleOffset)
+    end for
     for each s in r.subtitles
         if s.url <> "" then
             tracks.push({ TrackName: s.url, Language: s.language, Description: s.title })
@@ -99,7 +145,16 @@ sub onPlayback(event as object)
         end if
     end for
     settings = m.global.settings
-    if m.subtitleUrl = "" and settings <> invalid and settings.subtitles = "always" and m.request.subtitleIndex = invalid then
+    if m.memorySubtitle <> invalid and m.request.subtitleIndex = invalid then
+        m.subtitleUrl = ""
+        m.info.subtitleIndex = -1
+        for each s in r.subtitles
+            if s.index = m.memorySubtitle and s.url <> "" then
+                m.subtitleUrl = s.url
+                m.info.subtitleIndex = s.index
+            end if
+        end for
+    else if m.subtitleUrl = "" and settings <> invalid and settings.subtitles = "always" and m.request.subtitleIndex = invalid then
         for each s in r.subtitles
             if s.url <> "" and m.subtitleUrl = "" then
                 m.subtitleUrl = s.url
@@ -117,6 +172,7 @@ sub onPlayback(event as object)
     end if
     m.started = false
     m.stopped = false
+    m.dryAt = 0
     m.startTimer.control = "stop"
     m.startTimer.control = "start"
     m.video.control = "play"
@@ -148,12 +204,24 @@ end sub
 ' Restarts the stream at the current position with new choices.
 sub restartWith(changes as object)
     position = m.video.position
-    report("stop")
+    stopTask = report("stop")
     for each key in changes
         m.request[key] = changes[key]
     end for
     m.request.startTicks = ZSecondsToTicks(position)
     m.video.control = "stop"
+    ' Ask for the new stream only after the server has the stop: a late stop
+    ' ends this device's new transcode too, and the Roku then reports
+    ' "invalid or corrupt playlist" (quality change from direct play, Nov 24).
+    if stopTask <> invalid then
+        stopTask.observeField("response", "onRestartStopped")
+    else
+        requestPlayback()
+    end if
+end sub
+
+sub onRestartStopped(event as object)
+    event.getRoSGNode().unobserveField("response")
     requestPlayback()
 end sub
 
@@ -164,8 +232,10 @@ sub onState()
     if state = "playing" then
         m.startTimer.control = "stop"
         m.loading.visible = false
+        m.dryAt = 0
         if not m.started then
             m.started = true
+            m.top.playbackStarted = true
             report("start")
             m.progressTimer.control = "start"
             m.tickTimer.control = "start"
@@ -178,30 +248,146 @@ sub onState()
         report("stop")
         finished()
     else if state = "error" then
+        wasPlaying = m.started
         report("stop")
-        ' A direct-play failure gets one retry through the server's HLS.
-        if m.info <> invalid and m.info.playMethod = "DirectPlay" and m.request.forceTranscode <> true then
-            m.request.forceTranscode = true
-            m.request.startTicks = ZSecondsToTicks(m.video.position)
-            requestPlayback()
+        failure = ZStr(m.video.errorMsg)
+        if failure = "" then failure = "The Roku player stopped with an error."
+        ' A stream that had been playing may have lost the server: ask first.
+        if wasPlaying and m.info <> invalid and m.recover = invalid then
+            m.recover = { stage: "check", failure: failure, at: resumePoint(), since: ZNowSeconds(), broke: true }
+            askServer()
         else
-            msg = m.video.errorMsg
-            showError({ error: "unplayable" })
-            if msg <> invalid and msg <> "" then m.top.findNode("errorText").text = "The Roku reported: " + msg + Chr(10) + Chr(10) + "Press Back to return."
+            streamFailed(failure)
         end if
     end if
+end sub
+
+' The stream itself is at fault (the server still answers).
+sub streamFailed(failure as string)
+    ' A direct-play failure gets one retry through the server's HLS.
+    if m.info <> invalid and m.info.playMethod = "DirectPlay" and m.request.forceTranscode <> true then
+        problem("fallback", failure)
+        m.request.forceTranscode = true
+        m.request.startTicks = ZSecondsToTicks(resumePoint())
+        requestPlayback()
+    else
+        if m.started then
+            problem("stopped", failure)
+        else
+            problem("start_failed", failure)
+        end if
+        showError({ error: "unplayable" })
+        m.top.findNode("errorText").text = "The Roku reported: " + failure + Chr(10) + Chr(10) + "Press Back to return."
+    end if
+end sub
+
+' Where to pick up again: the last place that was really playing.
+function resumePoint() as dynamic
+    if m.info <> invalid and m.info.isLive then return 0
+    position = m.video.position
+    if position = invalid or position <= 0 then position = m.lastGood
+    return position
+end function
+
+' MARK: Dropped connection
+
+' Asks whether the server still answers. While it does not, the player shows
+' "Reconnecting…" and asks again every 3 seconds, for up to 90 seconds, then
+' reopens the stream at the same place.
+sub askServer()
+    if m.recover = invalid then return
+    task = CreateObject("roSGNode", "JellyfinTask")
+    task.request = { cmd: "ping" }
+    task.observeField("response", "onServerAnswer")
+    task.control = "RUN"
+    m.pingTask = task
+end sub
+
+sub onServerAnswer(event as object)
+    r = event.getData()
+    state = m.recover
+    if state = invalid then return
+    reachable = r <> invalid and r.reachable = true
+    if state.stage = "check" then
+        if reachable then
+            m.recover = invalid
+            if state.broke = true then streamFailed(state.failure)
+            return
+        end if
+        state.stage = "wait"
+        m.recover = state
+        report("stop")
+        m.video.control = "stop"
+        m.errorBox.visible = false
+        m.top.findNode("loadingText").text = "Reconnecting…"
+        m.loading.visible = true
+        m.serverTimer.control = "start"
+        return
+    end if
+    if reachable then
+        m.recover = invalid
+        m.top.findNode("loadingText").text = "Starting…"
+        problem("recovered", "Reconnected after the server came back")
+        m.request.startTicks = ZSecondsToTicks(state.at)
+        requestPlayback()
+    else if ZNowSeconds() - state.since >= 90 then
+        m.recover = invalid
+        m.top.findNode("loadingText").text = "Starting…"
+        showError({ error: "network" })
+        m.top.findNode("errorText").text = "Can't reach your server. Check the connection, then press Back and try again."
+    else
+        m.serverTimer.control = "start"
+    end if
+end sub
+
+' MARK: Automatic quality
+
+' The Roku says when playback ran dry (not a seek or the first buffer).
+sub onBuffering()
+    status = m.video.bufferingStatus
+    if not m.started or m.info = invalid or not ZIsMap(status) then return
+    if status.isUnderrun = true and m.dryAt = 0 then
+        m.dryAt = ZNowSeconds()
+        m.dry.push(m.dryAt)
+        while m.dry.count() > 6
+            m.dry.shift()
+        end while
+    end if
+end sub
+
+' Called every second: steps the quality down after repeated or long
+' buffering, and asks after the server when a stall goes on.
+sub watchBuffering()
+    if m.dryAt = 0 or m.info = invalid or m.recover <> invalid or m.video.state <> "buffering" then return
+    now = ZNowSeconds()
+    stalled = now - m.dryAt
+    if stalled >= 20 then
+        m.recover = { stage: "check", failure: "", at: resumePoint(), since: now, broke: false }
+        m.dryAt = now
+        askServer()
+        return
+    end if
+    if m.info.isLive or m.panel <> invalid or not ZShouldLowerQuality(m.dry, now, stalled) then return
+    lower = ZLowerQuality(m.quality, m.info.maxBitrate, m.info.streamBitrate)
+    if lower <= 0 then return
+    problem("quality_lowered", qualityLabel(m.quality) + " to " + qualityLabel(lower) + " after buffering")
+    m.quality = lower
+    m.dry = []
+    m.dryAt = 0
+    m.top.toast = "Auto quality · " + qualityLabel(lower)
+    restartWith({ forceTranscode: true })
 end sub
 
 sub reportProgress()
     if m.video.state = "playing" or m.video.state = "paused" then report("progress", "timeupdate")
 end sub
 
-sub report(kind as string, eventName = "timeupdate" as string)
-    if m.info = invalid then return
+function report(kind as string, eventName = "timeupdate" as string) as dynamic
+    if m.info = invalid then return invalid
     if kind = "stop" then
         ' A live channel that never started still holds a tuner: always stop it.
-        if m.stopped then return
-        if not m.started and m.info.liveStreamId = "" then return
+        if m.stopped then return invalid
+        if not m.started and m.info.liveStreamId = "" then return invalid
         m.stopped = true
         m.progressTimer.control = "stop"
         m.tickTimer.control = "stop"
@@ -218,12 +404,42 @@ sub report(kind as string, eventName = "timeupdate" as string)
     ' Keep references so reports finish even while the screen closes.
     m.tasks.push(task)
     if m.tasks.count() > 6 then m.tasks.shift()
+    return task
+end function
+
+' Tells the server owner about a playback problem, when the server collects
+' these and the viewer hasn't turned them off. Never gets in the way of playback.
+sub problem(kind as string, reason as string)
+    state = m.global.playbackProblems
+    if state = invalid then state = {}
+    device = ""
+    if m.global.session <> invalid then device = ZStr(m.global.session.deviceName, "Roku")
+    body = ZPlaybackProblemBody(kind, reason, m.info, m.global.features, m.global.settings, state, m.global.appVersion, device, m.video.position)
+    if body = invalid then return
+    state.sent = ZNum(state.sent, 0) + 1
+    m.global.playbackProblems = state
+    task = CreateObject("roSGNode", "JellyfinTask")
+    task.observeField("response", "onProblemSent")
+    task.request = { cmd: "playbackProblem", body: body }
+    task.control = "RUN"
+    m.tasks.push(task)
+    if m.tasks.count() > 6 then m.tasks.shift()
+end sub
+
+sub onProblemSent(event as object)
+    r = event.getData()
+    if r = invalid or r.refused <> true then return
+    state = m.global.playbackProblems
+    if state = invalid then state = {}
+    state.refused = true
+    m.global.playbackProblems = state
 end sub
 
 ' Nothing played within the start window: say so instead of spinning.
 sub onStartTimeout()
     if m.started or m.info = invalid then return
     report("stop")
+    problem("start_failed", "Nothing played before the start window ended.")
     m.video.control = "stop"
     if m.info.isLive then
         showError({ error: "liveStart" })
@@ -235,6 +451,8 @@ end sub
 
 sub onClosing()
     m.startTimer.control = "stop"
+    m.serverTimer.control = "stop"
+    m.recover = invalid
     report("stop")
     m.video.control = "stop"
     m.video.content = invalid
@@ -245,6 +463,7 @@ end sub
 sub onPosition()
     if m.info = invalid then return
     playhead = m.video.position
+    if playhead <> invalid and playhead > 0 and m.video.state = "playing" then m.lastGood = playhead
     settings = m.global.settings
     showSkip = false
     if settings = invalid or settings.skipIntro <> false then
@@ -290,6 +509,7 @@ end sub
 
 sub onTick()
     refreshInfo()
+    watchBuffering()
     if m.upNext.visible then
         m.countdown = m.countdown - 1
         if m.countdown <= 0 then
@@ -370,6 +590,14 @@ sub showPage(page as string)
         else if info.type = "Episode" and info.seriesId <> "" then
             rows.push({ id: "episodes", title: "Seasons & episodes", icon: "episodes" })
         end if
+        settings = m.global.settings
+        wanted = settings <> invalid and settings.showChapters = true
+        if wanted and not info.isLive and ZIsArray(info.chapters) and info.chapters.count() > 0 then
+            playing = ZChapterIndex(info.chapters, m.video.position)
+            name = ""
+            if playing >= 0 then name = info.chapters[playing].name
+            rows.push({ id: "chapters", title: "Chapters", icon: "list", value: name })
+        end if
         if not info.isLive then rows.push({ id: "tracks", title: "Audio & subtitles", icon: "subtitles", value: trackSummary() })
         rows.push({ id: "quality", title: "Quality", icon: "gauge", value: qualityLabel(m.quality) })
         rows.push({ id: "info", title: "Playback info", icon: "info" })
@@ -393,6 +621,31 @@ sub showPage(page as string)
             rows.push({ id: "s:" + t.index.toStr(), title: label, checked: t.index = current })
         end for
         if p.focusId = "" then p.focusId = "s:" + current.toStr()
+        ' Text subtitles the Roku draws can be moved earlier or later.
+        if textSubtitleOn() then
+            rows.push({ header: true, title: "Timing" })
+            rows.push({ id: "timing", title: "Subtitle timing", value: ZTimingLabel(m.subtitleOffset) })
+        end if
+    else if page = "timing" then
+        p.title = "Subtitle timing"
+        p.context = "Now: " + ZTimingLabel(m.subtitleOffset)
+        rows.push({ note: "Moves subtitles earlier or later, up to 10 seconds. The change is applied when you close this menu, and kept for this show." })
+        rows.push({ id: "t:-5", title: "0.5 s earlier" })
+        rows.push({ id: "t:-1", title: "0.1 s earlier" })
+        rows.push({ id: "t:0", title: "In sync", checked: m.subtitleOffset = 0 })
+        rows.push({ id: "t:1", title: "0.1 s later" })
+        rows.push({ id: "t:5", title: "0.5 s later" })
+        p.focusId = "t:0"
+        if m.timingFocus <> invalid then p.focusId = m.timingFocus
+    else if page = "chapters" then
+        p.title = "Chapters"
+        playing = ZChapterIndex(info.chapters, m.video.position)
+        for i = 0 to info.chapters.count() - 1
+            c = info.chapters[i]
+            rows.push({ id: "h:" + i.toStr(), title: c.name, value: ZClock(c.start), checked: i = playing })
+        end for
+        if playing < 0 then playing = 0
+        p.focusId = "h:" + playing.toStr()
     else if page = "quality" then
         p.title = "Quality"
         note = "Maximum streaming bitrate. Original quality plays when it fits this limit and this Roku."
@@ -447,13 +700,30 @@ sub closeOptions()
     if m.pausedForPanel = true and m.video.state = "paused" then m.video.control = "resume"
     m.pausedForPanel = false
     m.video.setFocus(true)
+    m.timingFocus = invalid
+    ' A new subtitle timing needs the subtitles fetched again, shifted.
+    if m.subtitleOffset <> m.appliedOffset and m.info <> invalid and m.recover = invalid then
+        ZRememberTracks(trackShow(), { offset: m.subtitleOffset })
+        restartWith({})
+    end if
 end sub
+
+' Whether a text subtitle track (one the Roku draws itself) is showing.
+function textSubtitleOn() as boolean
+    if m.info = invalid or m.info.subtitleIndex = invalid or m.info.subtitleIndex < 0 then return false
+    for each s in m.info.subtitles
+        if s.index = m.info.subtitleIndex and s.url <> "" then return true
+    end for
+    return false
+end function
 
 sub onPanelBack()
     if m.page = "menu" then
         closeOptions()
     else if m.page = "seasons" then
         showPage("episodes")
+    else if m.page = "timing" then
+        showPage("tracks")
     else
         showPage("menu")
     end if
@@ -473,10 +743,27 @@ sub onPanelSelected(event as object)
     end if
     kind = Left(id, 2)
     value = Mid(id, 3)
-    if kind = "a:" then
+    if id = "timing" then
+        showPage("timing")
+    else if kind = "t:" then
+        delta = value.toInt()
+        if delta = 0 then m.subtitleOffset = 0 else m.subtitleOffset = ZClampTiming(m.subtitleOffset + delta)
+        m.timingFocus = id
+        showPage("timing")
+    else if kind = "a:" then
         index = value.toInt()
         closeOptions()
+        for each a in m.info.audioTracks
+            if a.index = index and ZStr(a.language) <> "" then ZRememberTracks(trackShow(), { audio: a.language })
+        end for
         if index <> m.info.audioIndex then restartWith({ audioIndex: index, forceTranscode: true })
+    else if kind = "h:" then
+        closeOptions()
+        chapter = m.info.chapters[value.toInt()]
+        if chapter <> invalid then
+            m.video.seek = chapter.start
+            if m.video.state = "paused" then m.video.control = "resume"
+        end if
     else if kind = "s:" then
         closeOptions()
         setSubtitle(value.toInt())
@@ -695,7 +982,26 @@ function channelRows() as object
     end for
     return rows
 end function
+' The key track picks are remembered under: the show, or the movie itself.
+function trackShow() as string
+    if m.info = invalid then return ""
+    if ZStr(m.info.seriesId) <> "" then return m.info.seriesId
+    return ZStr(m.info.id)
+end function
+
 sub setSubtitle(index as integer)
+    m.memorySubtitle = index
+    if index < 0 then
+        ZRememberTracks(trackShow(), { off: true })
+    else
+        for each s in m.info.subtitles
+            if s.index = index then
+                patch = { off: false, forced: s.forced = true }
+                if ZStr(s.language) <> "" and s.language <> "und" then patch.subtitle = s.language
+                ZRememberTracks(trackShow(), patch)
+            end if
+        end for
+    end if
     if index < 0 then
         m.video.globalCaptionMode = "Off"
         m.info.subtitleIndex = -1

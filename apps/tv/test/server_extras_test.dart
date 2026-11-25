@@ -47,14 +47,26 @@ void main() {
       final seen = <http.Request>[];
       final features = await client((r) async {
         seen.add(r);
-        return json(manifest(['support', 'requests']));
+        return json(
+          manifest([
+            'support',
+            'requests',
+            'sportsEvents',
+            'liveTvStreams',
+            'notificationReads',
+          ]),
+        );
       }).discoverFeatures();
       expect(seen.single.url.path, '/jf/Zorofin/Capabilities');
       expect(seen.single.headers['X-Jellyfin-Token'], 'tok');
+      expect(features.notificationReads, isTrue);
+      expect(features.sportsEvents, isTrue);
+      expect(features.liveTvStreams, isTrue);
+      expect(const ServerFeatures().sportsEvents, isFalse);
       expect(features.support, isTrue);
       expect(features.requests, isTrue);
-      // Only version 1 counts.
-      expect(features.homeRows, isFalse);
+      // Home rows negotiate v2 without enabling unrelated v2 modules.
+      expect(features.homeRowsContract, HomeRowsContract.plugin);
       expect(features.hasNotifications, isTrue);
     });
 
@@ -290,6 +302,46 @@ void main() {
       expect(state.requests.map((n) => n.title), ['Fresh', 'Old']);
       expect(await store.seeRequest(2), {1, 2});
     });
+
+    test(
+      'seen messages persist per server and viewer without hiding later replies',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        NotificationHistoryStore store(String server, String viewer) =>
+            NotificationHistoryStore(prefs, server: server, viewerId: viewer);
+        const reply = SupportReply(
+          id: 'announcement:one',
+          status: 'open',
+          issueType: 'Update',
+          message: 'First message',
+          updatedAt: 'same',
+        );
+        const updated = SupportReply(
+          id: 'announcement:one',
+          status: 'open',
+          issueType: 'Update',
+          message: 'Changed message',
+          updatedAt: 'same',
+        );
+        await store('https://example.com', 'one').seeReply(reply);
+        final reloaded = store('https://example.com', 'one').load();
+        expect(reloaded.seenReplyKeys, contains(reply.notificationKey));
+        expect(
+          reloaded.seenReplyKeys,
+          isNot(contains(updated.notificationKey)),
+        );
+        expect(reloaded.hiddenReplies.single.message, reply.message);
+        expect(
+          store('https://example.com', 'two').load().seenReplyKeys,
+          isEmpty,
+        );
+        expect(
+          store('https://other.example.com', 'one').load().seenReplyKeys,
+          isEmpty,
+        );
+      },
+    );
 
     test('the inbox counts unread replies and badges', () async {
       SharedPreferences.setMockInitialValues({});

@@ -1,7 +1,9 @@
 import 'errors.dart';
 import 'home.dart';
+import 'home_shelf_snapshot.dart';
 import 'jellyfin_client.dart';
 import 'models.dart';
+import 'library_browse.dart';
 import 'playback.dart';
 import 'viewer_settings.dart';
 
@@ -47,6 +49,84 @@ abstract class Catalog {
     int start = 0,
     bool favorites = false,
   });
+
+  /// Ordinary account-scoped collection cards and direct collection members.
+  Future<ItemPage> collections({String? parentId, int start = 0}) async {
+    final connection = client;
+    if (connection == null) {
+      return ItemPage(items: const [], totalRecordCount: 0);
+    }
+    if (parentId != null && (await item(parentId)).type != 'BoxSet') {
+      throw const ClientError(ClientErrorKind.invalidResponse);
+    }
+    return connection.collectionPage(parentId: parentId, start: start);
+  }
+
+  // Keep the original methods for Home and existing callers. These options
+  // apply to the complete server library, before paging.
+  Future<ItemPage> browseFiltered(
+    LibraryKind kind, {
+    int start = 0,
+    bool favorites = false,
+    LibraryBrowseOptions options = const LibraryBrowseOptions(),
+  }) async {
+    final api = client;
+    if (api != null && kind != LibraryKind.live) {
+      return api.items(
+        type: kind.itemType,
+        start: start,
+        favorites: favorites,
+        options: options,
+      );
+    }
+    if (!isPreview || kind == LibraryKind.live) {
+      return browse(kind, start: start, favorites: favorites);
+    }
+    final page = await browse(kind, favorites: favorites);
+    final items = page.items
+        .where(
+          (v) =>
+              (!options.unwatched || v.userData?.played != true) &&
+              (options.genre.isEmpty || v.genres.contains(options.genre)),
+        )
+        .toList();
+    if (options.sort == LibrarySort.title) {
+      items.sort((a, b) => a.name.compareTo(b.name));
+    }
+    if (options.sort == LibrarySort.year) {
+      items.sort(
+        (a, b) => (b.productionYear ?? 0).compareTo(a.productionYear ?? 0),
+      );
+    }
+    return ItemPage(
+      items: items.skip(start).take(30).toList(),
+      totalRecordCount: items.length,
+    );
+  }
+
+  Future<List<String>> libraryGenres(LibraryKind kind) async {
+    if (client != null) return client!.libraryGenres(kind.itemType);
+    final page = await browse(kind);
+    return page.items.expand((v) => v.genres).toSet().toList()..sort();
+  }
+
+  Future<ItemPage> searchPage(
+    String query, {
+    String type = 'Movie,Series',
+    int start = 0,
+  }) async {
+    if (client != null) {
+      return client!.items(search: query.trim(), type: type, start: start);
+    }
+    final results = (await search(
+      query,
+    )).where((v) => type.split(',').contains(v.type)).toList();
+    return ItemPage(
+      items: results.skip(start).take(30).toList(),
+      totalRecordCount: results.length,
+    );
+  }
+
   Future<List<MediaItem>> search(String query);
   Future<List<MediaItem>> recommendations();
   Future<MediaItem> item(String id);
@@ -104,7 +184,8 @@ abstract class Catalog {
 }
 
 class JellyfinCatalog extends Catalog {
-  JellyfinCatalog(this.client, {this.serverName = ''});
+  JellyfinCatalog(this.client, {this.serverName = '', this.homeSnapshot});
+  final HomeShelfSnapshot? homeSnapshot;
 
   @override
   final JellyfinClient client;
@@ -122,17 +203,23 @@ class JellyfinCatalog extends Catalog {
   Future<List<HomeRow>> home() async {
     // Rows load together; one failing row must not hide the rest. An expired
     // session still surfaces so the app can return to sign-in.
-    Future<List<MediaItem>> safe(Future<ItemPage> page) =>
-        page.then((p) => p.items).catchError((Object e) {
-          if (e is ClientError && e.kind == ClientErrorKind.unauthorized) {
+    Future<List<MediaItem>> safe(Future<List<MediaItem>> items) =>
+        items.catchError((Object e) {
+          if (e is ClientError &&
+              const {
+                ClientErrorKind.unauthorized,
+                ClientErrorKind.forbidden,
+                ClientErrorKind.missingSession,
+                ClientErrorKind.unsafeUrl,
+              }.contains(e.kind)) {
             throw e;
           }
           return <MediaItem>[];
         });
     final results = await Future.wait([
-      safe(client.resume()),
-      safe(client.items(type: 'Movie')),
-      safe(client.items(type: 'Series')),
+      safe(client.continueWatchingFeed().then((feed) => feed.items)),
+      safe(client.items(type: 'Movie').then((page) => page.items)),
+      safe(client.items(type: 'Series').then((page) => page.items)),
     ]);
     final rows = [
       HomeRow('Continue Watching', results[0], landscape: true),
@@ -298,12 +385,6 @@ class JellyfinCatalog extends Catalog {
   }
 
   Future<PlaybackPlan> prepare(MediaItem item, PlaybackOptions options) async {
-    final info = await client.playbackInfo(item, options);
-    return PlaybackPlan.make(
-      info,
-      itemId: item.id,
-      client: client,
-      options: options,
-    );
+    return client.preparePlayback(item, options);
   }
 }

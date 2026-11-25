@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zorofin_tv/app_state.dart';
+import 'package:zorofin_tv/extras_state.dart';
+import 'package:zorofin_tv/core/preview_catalog.dart';
+import 'package:zorofin_tv/core/requests.dart';
 import 'package:zorofin_tv/core/session_store.dart';
 import 'package:zorofin_tv/main.dart';
 import 'package:zorofin_tv/ui/screens/notifications_panel.dart';
@@ -46,7 +49,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(await simulateKeyUpEvent(LogicalKeyboardKey.escape), isTrue);
     await tester.pumpAndSettle();
-    expect(find.text('Change server'), findsNothing);
+    expect(find.text('SWITCH PROFILE'), findsNothing);
 
     // Back from Home's content goes to the Home tab first, as on Apple TV.
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -139,6 +142,72 @@ void main() {
     expect(find.byType(NotificationInbox), findsNothing);
   });
 
+  testWidgets('opening a reply marks it seen without waiting for dwell', (
+    tester,
+  ) async {
+    await _preview(tester);
+    await tester.tap(find.bySemanticsLabel('Notifications, 2 unread updates'));
+    await tester.pump();
+    await tester.tap(find.text('Support reply'));
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Close notifications'));
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Notifications, 1 unread updates'));
+    await tester.pump();
+    expect(find.text('Support reply'), findsNothing);
+    expect(find.text('Hidden (1)'), findsOneWidget);
+    await tester.tap(find.text('Hidden (1)'));
+    await tester.pump();
+    expect(find.text('Support reply'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('scaled TV inbox only marks mostly visible rows seen', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final extras = ExtrasState(
+      catalog: PreviewCatalog(),
+      storage: await SharedPreferences.getInstance(),
+    );
+    extras.replies = [];
+    extras.requestNotices = [
+      for (var i = 1; i <= 8; i++)
+        RequestAvailabilityNotice(
+          id: i,
+          kind: RequestKind.movie,
+          titleId: i,
+          title: 'Update $i',
+        ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 280,
+            height: 200,
+            child: FittedBox(
+              child: SizedBox(
+                width: 560,
+                height: 400,
+                child: NotificationInbox(
+                  extras: extras,
+                  onClose: () {},
+                  onOpen: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(SeenAfterDwell.dwell * 2);
+    await tester.pump();
+    expect(extras.requestReadIds, {1, 2});
+    await tester.pumpWidget(const SizedBox());
+    extras.dispose();
+  });
+
   testWidgets('support previews the form without sending', (tester) async {
     await _preview(tester);
     await tester.tap(find.bySemanticsLabel('Support'));
@@ -168,11 +237,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
-    for (final row in [
-      'Notification settings',
-      'Privacy Policy',
-      'App Support',
-    ]) {
+    expect(find.text('Notifications'), findsOneWidget);
+    await tester.tap(find.text('Help & about'));
+    await tester.pumpAndSettle();
+    for (final row in ['Privacy Policy', 'App Support', 'Version']) {
       await tester.ensureVisible(find.text(row));
       await tester.pumpAndSettle();
       expect(find.text(row), findsOneWidget);
@@ -181,13 +249,16 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Privacy Policy'));
     await tester.pumpAndSettle();
-    expect(find.text('Updated October 25, 2026'), findsOneWidget);
+    expect(find.text('Updated November 7, 2026'), findsOneWidget);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Notification settings'));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(find.text('Show unread badge'), findsOneWidget);
+
+    await tester.tap(find.text('Notifications'));
+    await tester.pumpAndSettle();
+    // The badge switch lives on Home & display on TV.
+    expect(find.text('Show unread badge'), findsNothing);
     expect(
       find.textContaining('does not provide email or push alert settings'),
       findsOneWidget,

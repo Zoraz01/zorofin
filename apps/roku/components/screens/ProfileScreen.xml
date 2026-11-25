@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Profile, like the Apple TV ProfileView: who is signed in, then rows for
-  accounts, Quick Connect and each settings page, then Support, Notification
-  settings, Privacy Policy and App Support, and Sign Out.
+  Settings, like the Apple TV ProfileView TV layout: who is signed in, then
+  Account, Home & display, Playback, Subtitles, Notifications, Help & about,
+  and Sign Out (docs/design/TV_PROFILE_MENU.md).
 -->
 <component name="ProfileScreen" extends="Group">
   <interface>
@@ -17,6 +17,7 @@
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Store.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/ProfileScreen.brs" />
   <children>

@@ -66,7 +66,8 @@ void main() {
       return RequestSubmissionService(
         c,
         RequestJournal(
-          await SharedPreferences.getInstance(),
+          read: (await SharedPreferences.getInstance()).getString,
+          write: (await SharedPreferences.getInstance()).setString,
           server: server.url.toString(),
           viewerId: 'u1',
         ),

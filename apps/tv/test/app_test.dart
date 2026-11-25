@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zorofin_tv/app_state.dart';
 import 'package:zorofin_tv/core/session_store.dart';
 import 'package:zorofin_tv/main.dart';
+import 'package:zorofin_tv/ui/widgets/focusable.dart';
 
 Future<AppState> _state() async {
   SharedPreferences.setMockInitialValues({});
@@ -153,11 +154,24 @@ void main() {
     expect(find.text('1. Arrival'), findsOneWidget);
     expect(find.text('Current episode'), findsOneWidget);
 
-    await tester.tap(find.text('2. The Signal'));
+    final episodeTitle = find.text('2. The Signal');
+    Focus.of(tester.element(episodeTitle)).requestFocus();
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(find.text('EPISODE'), findsOneWidget);
     expect(find.text('S1 E2 · The Signal'), findsOneWidget);
     expect(find.text('View series'), findsOneWidget);
+
+    // The episode page's action row also leads straight to the show.
+    final viewSeries = find.byWidgetPredicate(
+      (w) => w is ZoroButton && w.label == 'View series',
+    );
+    expect(viewSeries, findsOneWidget);
+    await tester.ensureVisible(viewSeries);
+    await tester.tap(viewSeries);
+    await tester.pumpAndSettle();
+    expect(find.text('SERIES'), findsOneWidget);
   });
 
   testWidgets('profile settings save device preferences', (tester) async {
@@ -171,42 +185,46 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('P'));
     await tester.pumpAndSettle();
-    expect(find.text('Change server'), findsOneWidget);
+    // The menu leaves server changes to Who's watching.
+    expect(find.text('Change server'), findsNothing);
+    expect(find.text('SWITCH PROFILE'), findsOneWidget);
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     for (final row in [
-      'Change account',
       'Account',
-      'Quick Connect',
-      'Display',
+      'Home & display',
       'Playback',
       'Subtitles',
-      'Controls',
-      'Storage & app',
+      'Notifications',
+      'Help & about',
       'Leave preview',
     ]) {
       expect(find.text(row), findsOneWidget);
     }
+    for (final gone in ['Change account', 'Quick Connect', 'Controls']) {
+      expect(find.text(gone), findsNothing);
+    }
 
-    await tester.tap(find.text('Controls'));
+    // Playback holds the player controls and saves as you go.
+    await tester.tap(find.text('Playback'));
     await tester.pumpAndSettle();
-    expect(find.text('30 seconds'), findsOneWidget);
+    expect(find.text('Save'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Skip forward'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Skip forward'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('15 seconds').last);
     await tester.pumpAndSettle();
-    expect(
-      state.preferences.skipForward,
-      30,
-      reason: 'drafts are not stored before Save',
-    );
-    await tester.tap(find.text('Save'));
+    await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
     expect(state.preferences.skipForward, 15);
-    expect(find.text('Saved'), findsOneWidget);
 
-    await tester.tap(find.text('Done'));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(find.text('Storage & app'), findsOneWidget);
+    expect(find.text('Help & about'), findsOneWidget);
   });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
 import '../../core/session_store.dart';
+import '../../core/plugin_extras.dart';
 import '../theme.dart';
 import '../widgets/focusable.dart';
 import 'shell.dart';
@@ -17,21 +18,28 @@ class SwitchAccount extends AccountMenuChoice {
 }
 
 enum AccountMenuPage implements AccountMenuChoice {
+  calendar,
+  catchUp,
   servers,
   quickConnect,
   watchTogether,
+  pickTogether,
   settings,
 }
 
 /// The header avatar's menu, dropped below the avatar like the Apple TV
-/// 1.1 `TVProfilePopover`: saved accounts first, then Change server, Quick
-/// Connect and Watch together, with Settings at the bottom.
+/// `TVProfilePopover` (docs/design/TV_PROFILE_MENU.md): who is watching, a
+/// Switch profile strip (other saved profiles, then All for Who's watching),
+/// Pick Together, Watch Together, Calendar and Catch Up when available, and
+/// Settings last.
 Future<AccountMenuChoice?> showAccountPopover(
   BuildContext context, {
   required AppState state,
   required Rect anchor,
   required String serverName,
   required bool watchTogether,
+  bool pickTogether = false,
+  PluginExtras extras = PluginExtras.none,
 }) => showGeneralDialog<AccountMenuChoice>(
   context: context,
   barrierDismissible: true,
@@ -47,6 +55,8 @@ Future<AccountMenuChoice?> showAccountPopover(
     anchor: anchor,
     serverName: serverName,
     watchTogether: watchTogether,
+    pickTogether: pickTogether,
+    extras: extras,
   ),
 );
 
@@ -56,7 +66,15 @@ class _AccountPopover extends StatelessWidget {
     required this.anchor,
     required this.serverName,
     required this.watchTogether,
+    required this.extras,
+    this.pickTogether = false,
   });
+
+  /// The server offers Pick Together; this TV hosts.
+  final bool pickTogether;
+
+  /// Calendar and Catch Up, when the server offers them.
+  final PluginExtras extras;
 
   final AppState state;
   final Rect anchor;
@@ -71,7 +89,37 @@ class _AccountPopover extends StatelessWidget {
     final top = anchor.bottom + 14;
     final accounts = state.connections.accounts;
     final current = accounts.where(state.isCurrent).firstOrNull;
+    final others = [
+      for (final account in accounts)
+        if (!state.isCurrent(account)) account,
+    ];
     final pop = Navigator.of(context).pop;
+    final activities = [
+      if (pickTogether)
+        _MenuRow(
+          'Pick Together',
+          Icons.style_rounded,
+          () => pop(AccountMenuPage.pickTogether),
+        ),
+      if (watchTogether)
+        _MenuRow(
+          'Watch Together',
+          Icons.groups_rounded,
+          () => pop(AccountMenuPage.watchTogether),
+        ),
+      if (extras.calendar)
+        _MenuRow(
+          'Calendar',
+          Icons.calendar_month_rounded,
+          () => pop(AccountMenuPage.calendar),
+        ),
+      if (extras.catchUp)
+        _MenuRow(
+          'Catch Up',
+          Icons.view_list_rounded,
+          () => pop(AccountMenuPage.catchUp),
+        ),
+    ];
     return Stack(
       children: [
         Positioned(
@@ -106,15 +154,28 @@ class _AccountPopover extends StatelessWidget {
                         children: [
                           ProfileAvatar(
                             name: current?.viewer.name ?? '',
-                            size: 40,
+                            size: 56,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 14),
                           Expanded(
-                            child: Text(
-                              serverName.isEmpty ? 'Accounts' : serverName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Zoro.font(25, weight: FontWeight.w600),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  current?.viewer.name ?? 'Accounts',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Zoro.font(25, weight: FontWeight.w600),
+                                ),
+                                if (serverName.isNotEmpty)
+                                  Text(
+                                    serverName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Zoro.font(18, color: Zoro.muted),
+                                  ),
+                              ],
                             ),
                           ),
                           _Flat(
@@ -129,56 +190,73 @@ class _AccountPopover extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const Divider(height: 1, color: Zoro.border),
-                    Flexible(
-                      child: ListView(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.all(16),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (final account in accounts)
-                            _AccountRow(
-                              account: account,
-                              current: state.isCurrent(account),
-                              autofocus:
-                                  account == (current ?? accounts.firstOrNull),
-                              onPressed: () => pop(
-                                state.isCurrent(account)
-                                    ? null
-                                    : SwitchAccount(account),
-                              ),
-                            ),
-                          if (accounts.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Text(
-                                'No saved accounts',
-                                style: Zoro.font(20, color: Zoro.muted),
-                              ),
-                            ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Divider(height: 1, color: Zoro.border),
+                          Text(
+                            'SWITCH PROFILE',
+                            style: Zoro.font(
+                              16,
+                              weight: FontWeight.w600,
+                              color: Zoro.muted,
+                            ).copyWith(letterSpacing: 1.2),
                           ),
-                          _MenuRow(
-                            'Change server',
-                            Icons.dns_rounded,
-                            () => pop(AccountMenuPage.servers),
-                            autofocus: accounts.isEmpty,
-                          ),
-                          _MenuRow(
-                            'Quick Connect',
-                            Icons.phonelink_ring_rounded,
-                            () => pop(AccountMenuPage.quickConnect),
-                          ),
-                          if (watchTogether)
-                            _MenuRow(
-                              'Watch together',
-                              Icons.groups_rounded,
-                              () => pop(AccountMenuPage.watchTogether),
+                          const SizedBox(height: 10),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final (i, account) in others.indexed)
+                                  _ProfileTile(
+                                    label:
+                                        '${account.viewer.name}, ${account.serverName}',
+                                    name: account.viewer.name,
+                                    autofocus: i == 0,
+                                    onPressed: () =>
+                                        pop(SwitchAccount(account)),
+                                    avatar: ProfileAvatar(
+                                      name: account.viewer.name,
+                                      size: 72,
+                                    ),
+                                  ),
+                                _ProfileTile(
+                                  label: 'All profiles',
+                                  name: 'All',
+                                  autofocus: others.isEmpty,
+                                  onPressed: () => pop(AccountMenuPage.servers),
+                                  avatar: Container(
+                                    width: 72,
+                                    height: 72,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(18),
+                                      border: Border.all(
+                                        color: Zoro.border,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.more_horiz_rounded,
+                                      size: 30,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
+                          ),
                         ],
                       ),
                     ),
+                    if (activities.isNotEmpty) ...[
+                      const Divider(height: 1, color: Zoro.border),
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(children: activities),
+                      ),
+                    ],
                     const Divider(height: 1, color: Zoro.border),
                     Padding(
                       padding: const EdgeInsets.all(16),
@@ -235,22 +313,15 @@ class _Flat extends StatelessWidget {
 }
 
 class _MenuRow extends StatelessWidget {
-  const _MenuRow(
-    this.title,
-    this.icon,
-    this.onPressed, {
-    this.autofocus = false,
-  });
+  const _MenuRow(this.title, this.icon, this.onPressed);
 
   final String title;
   final IconData icon;
   final VoidCallback onPressed;
-  final bool autofocus;
 
   @override
   Widget build(BuildContext context) => _Flat(
     label: title,
-    autofocus: autofocus,
     onPressed: onPressed,
     child: (fg) => Container(
       constraints: const BoxConstraints(minHeight: 64),
@@ -266,68 +337,43 @@ class _MenuRow extends StatelessWidget {
   );
 }
 
-class _AccountRow extends StatelessWidget {
-  const _AccountRow({
-    required this.account,
-    required this.current,
-    required this.autofocus,
+/// One profile in the Switch profile strip: a rounded-square avatar and
+/// name, lit when focused.
+class _ProfileTile extends StatelessWidget {
+  const _ProfileTile({
+    required this.label,
+    required this.name,
+    required this.avatar,
     required this.onPressed,
+    this.autofocus = false,
   });
 
-  final SavedAccount account;
-  final bool current;
-  final bool autofocus;
+  final String label;
+  final String name;
+  final Widget avatar;
   final VoidCallback onPressed;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 4),
+    padding: const EdgeInsets.only(right: 10),
     child: _Flat(
-      label:
-          '${account.viewer.name}, ${account.serverName}'
-          '${current ? ', current account' : ''}',
+      label: label,
       autofocus: autofocus,
       onPressed: onPressed,
       child: (fg) => Container(
-        constraints: const BoxConstraints(minHeight: 72),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
+        width: 96,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
           children: [
-            ProfileAvatar(name: account.viewer.name, size: 44),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    account.viewer.name,
-                    style: Zoro.font(
-                      22,
-                      weight: current ? FontWeight.w600 : FontWeight.w400,
-                      color: fg,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Opacity(
-                    opacity: 0.7,
-                    child: Text(
-                      account.session == null
-                          ? 'Sign in again'
-                          : account.serverName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Zoro.font(17, color: fg),
-                    ),
-                  ),
-                ],
-              ),
+            avatar,
+            const SizedBox(height: 8),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Zoro.font(18, color: fg),
             ),
-            if (current)
-              Icon(
-                Icons.check_rounded,
-                color: fg == Zoro.text ? Zoro.jade : fg,
-              ),
           ],
         ),
       ),

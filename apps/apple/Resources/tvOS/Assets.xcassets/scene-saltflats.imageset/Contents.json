@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "scene-saltflats.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

@@ -79,7 +79,8 @@ struct DetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading).background(Theme.panel, in: RoundedRectangle(cornerRadius: 20))
                 }
                 if media.episodeSeriesID != nil {
-                    SeasonEpisodeBrowser(context: media).id(model.generation).id("season-episode-browser")
+                    SeasonEpisodeBrowser(context: media, preferredEpisode: playable,
+                        scrollToEpisode: { id in proxy.scrollTo(id, anchor: .center) }).id(model.generation).id("season-episode-browser")
                 }
                 if loading { ProgressView().frame(maxWidth: .infinity) }
                 if let failure { StatusView(title: "Some details couldn't load", detail: failure, retry: { refresh += 1 }) }
@@ -159,7 +160,8 @@ struct DetailView: View {
                     .accessibilityValue(isPlayed ? "Watched" : "Not watched")
                     .help(isPlayed ? "Mark unwatched" : "Mark watched")
                     .accessibilityIdentifier("detail-watched")
-                if let playable, playable.resumeTicks > 0 {
+                // iPhone/iPad episodes keep the row short: no Start over, View series or Seasons & episodes.
+                if let playable, playable.resumeTicks > 0, Theme.isTV || !playable.isEpisode {
                     Button { play(playable, .init(bitrate: model.bitrate, audioIndex: audioIndex == -999 ? nil : audioIndex, subtitleIndex: subtitleIndex)) } label: {
                         Image(systemName: "arrow.counterclockwise")
                     }.buttonStyle(DetailIconStyle()).accessibilityLabel("Start over").help("Start over")
@@ -171,7 +173,14 @@ struct DetailView: View {
                     DownloadButton(item: media, audioIndex: audioIndex == -999 ? nil : audioIndex, subtitleIndex: subtitleIndex)
                 }
                 #endif
-                if media.episodeSeriesID != nil {
+                if Theme.isTV, media.isEpisode, let seriesID = media.seriesId {
+                    // Continue Watching lands here, so the show is one step away.
+                    NavigationLink(value: MediaItem(id: seriesID, name: media.seriesName ?? "Series", type: "Series")) {
+                        Image(systemName: "tv")
+                    }.buttonStyle(DetailIconStyle()).accessibilityLabel("View series").help("View series")
+                        .accessibilityIdentifier("detail-view-series")
+                }
+                if Theme.isTV, media.episodeSeriesID != nil {
                     Button(action: browseEpisodes) { Image(systemName: "rectangle.stack") }
                         .buttonStyle(DetailIconStyle()).accessibilityLabel("Seasons and episodes").help("Seasons and episodes")
                         .accessibilityIdentifier("detail-browse-episodes")
@@ -246,7 +255,8 @@ struct DetailView: View {
             loaded = try await client.item(item.id)
             try Task.checkCancellation()
             if media.isSeries {
-                nextEpisode = try? await client.nextUp(seriesID: media.id).items.first
+                // Include the in-progress episode, as Continue Watching does; otherwise Next Up skips it.
+                nextEpisode = try? await client.nextUp(seriesID: media.id, includeResumable: true).items.first
                 if nextEpisode == nil, let seasons = try? await client.seasons(seriesID: media.id).items,
                    let season = seasons.first(where: { ($0.indexNumber ?? 0) > 0 }) ?? seasons.first {
                     nextEpisode = try? await client.episodes(seriesID: media.id, seasonID: season.id).items.first
@@ -296,9 +306,9 @@ private struct SeasonSelector: View {
             }
         } label: {
             HStack(spacing: 14) {
-                Text(selectedTitle).font(Theme.font(16, weight: .semibold))
+                Text(selectedTitle).font(Theme.font(16, weight: .semibold)).lineLimit(1)
                 Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold))
-            }.padding(.horizontal, 18).frame(minHeight: Theme.target)
+            }.fixedSize(horizontal: true, vertical: false).padding(.horizontal, 18).frame(minHeight: Theme.target)
                 .background(.ultraThinMaterial, in: Capsule())
                 .contentShape(Capsule())
         }.menuOrder(.fixed).buttonStyle(.plain)
@@ -328,15 +338,49 @@ private struct SeasonSelector: View {
     }
 }
 
+/// Retains the browser's context and useful controls while metadata is unavailable.
+private struct EpisodeBrowserStatusView<Actions: View>: View {
+    let title: String
+    let detail: String
+    var loading = false
+    @ViewBuilder var actions: () -> Actions
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                if loading { ProgressView().accessibilityHidden(true) }
+                Text(title).font(Theme.font(Theme.isTV ? 28 : 22, weight: .semibold, relativeTo: .title2))
+            }.accessibilityElement(children: .combine)
+            Text(detail).font(Theme.font(Theme.isTV ? 22 : 15)).foregroundStyle(Theme.muted)
+            if loading {
+                ForEach(0..<3, id: \.self) { _ in
+                    HStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 9).fill(Theme.panel)
+                            .frame(width: Theme.isTV ? 180 : 108, height: Theme.isTV ? 101 : 61)
+                        VStack(alignment: .leading, spacing: 10) {
+                            RoundedRectangle(cornerRadius: 4).fill(Theme.panel).frame(maxWidth: 230).frame(height: 10)
+                            RoundedRectangle(cornerRadius: 4).fill(Theme.panel).frame(maxWidth: 140).frame(height: 8)
+                        }
+                    }.accessibilityHidden(true)
+                }
+            }
+            actions()
+        }.padding(.vertical, 20).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// Shared navigator for series/season/episode pages and the in-player picker.
 struct SeasonEpisodeBrowser: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var textSize
     let context: MediaItem
+    var preferredEpisode: MediaItem? = nil
+    var scrollToEpisode: ((String) -> Void)? = nil
     var playSelection: ((MediaItem) -> Void)?
     @State private var browser: EpisodeBrowserState?
     @State private var selectionTask: Task<Void, Never>?
     @State private var centeredCurrent = false
+    @State private var currentJump = 0
+    @FocusState private var focusedEpisodeID: String?
     @State private var loadedRevision: Int?
     private var cardWidth: CGFloat { Theme.isTV ? (playSelection == nil ? 380 : 300) : textSize.isAccessibilitySize ? 300 : 250 }
     var body: some View {
@@ -358,14 +402,18 @@ struct SeasonEpisodeBrowser: View {
                 if !browser.seasons.isEmpty {
                     HStack(spacing: 12) {
                         SeasonSelector(seasons: browser.seasons, selectedID: browser.selectedSeasonID) { id in
-                            selectionTask?.cancel(); centeredCurrent = false
+                            selectionTask?.cancel(); centeredCurrent = true
+                            browser.cancelTargeting()
                             selectionTask = Task { await browser.selectSeason(id) }
                         }
                         #if os(iOS)
                         Spacer(minLength: 0)
                         if let total = browser.total {
-                            Text(total == 1 ? "1 episode" : "\(total) episodes")
-                                .font(Theme.font(13)).foregroundStyle(Theme.muted)
+                            // Drops out rather than truncating when the season and current-episode controls need the room.
+                            ViewThatFits(in: .horizontal) {
+                                Text(total == 1 ? "1 episode" : "\(total) episodes").lineLimit(1)
+                                Color.clear.frame(width: 0, height: 0)
+                            }.font(Theme.font(13)).foregroundStyle(Theme.muted)
                         }
                         #endif
                     }
@@ -377,7 +425,8 @@ struct SeasonEpisodeBrowser: View {
                     #endif
                 }
                 if browser.loadingSeasons || browser.loadingEpisodes && browser.episodes.isEmpty {
-                    ProgressView("Loading episodes…").padding(.vertical, 18)
+                    EpisodeBrowserStatusView(title: browser.loadingSeasons ? "Loading seasons" : "Loading \(browser.selectedSeason?.seasonTitle ?? "episodes")",
+                        detail: "Finding episodes. Your place is saved.", loading: true) { EmptyView() }
                 }
                 if !browser.episodes.isEmpty {
                     #if os(iOS)
@@ -389,9 +438,31 @@ struct SeasonEpisodeBrowser: View {
                                         EpisodeBrowseRow(item: episode, current: episode.id == browser.currentEpisodeID, inPlayer: true)
                                     }.accessibilityLabel(episode.id == browser.currentEpisodeID ? "Return to current episode" : "\(episode.resumeTicks > 0 ? "Resume" : "Play") \(episode.episodeNumberLabel), \(episode.name)")
                                 } else {
-                                    NavigationLink(value: episode) {
-                                        EpisodeBrowseRow(item: episode, current: episode.id == browser.currentEpisodeID)
-                                    }.accessibilityLabel("\(episode.episodeNumberLabel), \(episode.name)\(episode.id == browser.currentEpisodeID ? ", current episode" : "")")
+                                    // The whole row opens the episode, synopsis included; Play starts it.
+                                    // Both are plain buttons, so a drag that begins on them still scrolls.
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(alignment: .center, spacing: 12) {
+                                            NavigationLink(value: episode) {
+                                                EpisodeBrowseRow(item: episode, current: episode.id == browser.currentEpisodeID, showsOverview: false)
+                                            }.accessibilityLabel("\(episode.episodeNumberLabel), \(episode.name)\(episode.id == browser.currentEpisodeID ? ", current episode" : "")")
+                                            Button { model.pendingPlay = episode } label: {
+                                                Image(systemName: "play.fill").font(.system(size: 15, weight: .semibold))
+                                                    .foregroundStyle(Theme.text).frame(width: 40, height: 40)
+                                                    .background(Theme.panel, in: Circle())
+                                                    .overlay(Circle().stroke(Theme.border, lineWidth: 1))
+                                            }.frame(width: 56, height: 56).contentShape(Rectangle())
+                                                .accessibilityLabel("\(episode.resumeTicks > 0 ? "Resume" : "Play") \(episode.episodeNumberLabel)")
+                                                .accessibilityIdentifier("episode-play-" + episode.id)
+                                        }
+                                        if let overview = episode.overview, !overview.isEmpty {
+                                            NavigationLink(value: episode) {
+                                                Text(overview.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
+                                                    .font(Theme.font(13)).foregroundStyle(Theme.muted).lineLimit(textSize.isAccessibilitySize ? nil : 2)
+                                                    .multilineTextAlignment(.leading)
+                                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                                            }.accessibilityHidden(true)
+                                        }
+                                    }.padding(.vertical, 14)
                                 }
                             }.buttonStyle(.plain).id(episode.id)
                                 .accessibilityIdentifier("browse-episode-" + episode.id)
@@ -407,6 +478,10 @@ struct SeasonEpisodeBrowser: View {
                                 }
                         }
                     }.accessibilityIdentifier("episode-browser-list")
+                        // Only the in-player list centers itself; a details page opens at the top
+                        // with Play visible, and Current episode scrolls on request.
+                        .onChange(of: browser.episodes.count) { _, _ in if playSelection != nil { centerMobileCurrent(browser) } }
+                        .onAppear { if playSelection != nil { centerMobileCurrent(browser) } }
                     #else
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal) {
@@ -421,7 +496,7 @@ struct SeasonEpisodeBrowser: View {
                                             NavigationLink(value: episode) { EpisodeBrowseCard(item: episode, current: episode.id == browser.currentEpisodeID) }
                                                 .accessibilityLabel("\(episode.episodeNumberLabel), \(episode.name)\(episode.id == browser.currentEpisodeID ? ", current episode" : "")")
                                         }
-                                    }.buttonStyle(ArtworkButtonStyle()).frame(width: cardWidth).id(episode.id)
+                                    }.buttonStyle(ArtworkButtonStyle()).focused($focusedEpisodeID, equals: episode.id).frame(width: cardWidth).id(episode.id)
                                         .accessibilityIdentifier("browse-episode-" + episode.id)
                                 }
                                 if browser.hasMore {
@@ -432,6 +507,10 @@ struct SeasonEpisodeBrowser: View {
                                 }
                             }.padding(4)
                         }.scrollIndicators(.hidden).scrollClipDisabled()
+                            .onChange(of: currentJump) { _, _ in
+                                centeredCurrent = false; centerCurrent(browser, proxy: proxy)
+                                focusedEpisodeID = browser.currentEpisodeID
+                            }
                             .onChange(of: browser.episodes.count) { _, _ in centerCurrent(browser, proxy: proxy) }
                             .onAppear { centerCurrent(browser, proxy: proxy) }
                     }
@@ -439,37 +518,73 @@ struct SeasonEpisodeBrowser: View {
                 }
                 if browser.loadingEpisodes && !browser.episodes.isEmpty { ProgressView("Loading more episodes…") }
                 if let error = browser.error {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(error).foregroundStyle(Theme.muted)
+                    EpisodeBrowserStatusView(title: browser.seasons.isEmpty ? "Seasons couldn’t load" : "Episodes couldn’t load",
+                        detail: "Your place is saved. " + error) {
                         Button("Try again") {
                             selectionTask?.cancel()
                             selectionTask = Task {
-                                if browser.seasons.isEmpty { await browser.load(context, force: true) }
+                                if browser.seasons.isEmpty { await browser.load(context, preferredEpisode: preferredEpisode, force: true) }
                                 else { await browser.loadMore() }
                             }
-                        }.buttonStyle(ZoroButtonStyle())
+                        }.buttonStyle(ZoroButtonStyle(primary: true))
                             .playerOptionsDefaultFocus(playSelection != nil && browser.seasons.isEmpty)
+                        alternateSeasonMenu(browser)
                     }
                 } else if !browser.loadingEpisodes && !browser.loadingSeasons && browser.episodes.isEmpty {
-                    Text(browser.seasons.isEmpty ? "No seasons are available." : "No episodes are available in this season.").foregroundStyle(Theme.muted)
+                    EpisodeBrowserStatusView(title: browser.seasons.isEmpty ? "No seasons available" : "No episodes available",
+                        detail: browser.seasons.isEmpty ? "There aren’t any seasons to show for this series." : "There aren’t any episodes to show in this season. Choose another season without losing your place.") {
+                        alternateSeasonMenu(browser)
+                    }
                 }
-            } else { ProgressView("Loading seasons…") }
+            } else {
+                EpisodeBrowserStatusView(title: "Loading seasons", detail: "Finding available seasons.", loading: true) { EmptyView() }
+            }
         }.foregroundStyle(Theme.text)
-            .task(id: "\(context.id):\(context.seasonId ?? ""):\(context.parentIndexNumber ?? -1):\(model.libraryRevision)") {
+            #if os(iOS)
+            // Only the in-player list centers itself, so only it has to notice a drag. On a
+            // show or season page this gesture competed with the page's own scrolling.
+            .simultaneousGesture(DragGesture(minimumDistance: 5).onChanged { _ in
+                // Written once per drag: every write redraws the list.
+                if !centeredCurrent { centeredCurrent = true }
+                if browser?.targetingCancelled == false { browser?.cancelTargeting() }
+            }, including: playSelection != nil ? .all : .subviews)
+            #endif
+            #if os(tvOS)
+            .onMoveCommand { _ in centeredCurrent = true; browser?.cancelTargeting() }
+            #endif
+            .task(id: "\(context.id):\(context.seasonId ?? ""):\(context.parentIndexNumber ?? -1):\(preferredEpisode?.id ?? ""):\(model.libraryRevision)") {
                 if browser == nil {
                     if model.isDemo { browser = EpisodeBrowserState(library: PreviewEpisodeLibrary(context: context)) }
                     else if let client = model.client { browser = EpisodeBrowserState(library: client) }
                 }
                 let revision = model.libraryRevision
                 let refresh = loadedRevision != nil && loadedRevision != revision
-                if refresh { centeredCurrent = false }
-                await browser?.load(context, force: refresh)
+                if refresh && browser?.targetingCancelled != true { centeredCurrent = false }
+                await browser?.load(context, preferredEpisode: preferredEpisode, force: refresh)
                 if !Task.isCancelled { loadedRevision = revision }
             }
             .onDisappear { selectionTask?.cancel(); browser?.cancel() }
     }
+    @ViewBuilder private func alternateSeasonMenu(_ browser: EpisodeBrowserState) -> some View {
+        if browser.seasons.count > 1 {
+            Menu {
+                ForEach(browser.seasons) { season in
+                    Button(season.seasonTitle) {
+                        selectionTask?.cancel(); centeredCurrent = true; browser.cancelTargeting()
+                        selectionTask = Task { await browser.selectSeason(season.id) }
+                    }
+                }
+            } label: { Label("Choose another season", systemImage: "chevron.down") }
+                .buttonStyle(ZoroButtonStyle()).accessibilityIdentifier("episode-browser-other-season")
+        }
+    }
+    private func centerMobileCurrent(_ browser: EpisodeBrowserState) {
+        guard !centeredCurrent, !browser.targetingCancelled, let scrollToEpisode,
+              let current = browser.currentEpisodeID, browser.episodes.contains(where: { $0.id == current }) else { return }
+        scrollToEpisode(current); centeredCurrent = true
+    }
     private func centerCurrent(_ browser: EpisodeBrowserState, proxy: ScrollViewProxy) {
-        guard !centeredCurrent, let current = browser.currentEpisodeID, browser.episodes.contains(where: { $0.id == current }) else { return }
+        guard !centeredCurrent, !browser.targetingCancelled, let current = browser.currentEpisodeID, browser.episodes.contains(where: { $0.id == current }) else { return }
         proxy.scrollTo(current, anchor: .center); centeredCurrent = true
     }
 }
@@ -483,6 +598,8 @@ private struct EpisodeBrowseRow: View {
     let item: MediaItem
     let current: Bool
     var inPlayer = false
+    /// Off when the synopsis sits outside the row's tap area.
+    var showsOverview = true
     private var artworkWidth: CGFloat { textSize.isAccessibilitySize ? 176 : window.usesTabletLayout ? 180 : 128 }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -521,12 +638,12 @@ private struct EpisodeBrowseRow: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let overview = item.overview, !overview.isEmpty {
+            if showsOverview, let overview = item.overview, !overview.isEmpty {
                 Text(overview.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
                     .font(Theme.font(13)).foregroundStyle(Theme.muted)
                     .lineLimit(textSize.isAccessibilitySize ? nil : 2)
             }
-        }.padding(.vertical, 16).foregroundStyle(Theme.text)
+        }.padding(.vertical, showsOverview ? 16 : 0).foregroundStyle(Theme.text)
             .frame(maxWidth: .infinity, minHeight: Theme.target, alignment: .leading)
             .contentShape(Rectangle())
     }

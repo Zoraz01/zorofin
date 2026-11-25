@@ -12,22 +12,37 @@ client, so it would need a bundled third-party socket and TLS library.
 Checked in a Roku simulator against a local Jellyfin server and partly on a
 TCL Roku TV; not yet submitted. See [docs/RELEASE.md](docs/RELEASE.md) for the store checklist.
 
+Current candidate: **1.4.0**. Changes, reproducible device checks and separate
+source/device/portal gates are recorded in the 1.4 handoff.
+
+The follow-up build adds the clarified Sports contract and account notification
+read sync. It has **not** replaced the older signed portal package. TV checks and
+signing are deferred at the owner's request; see the handoff before uploading.
+
+The Pick Together lobby generates its invite QR locally using the
+[MIT-licensed BrightScript QR encoder](https://github.com/paramount-engineering/QR-Code-generator-brightscript/tree/b5a48b96620e6603078053c8fe7500a23f152b5c).
+The vendored component omits invite logging and falls back to the manual code on an encoding error.
+
 ## What it does
 
 | Area | Details |
 | --- | --- |
 | Sign-in | Server address with the same rules as the other apps (HTTPS, plain HTTP only for local addresses, port 8096 fallback), Quick Connect code, public user picker, username and password, several saved accounts with "Who's watching". |
-| Home | Hero banner with Play and More info, focused-title backdrop and info, Continue Watching (Next Up first), Zorofin plugin Home rows (Sections, then Rows v1/v2), "Recently added" per library, "On now" Live TV row. Empty rows are hidden. |
+| Home | Hero banner with Play and More info, focused-title backdrop and info, Continue Watching (Next Up first), Zorofin plugin Home rows (Sections, then Rows v1/v2), "Recently added" per library, "Live Now" sports row: guide-backed playable games, ordered/filtered by the advertised companion feed with server favorites, spoiler policy and game limit. Artwork files decorate only; ordinary Jellyfin keeps its guide-only row. Empty rows are hidden. |
 | Browse | Movies and Shows libraries (A to Z, Recently added, Top rated, Newest; All, Unwatched, Favorites). Details like Apple TV: quality badges, Play / Resume / Play next episode, Start over, audio and subtitle pickers, File details, genres, Seasons & episodes, Cast & Crew, More like this, Mark watched, Favorite. |
 | Search | Recommended titles for an empty search (Apple's ranking), top matches while typing, then results by type. |
 | Live TV | Grid guide like Apple TV: two hour pages up to seven days ahead, day and time picker, Now, All channels or Favorites, find a channel, a preview of the focused program and program details with Watch live and Favorites. With the companion's `liveTvStreams` module: a "Playing now" strip with Join, a line for the focused channel ("ESPN is using the only Live TV stream."), and a "Live TV is in use" alert with Watch ESPN / Not now before a channel that needs a free tuner starts. |
+| Notifications | Support replies retain the existing dwell rule. When `notificationReads` v1 is advertised, ready-request notices and reply reads merge with the account through `/Zorofin/Notifications/Read`; badges refresh every two minutes. Older servers keep device-only support reads. |
+| Optional extras | Capability-gated Calendar with four weeks, type filters, empty dates and library links; Catch Up with per-account skips, Like for recommendations, Skip, View details and reset. Server accents stay readable; card size uses an unlocked server default until this account chooses its own, or follows enforcement. |
 | Player | Direct play when the Roku can decode the file, HLS transcode otherwise (with one automatic HLS retry), Skip intro from media segments, Up next with a 15 second countdown, Jellyfin progress reporting, a 45 second start timeout. Player options (Options or Down): Seasons & episodes, Channels & guide on live TV (also on Up), Audio & subtitles, Quality and Playback info. |
 | Profile and settings | Like the Apple TV Profile: Change account, Quick Connect, Support and notifications (with the plugin), Privacy Policy, App Support and Sign Out, plus settings pages for Account (password, account defaults saved to Jellyfin), Display, Playback, Subtitles, Controls, Notification settings and Storage & app. |
 | Roku requirements | Deep links (`contentId` + `mediaType`) at launch and while running, `AppLaunchComplete` beacon, Back on Home exits. |
 
-Requests are compiled out of the first store build (`bs_const=ZOROFIN_REQUESTS=false`
-in `manifest`), as planned for every TV store in
-[docs/TV_PLATFORMS.md](../../docs/TV_PLATFORMS.md).
+The 1.4 client enables Requests for supported capability versions 1 and 2.
+The viewer can browse trending titles, search and confirm a movie or available
+seasons. Selection and submission recheck the signed-in viewer’s permissions,
+quota and current title state. Store build variants may still disable the tab
+with the manifest flag.
 
 ## Layout
 

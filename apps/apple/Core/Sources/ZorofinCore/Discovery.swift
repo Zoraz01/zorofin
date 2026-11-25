@@ -50,6 +50,8 @@ private struct DiscoveryLane: Sendable {
     var unplayed = false
     var sort = "CommunityRating,SortName"
     var cursor = LibraryPageCursor()
+    var pending: [MediaItem] = []
+    var pages = 0
 }
 
 /// A value snapshot belongs to one Home/account visit. The view only commits a
@@ -61,7 +63,8 @@ public struct DiscoveryFeed: Sendable {
     private var initialized = false
     private var serial = 0
     private var ordinarySinceRecommendation = 0
-    private var recentIDs: [[String]] = []
+    private var shownIDs: Set<String> = []
+    private var shownTitles: Set<String> = []
     private var random: HomeRandom
     public init(seed: UInt64 = .random(in: .min ... .max)) { random = HomeRandom(seed: seed) }
 
@@ -81,8 +84,8 @@ public struct DiscoveryFeed: Sendable {
         let names = genres.items.map(\.name).filter {
             !$0.isEmpty && $0.count <= 80 && !$0.contains("|") && seen.insert($0.lowercased()).inserted
         }
-        // One stable order per visit. Interleave formats instead of a separate
-        // personalization section, and keep pageable broad lanes as a fallback.
+        // One shelf per category/visit. Page only to fill a substantial shelf;
+        // movie genres reflect the permitted movie library rather than TV-only tags.
         for (index, name) in names.enumerated() {
             lanes.append(DiscoveryLane(title: "\(name) movies", type: "Movie", genre: name))
             lanes.append(DiscoveryLane(title: "\(name) shows", type: "Series", genre: name, sort: "PremiereDate,SortName"))
@@ -94,9 +97,17 @@ public struct DiscoveryFeed: Sendable {
         }
         lanes += [DiscoveryLane(title: "More movies to explore", type: "Movie", sort: "SortName"),
                   DiscoveryLane(title: "More shows to explore", type: "Series", sort: "SortName")]
-        // Randomize lane order once per visit; retain each lane's deterministic
-        // item sort/cursor and rotate fairly so a broad lane cannot starve others.
+        // Keep highly rated near the start, then vary movie-first categories
+        // with shows interleaved. Broad categories cannot repeat or starve others.
         lanes.shuffle(using: &random)
+        let rated = lanes.first { $0.minimumRating != nil }!
+        var movies = lanes.filter { $0.type == "Movie" && $0.minimumRating == nil }
+        var shows = lanes.filter { $0.type == "Series" }
+        lanes = [rated]
+        while !movies.isEmpty || !shows.isEmpty {
+            for _ in 0..<min(3, movies.count) { lanes.append(movies.removeFirst()) }
+            if !shows.isEmpty { lanes.append(shows.removeFirst()) }
+        }
         initialized = true
     }
 
@@ -109,10 +120,11 @@ public struct DiscoveryFeed: Sendable {
         var requests = 0
         while result.count < 2 && requests < 8 && !lanes.isEmpty {
             try Task.checkCancellation()
-            let blocked = excluding.union(recentIDs.flatMap { $0 })
+            let blocked = excluding.union(shownIDs)
             let title: String
             let page: ItemPage
             var seedID: String?
+            var category: DiscoveryLane?
             if ordinarySinceRecommendation >= 5, let seed = seeds.first {
                 page = try await client.discoverySimilar(seed.id)
                 seeds.removeFirst()
@@ -123,20 +135,35 @@ public struct DiscoveryFeed: Sendable {
                 page = try await client.discoveryItems(lane)
                 lanes.removeFirst()
                 lane.cursor.accept(page, limit: 24)
-                if lane.cursor.hasMore { lanes.append(lane) }
+                lane.pages += 1
+                category = lane
                 title = lane.title
             }
             requests += 1
             var seen = blocked
             if let seedID { seen.insert(seedID) }
-            let items = page.items.filter {
-                ($0.type == "Movie" || $0.isSeries) && !$0.id.isEmpty && seen.insert($0.id).inserted
+            let available = ((category?.pending ?? []) + page.items).filter { item in
+                guard item.type == "Movie" || item.isSeries,
+                      category == nil || item.type == category?.type,
+                      !item.id.isEmpty, seen.insert(item.id).inserted else { return false }
+                if category?.minimumRating != nil {
+                    guard let rating = item.communityRating, rating.isFinite, rating >= 7 else { return false }
+                }
+                return true
             }
-            guard !items.isEmpty else { continue }
+            if available.count < 6 {
+                if var lane = category, lane.cursor.hasMore, lane.pages < 4 {
+                    lane.pending = available
+                    lanes.insert(lane, at: 0)
+                }
+                continue
+            }
+            let titleKey = title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
+            guard shownTitles.insert(titleKey).inserted else { continue }
+            let items = Array(available.prefix(20))
+            shownIDs.formUnion(items.map(\.id))
             serial += 1
             result.append(DiscoveryRow(id: "discovery-\(serial)", title: title, items: items))
-            recentIDs.append(items.map(\.id))
-            if recentIDs.count > 6 { recentIDs.removeFirst() }
             if seedID != nil { ordinarySinceRecommendation = 0 }
             else { ordinarySinceRecommendation += 1 }
         }
@@ -163,8 +190,9 @@ extension JellyfinClient {
                 .init(name: "isPlaceHolder", value: "false")]
     }
     fileprivate func discoveryGenres() async throws -> ItemPage {
-        try await request(ItemPage.self, path: ["Genres"], query: discoveryQuery() + [
-            .init(name: "includeItemTypes", value: "Movie,Series"), .init(name: "sortBy", value: "SortName"),
+        try await request(ItemPage.self, path: ["Genres"], query: discoveryQuery().filter { $0.name != "limit" } + [
+            .init(name: "limit", value: "100"),
+            .init(name: "includeItemTypes", value: "Movie"), .init(name: "sortBy", value: "SortName"),
             .init(name: "enableImages", value: "false")], cachePolicy: .library)
     }
     fileprivate func discoveryHistory() async throws -> ItemPage {

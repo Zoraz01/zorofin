@@ -9,6 +9,7 @@ struct WatchTogetherView: View {
     @State private var creating = false
     @State private var groupName = "Movie night"
     @State private var confirmingLeave = false
+    @State private var pickKind: PickKindChoice?
 
     private var groupState: WatchTogetherModel { model.watchTogether }
     var body: some View {
@@ -21,6 +22,9 @@ struct WatchTogetherView: View {
                 Text(creating ? "Start a group" : "Watch together")
                     .font(Theme.font(Theme.isTV ? 42 : 28, weight: .bold, relativeTo: .title)).accessibilityAddTraits(.isHeader)
 
+                if model.features.pickTogether && !model.isDemo && !creating {
+                    pickSomethingFirst
+                }
                 if model.isDemo {
                     Text("Connect to your Jellyfin server to create or join a group.")
                         .font(Theme.font(Theme.isTV ? 24 : 16)).foregroundStyle(Theme.muted)
@@ -118,6 +122,17 @@ struct WatchTogetherView: View {
                 .padding(.horizontal, Theme.isTV ? 64 : 28).padding(.top, Theme.isTV ? 36 : 12).padding(.bottom, 32)
         }.foregroundStyle(Theme.text).background(Theme.background)
             .modifier(HideNavigationBar())
+            #if os(iOS)
+            .sheet(item: $pickKind) { choice in
+                NavigationStack {
+                    ScrollView { PickTogetherPhoneView(startKind: choice.kind).padding(Theme.gutter) }
+                        .background(Theme.background).foregroundStyle(Theme.text)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { pickKind = nil } } }
+                }
+            }
+            #else
+            .fullScreenCover(item: $pickKind) { choice in PickTogetherTVView(startKind: choice.kind) }
+            #endif
             #if os(tvOS)
             .onExitCommand(perform: goBack)
             .onChange(of: groupState.browseRequested) { _, requested in if requested { dismiss() } }
@@ -138,4 +153,39 @@ struct WatchTogetherView: View {
         else { dismiss() }
     }
     private func create() { Task { await groupState.create(name: groupName) } }
+}
+
+private struct PickKindChoice: Identifiable {
+    let kind: PickTogetherKind
+    var id: String { kind.rawValue }
+}
+
+extension WatchTogetherView {
+    /// Profile → Watch together: settle on a title first (mockup watch-together-1-entry).
+    fileprivate var pickSomethingFirst: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "rectangle.stack.fill").font(.system(size: Theme.isTV ? 30 : 20)).foregroundStyle(Theme.jade)
+                    .frame(width: Theme.isTV ? 64 : 44, height: Theme.isTV ? 64 : 44)
+                    .background(Theme.jade.opacity(0.14), in: RoundedRectangle(cornerRadius: 12)).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Pick something first").font(Theme.font(Theme.isTV ? 30 : 19, weight: .bold))
+                    Text(Theme.isTV ? "Everyone swipes on their phone. Matches show up on this TV."
+                                    : "Everyone swipes on their own phone, then you watch what you all liked.")
+                        .font(Theme.font(Theme.isTV ? 22 : 15)).foregroundStyle(Theme.muted)
+                }
+            }
+            HStack(spacing: 12) {
+                ForEach(PickTogetherKind.allCases) { kind in
+                    Button { pickKind = PickKindChoice(kind: kind) } label: { Text(kind.label).frame(maxWidth: .infinity) }
+                        .buttonStyle(ZoroButtonStyle(primary: true)).accessibilityLabel("Pick \(kind.label.lowercased()) together")
+                }
+            }
+        }.padding(Theme.isTV ? 24 : 18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.jade.opacity(0.06), in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.jade.opacity(0.7), lineWidth: 1.5))
+            #if os(tvOS)
+            .focusSection()
+            #endif
+    }
 }

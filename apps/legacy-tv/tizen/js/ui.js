@@ -73,8 +73,42 @@
     var meta = opts.meta !== undefined ? opts.meta : util.cardMeta(item);
     node.appendChild(el('div', 'card-meta', meta || ' '));
     setArt(node, opts.art !== undefined ? opts.art : style === 'wide' ? client.image(item, 'Backdrop', 480) : client.image(item, 'Primary', 300));
+    if (opts.homeGame) showHomeGame(node, frame, client.base, item.Name, opts.homeGame);
     node.item = item;
     return node;
+  }
+
+  function showHomeGame(node, frame, base, channel, card) {
+    var teams = card.matchup, paths = card.crests;
+    var pattern = /^Zorofin\/Web\/ui\/live-tv-logos\/art\/sports-[a-f0-9]{24}-[a-f0-9]{8}\.(png|jpg)$/;
+    if (!Array.isArray(teams) || !Array.isArray(paths) || teams.length !== 2 || paths.length !== 2) return;
+    for (var j = 0; j < 2; j++) {
+      var m = typeof paths[j] === 'string' && pattern.exec(paths[j]);
+      if (!m || m[0] !== paths[j] || typeof teams[j] !== 'string' || !teams[j].trim() ||
+          teams[j].replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, 'x').length > 80) return;
+    }
+    var layer = el('div', 'home-game-crests'), loaded = 0;
+    var title = teams.join(' vs '), soon = Date.parse(card.startsAt) > Date.now();
+    var status = soon || (!card.startsAt && (card.badges || []).indexOf('Starting soon') >= 0) ? 'Starting soon' : 'On now';
+    paths.forEach(function(path, index) {
+      if (index) layer.appendChild(el('strong', '', 'VS'));
+      var slot = el('span', 'home-crest-slot'), img = el('img', '');
+      img.alt = '';
+      img.onload = function() {
+        // Original aspect ratio even on engines without object-fit.
+        if (img.naturalWidth / img.naturalHeight > (16 / 9 * .28 / .56)) img.style.width = '100%';
+        else img.style.height = '100%';
+        if (++loaded !== 2) return;
+        frame.appendChild(layer);
+        node.className += ' home-game';
+        node.querySelector('.card-title').textContent = title;
+        node.querySelector('.card-meta').textContent = channel;
+        node.appendChild(el('div', 'game-status', status));
+        node.setAttribute('aria-label', [title, channel, status].join(', '));
+      };
+      slot.appendChild(img); layer.appendChild(slot);
+      img.src = base.replace(/\/$/, '') + '/' + path;
+    });
   }
 
   // ---------- focus ----------
@@ -120,7 +154,7 @@
     if (instant) this.page.className = this.page.className.replace(/\s*\banimate\b/g, '');
     else if (!/\banimate\b/.test(this.page.className)) this.page.className += ' animate';
     this.scrollRow(zone);
-    if (!this.options.noPageScroll) this.scrollPage(zone);
+    this.scrollPage(zone);
     this.loadNearby();
     if (this.options.onFocus) this.options.onFocus(item, zone);
   };

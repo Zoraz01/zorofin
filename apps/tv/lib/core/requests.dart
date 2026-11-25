@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:shared_preferences/shared_preferences.dart';
-
 import 'errors.dart';
 import 'jellyfin_client.dart';
 import 'models.dart';
@@ -376,7 +374,7 @@ class RequestActivityItem {
     return switch (mediaStatus) {
       'Partially Available' => 'Partly available',
       'Pending' => 'Pending approval',
-      'Processing' || 'Approved' => 'Requested',
+      'Processing' || 'Approved' => 'Processing',
       'Deleted' => 'Removed',
       'Failed' => 'Request failed',
       'Declined' => 'Declined',
@@ -419,19 +417,21 @@ class RequestDownload {
     }
     if (text.contains('paused')) return 'Download paused';
     final p = progress;
-    if (p != null && p.isFinite && p > 0) {
+    if (p != null && p.isFinite && (p > 0 || text.startsWith('downloading'))) {
       return 'Downloading · ${p.clamp(0, 99).toInt()}%';
     }
+    if (text.startsWith('downloading')) return 'Downloading';
     return 'Download queued';
   }
 }
 
 class RequestQueue {
+  String? label(RequestActivityItem item) => download(item)?.label;
   const RequestQueue(this.items);
   final List<RequestDownload> items;
 
   /// Only joined to records the request API lets this viewer see.
-  String? label(RequestActivityItem item) {
+  RequestDownload? download(RequestActivityItem item) {
     final id = item.tmdbId;
     final kind = item.kind;
     if (item.requestStatus != 2 ||
@@ -443,8 +443,7 @@ class RequestQueue {
     final source = kind == RequestKind.movie ? 'radarr' : 'sonarr';
     return items
         .where((d) => d.tmdbId == id && d.source?.toLowerCase() == source)
-        .firstOrNull
-        ?.label;
+        .firstOrNull;
   }
 }
 
@@ -932,21 +931,24 @@ extension Requests on JellyfinClient {
     }
     final resolved = <int, RequestAvailabilityNotice>{};
     final batches = groups.values.toList();
-    for (var start = 0; start < batches.length; start += 4) {
-      final batch = batches.skip(start).take(4);
-      final notices = await Future.wait([
-        for (final activities in batch)
-          requestTitle(activities.first.kind!, activities.first.tmdbId!).then(
-            (detail) => [
-              for (final a in activities)
-                ?RequestAvailabilityNotice.from(a, detail),
-            ],
-          ),
-      ]);
-      for (final n in notices.expand((n) => n)) {
-        resolved[n.id] = n;
+    var cursor = 0;
+    Future<void> worker() async {
+      while (cursor < batches.length) {
+        final activities = batches[cursor++];
+        final detail = await requestTitle(
+          activities.first.kind!,
+          activities.first.tmdbId!,
+        );
+        for (final a in activities) {
+          final notice = RequestAvailabilityNotice.from(a, detail);
+          if (notice != null) resolved[notice.id] = notice;
+        }
       }
     }
+
+    await Future.wait(
+      List.generate(batches.length < 4 ? batches.length : 4, (_) => worker()),
+    );
     return (
       notices: [for (final c in candidates) ?resolved[c.id]],
       hasOlder: totalPages > 2,
@@ -1023,19 +1025,23 @@ class RequestJournalEntry {
 }
 
 class RequestJournal {
-  RequestJournal(
-    this._prefs, {
+  RequestJournal({
+    required String? Function(String key) read,
+    required Future<bool> Function(String key, String value) write,
     required String server,
     required String viewerId,
-  }) : _key = 'zorofin.request-receipts.v1.${stableHash('$server\n$viewerId')}';
+  }) : _read = read,
+       _write = write,
+       _key = 'zorofin.request-receipts.v1.${stableHash('$server\n$viewerId')}';
 
-  final SharedPreferences _prefs;
+  final String? Function(String key) _read;
+  final Future<bool> Function(String key, String value) _write;
   final String _key;
   static final _inFlight = <String>{};
   static var _serial = 0;
 
   List<RequestJournalEntry> entries() {
-    final raw = _prefs.getString(_key);
+    final raw = _read(_key);
     if (raw == null) return [];
     try {
       return [
@@ -1048,7 +1054,7 @@ class RequestJournal {
   }
 
   Future<void> _save(List<RequestJournalEntry> entries) async {
-    final ok = await _prefs.setString(
+    final ok = await _write(
       _key,
       jsonEncode([for (final e in entries) e.toJson()]),
     );

@@ -78,10 +78,11 @@ public final class URLSessionTransport: HTTPTransport, Sendable {
         self.init(server: server, configuration: .ephemeral)
     }
     // Internal injection allows URLProtocol tests of limits and cancellation.
-    init(server: ServerAddress, configuration: URLSessionConfiguration, limit: Int = 12 * 1024 * 1024) {
+    init(server: ServerAddress, configuration: URLSessionConfiguration, limit: Int = 12 * 1024 * 1024,
+         resourceTimeout: TimeInterval = 45) {
         let config = configuration
         config.timeoutIntervalForRequest = 25
-        config.timeoutIntervalForResource = 45
+        config.timeoutIntervalForResource = resourceTimeout
         config.urlCache = nil // Authenticated caching is explicitly account-scoped.
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Pick Together on the TV (Apple TV PickTogetherTVView): this Roku hosts the
+  group with display: true and never votes. Movies or Shows, then the code and
+  who joined, then swipe progress and matches with Play, Another round and End.
+  Polls every two seconds only while this screen is showing.
+-->
+<component name="PickTogetherScreen" extends="Group">
+  <interface>
+    <field id="navigate" type="assocarray" alwaysNotify="true" />
+    <field id="toast" type="string" alwaysNotify="true" />
+    <field id="sessionExpired" type="boolean" alwaysNotify="true" />
+    <field id="showTabs" type="boolean" value="true" />
+    <field id="focusIn" type="boolean" alwaysNotify="true" onChange="restoreFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Quality.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Items.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/PickTogether.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/Page.brs" />
+  <script type="text/brightscript" uri="pkg:/components/screens/PickTogetherScreen.brs" />
+  <children>
+    <Group id="page" />
+    <Timer id="poll" duration="2" repeat="false" />
+  </children>
+</component>

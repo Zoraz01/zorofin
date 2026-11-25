@@ -96,7 +96,7 @@ public struct PlayerTimeline: Sendable, Equatable {
 }
 
 public enum PlayerPhase: String, Sendable, Equatable { case preparing, playing, paused, buffering, ended, failed }
-public enum PlayerPanel: String, Sendable, Equatable { case episodes, channels, tracks, quality, information, routes }
+public enum PlayerPanel: String, Sendable, Equatable { case episodes, channels, tracks, chapters, quality, information, routes }
 public enum PlayerBackAction: Sendable, Equatable { case closePanel, cancelScrub, unlock, hideControls, closePlayer }
 
 /// Conservative video-background gestures; recognition never starts a seek draft.
@@ -297,7 +297,7 @@ public extension PlaybackOptions {
             guard index == -2 || index == -1 || streams.contains(where: { $0.type == "Subtitle" && $0.index == index }) else { throw SettingsError.invalidInput }
             result.subtitleIndex = index
         case .bitrate(let value):
-            guard [2,4,8,12,20,40].map({ $0 * 1_000_000 }).contains(value) else { throw SettingsError.invalidInput }
+            guard [2,4,8,12,20,40,60,80,120].map({ $0 * 1_000_000 }).contains(value) else { throw SettingsError.invalidInput }
             result.bitrate = value
         }
         let duration = item.runTimeTicks.map(MediaTime.seconds)

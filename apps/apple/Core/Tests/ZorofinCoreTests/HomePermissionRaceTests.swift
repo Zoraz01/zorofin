@@ -22,7 +22,7 @@ private actor HomePermissionRaceTransport: HTTPTransport {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let denied = request.url!.path.contains("/LiveTv/")
+        let denied = request.url!.path.contains("/LiveTv/") || request.url!.path.hasSuffix("/Zorofin/Home/Rows")
         if !denied {
             await withCheckedContinuation { continuation in
                 pending.append(continuation)
@@ -64,5 +64,25 @@ private actor HomePermissionRaceTransport: HTTPTransport {
             await #expect(throws: CancellationError.self) { _ = try await continued.value }
             await #expect(throws: LibraryCacheMiss.self) { _ = try await client.readingCache().resume() }
         }
+    }
+}
+
+
+@Suite("Optional Home authentication isolation") struct OptionalHomePermissionTests {
+    @Test(arguments: [401, 403])
+    func deniedPluginKeepsConcurrentCoreReads(status: Int) async throws {
+        let server = try ServerAddress("https://home.example/jellyfin")
+        let cache = LibraryResponseCache(server: server, viewerID: "viewer", root: nil)
+        let transport = HomePermissionRaceTransport(denialStatus: status)
+        let client = JellyfinClient(server: server, identity: .init(deviceID: "test", deviceName: "Fixture"),
+            session: .init(server: server, viewer: .init(id: "viewer", name: "Fixture"), token: "fixture", deviceID: "test"),
+            transport: transport, responseCache: cache)
+        let movies = Task { try await client.items(type: "Movie") }
+        await transport.waitForReads(1)
+        await #expect(throws: status == 401 ? ClientError.unauthorized : ClientError.forbidden) {
+            _ = try await client.homeFeed(contract: .plugin)
+        }
+        await transport.releaseReads()
+        #expect(try await movies.value.items.map(\.id) == ["movie-1"])
     }
 }

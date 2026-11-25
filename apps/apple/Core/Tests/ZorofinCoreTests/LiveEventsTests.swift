@@ -72,14 +72,14 @@ private func fixture(sport: LiveSport = .soccer, league: String = "soccer/eng.1"
             #expect(try #require(LiveEvent.select([channel], at: liveNow).first).artworkSources.isEmpty)
         }
     }
-    @Test func photoThenProgramThenCrestsAndProgrammeChangesInvalidateIdentity() throws {
+    @Test func programThenPhotoThenCrestsAndProgrammeChangesInvalidateIdentity() throws {
         var channel = liveChannel("Live: NFL Football")
         channel.currentProgram?.id = "program-one"
         channel.currentProgram?.imageTags = ["Primary": "first-tag"]
         var event = try #require(LiveEvent.select([channel], at: liveNow).first)
         event.artwork = .init(image: "/live-tv-logos/art/event.jpg", logos: ["/live-tv-logos/art/a.png", "/live-tv-logos/art/b.png"], teams: ["Alpha", "Beta"], sport: .football)
-        #expect(event.artworkSources == [.catalogue("/live-tv-logos/art/event.jpg"),
-            .program(.init(itemID: "program-one", kind: "Primary", tag: "first-tag")),
+        #expect(event.artworkSources == [.program(.init(itemID: "program-one", kind: "Primary", tag: "first-tag")),
+            .catalogue("/live-tv-logos/art/event.jpg"),
             .crests(["/live-tv-logos/art/a.png", "/live-tv-logos/art/b.png"])])
         channel.currentProgram?.imageTags = ["Primary": "second-tag"]
         let changed = try #require(LiveEvent.select([channel], at: liveNow).first)
@@ -286,4 +286,12 @@ private func liveClient(_ transport: LiveTransport, viewer: String = "viewer") t
         #expect(await transport.requests.isEmpty)
     }
 
+    @Test func guideImagesMustBeWidePictures() {
+        #expect(LiveEventArtwork.isWidePicture(width: 1280, height: 720))
+        #expect(LiveEventArtwork.isWidePicture(width: 1920, height: 1000))
+        #expect(!LiveEventArtwork.isWidePicture(width: 400, height: 560)) // headshot
+        #expect(!LiveEventArtwork.isWidePicture(width: 512, height: 512)) // channel logo
+        #expect(!LiveEventArtwork.isWidePicture(width: 1200, height: 300)) // wordmark
+        #expect(!LiveEventArtwork.isWidePicture(width: 0, height: 0))
+    }
 }

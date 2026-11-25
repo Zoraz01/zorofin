@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Apple TV account popover (Shell.swift TVProfilePopover), under the avatar:
-  saved accounts with a check on the current one, Change server, Quick
-  Connect, Watch together when the server allows it, then Settings.
-  Emits action = { type: switch | servers | quickConnect | watchTogether | settings | close, key? }.
+  Apple TV account popover (Shell.swift TVProfilePopover), under the avatar,
+  in the order every TV app uses (docs/design/TV_PROFILE_MENU.md): who is
+  watching, Switch profile (other saved profiles, then All profiles for Who's
+  watching), Pick Together, Watch Together, Calendar and Catch Up when
+  available, then Settings.
+  Emits action = { type: switch | servers | pickTogether | watchTogether | calendar | catchUp | settings | close, key? }.
 -->
 <component name="AccountMenu" extends="Group">
   <interface>
@@ -13,6 +15,9 @@
     <field id="userImage" type="string" />
     <field id="userName" type="string" />
     <field id="watchTogether" type="boolean" value="false" />
+    <field id="pickTogether" type="boolean" value="false" />
+    <field id="calendar" type="boolean" value="false" />
+    <field id="catchUp" type="boolean" value="false" />
     <field id="action" type="assocarray" alwaysNotify="true" />
     <field id="focusIn" type="boolean" alwaysNotify="true" onChange="takeFocus" />
     <function name="refresh" />
@@ -30,7 +35,8 @@
       <Label id="initial" width="40" height="40" translation="[20,16]" horizAlign="center" vertAlign="center" color="0xE6FFEFFF" />
       <Poster id="avatar" width="40" height="40" translation="[20,16]" loadDisplayMode="scaleToZoom" />
       <Poster id="avatarMask" uri="pkg:/images/circle_mask.png" width="40" height="40" translation="[20,16]" blendColor="0x262E2AFF" />
-      <Label id="server" translation="[72,16]" height="40" vertAlign="center" color="0xF5F7F5FF" />
+      <Label id="server" translation="[72,10]" height="30" vertAlign="center" color="0xF5F7F5FF" />
+      <Label id="serverLine" translation="[72,40]" height="24" vertAlign="center" color="0xBBC5BDFF" />
       <Rectangle id="topLine" height="1" translation="[0,72]" color="0x39423CFF" />
       <MenuList id="list" translation="[16,88]" />
     </Group>

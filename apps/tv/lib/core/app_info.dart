@@ -1,2 +1,2 @@
 /// Shown in Storage & app. Keep in step with `version` in pubspec.yaml.
-const appVersion = '0.1.0';
+const appVersion = '1.5.0';

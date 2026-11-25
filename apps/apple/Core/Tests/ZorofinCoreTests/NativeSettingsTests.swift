@@ -269,6 +269,8 @@ private func alertBody(id: String = "viewer") -> String {
         let decoded = try JSONDecoder().decode(NativePreferences.self, from: JSONSerialization.data(withJSONObject: object))
         #expect(decoded.bitrate == 8_000_000 && decoded.showRatings)
         #expect(decoded.subtitleAppearance == nil && decoded.showQualityBadges != false && decoded.hideAvailableRequests != true)
+        // Chapters stay hidden until the viewer turns them on.
+        #expect(decoded.showChapters != true && NativePreferences().showChapters != true)
     }
     @Test func newPreferencesSurviveRelaunchWithoutCrossingAccountBoundaries() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -284,5 +286,40 @@ private func alertBody(id: String = "viewer") -> String {
         #expect(try await NativePreferenceStore(root: root).load(server: server, viewerID: "two") == .init())
         preferences.subtitleAppearance?.backgroundOpacity = .nan
         await #expect(throws: SettingsError.invalidInput) { try await NativePreferenceStore(root: root).save(preferences, server: server, viewerID: "one") }
+    }
+}
+
+
+@Suite("Collection browsing account boundaries") struct CollectionBrowsingTests {
+    @Test func collectionPagesAreBoundedAuthenticatedReads() async throws {
+        let transport = SettingsTransport([(200, #"{"Items":[],"TotalRecordCount":0}"#)])
+        _ = try await settingsClient(transport).collectionPage(start: -10)
+        let requests = await transport.requests
+        #expect(requests.count == 1)
+        let request = try #require(requests.first)
+        let query = Dictionary(uniqueKeysWithValues: (URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(request.httpMethod == "GET" && request.url?.path == "/base/Items")
+        #expect(query["userId"] == "viewer" && query["includeItemTypes"] == "BoxSet")
+        #expect(query["startIndex"] == "0" && query["limit"] == "48")
+        #expect(query["sortBy"] == "SortName" && query["recursive"] == "true")
+        #expect(request.value(forHTTPHeaderField: "Authorization")?.contains("fixture-token") == true)
+    }
+    @Test func onlyARealCollectionMayLoadDirectMembers() async throws {
+        let transport = SettingsTransport([(200, #"{"Id":"box","Name":"Collection","Type":"BoxSet"}"#),
+                                           (200, #"{"Items":[],"TotalRecordCount":0}"#)])
+        _ = try await settingsClient(transport).collectionPage(parentID: "box", start: 48)
+        let requests = await transport.requests
+        #expect(requests.count == 2 && requests.allSatisfy { $0.httpMethod == "GET" })
+        let query = URLComponents(url: try #require(requests.last?.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(query.contains(.init(name: "parentId", value: "box")))
+        #expect(query.contains(.init(name: "recursive", value: "false")))
+        #expect(query.contains(.init(name: "startIndex", value: "48")))
+        let invalid = SettingsTransport([(200, #"{"Id":"film","Name":"Film","Type":"Movie"}"#)])
+        do {
+            _ = try await settingsClient(invalid).collectionPage(parentID: "film")
+            Issue.record("Non-collection must not request members")
+        } catch { #expect(error as? ClientError == .invalidResponse) }
+        let invalidRequests = await invalid.requests
+        #expect(invalidRequests.count == 1)
     }
 }

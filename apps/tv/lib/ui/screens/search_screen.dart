@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/search_results.dart';
 
 import '../../core/catalog.dart';
 import '../../core/errors.dart';
@@ -42,6 +43,20 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _recommendationsFailed = false;
   List<MediaItem> _results = const [];
   String? _loadedQuery;
+  String _type = 'Movie,Series';
+  String? _loadedType;
+  int _offset = 0;
+  bool _hasMore = false;
+  void _changeType(String value) {
+    if (value == _type) return;
+    _debounce?.cancel();
+    setState(() {
+      _type = value;
+      _results = const [];
+    });
+    _search(_text);
+  }
+
   bool _searching = false;
   String? _error;
   int _request = 0;
@@ -82,9 +97,10 @@ class _SearchScreenState extends State<SearchScreen> {
     _request++;
     setState(() {
       _error = null;
-      _searching = text.isNotEmpty && text != _loadedQuery;
+      _searching =
+          text.isNotEmpty && (text != _loadedQuery || _type != _loadedType);
     });
-    if (text.isEmpty || text == _loadedQuery) return;
+    if (text.isEmpty || (text == _loadedQuery && _type == _loadedType)) return;
     _debounce = Timer(const Duration(milliseconds: 300), () => _search(text));
   }
 
@@ -93,18 +109,43 @@ class _SearchScreenState extends State<SearchScreen> {
     _changed('');
   }
 
-  Future<void> _search(String text) async {
+  Future<void> _search(String text, {bool more = false}) async {
+    if (text.isEmpty || (more && (_searching || !_hasMore))) return;
+    final type = _type;
+    final catalog = widget.catalog;
     final request = ++_request;
     setState(() {
       _searching = true;
       _error = null;
     });
     try {
-      final results = await widget.catalog.search(text);
-      if (!mounted || request != _request || text != _text) return;
+      final page = await catalog.searchPage(
+        text,
+        type: type,
+        start: more ? _offset : 0,
+      );
+      final results = page.items;
+      if (!mounted ||
+          request != _request ||
+          text != _text ||
+          type != _type ||
+          !identical(catalog, widget.catalog)) {
+        return;
+      }
       setState(() {
-        _results = results;
+        final seen = <String>{};
+        _results = [
+          ...(more ? _results : const <MediaItem>[]),
+          ...results,
+        ].where((v) => seen.add(v.id)).toList();
+        _offset = (more ? _offset : 0) + results.length;
+        _hasMore =
+            results.isNotEmpty &&
+            (page.totalRecordCount == null
+                ? results.length >= 30
+                : _offset < page.totalRecordCount!);
         _loadedQuery = text;
+        _loadedType = type;
       });
     } on ClientError catch (e) {
       if (mounted && request == _request) setState(() => _error = e.message);
@@ -166,11 +207,20 @@ class _SearchScreenState extends State<SearchScreen> {
 
   List<Widget> _resultsSection() {
     final text = _text;
-    final matching = _loadedQuery == text ? _results : const <MediaItem>[];
+    final matching = _loadedQuery == text && _loadedType == _type
+        ? _results
+        : const <MediaItem>[];
     return [
+      SearchTypeFilters(value: _type, onChanged: _changeType),
+      const SizedBox(height: 16),
       if (_searching) const _Progress('Searching…'),
       if (matching.isNotEmpty)
-        _grid(matching)
+        for (final item in matching)
+          SearchResultRow(
+            item: item,
+            catalog: widget.catalog,
+            onOpen: () => widget.onOpen(item),
+          )
       else if (!_searching && _loadedQuery == text && _error == null)
         const StatusMessage(
           title: 'No matching titles',
@@ -188,6 +238,14 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
       ],
+      if (_hasMore && _loadedQuery == text && _loadedType == _type)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ZoroButton(
+            label: _searching ? 'Loading…' : 'More results',
+            onPressed: () => _search(text, more: true),
+          ),
+        ),
       if (widget.onOpenRequests != null) ...[
         const SizedBox(height: 24),
         Align(
@@ -199,7 +257,7 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
         const SizedBox(height: 10),
         Text(
-          'Showing up to 30 library matches. Refine your search to narrow the results.',
+          'Search your library or request a title from this server.',
           style: Zoro.font(18, color: Zoro.muted),
         ),
       ],
@@ -257,7 +315,7 @@ class _Progress extends StatelessWidget {
     padding: const EdgeInsets.all(24),
     child: Column(
       children: [
-        const CircularProgressIndicator(color: Zoro.jade),
+        CircularProgressIndicator(color: Zoro.jade),
         const SizedBox(height: 12),
         Text(label, style: Zoro.font(20, color: Zoro.muted)),
       ],

@@ -21,10 +21,11 @@ public struct JellyfinClient: Sendable {
     public func requestData(_ path: [String], query: [URLQueryItem] = [], method: String = "GET",
                             body: Data? = nil, authenticated: Bool = true, accept: String = "application/json",
                             extensionToken: Bool = false, expectedStatus: Int? = nil, cachePolicy: LibraryCachePolicy? = nil, contentType: String = "application/json",
-                            sameOrigin: Bool = false) async throws -> Data {
+                            sameOrigin: Bool = false, requestTimeout: TimeInterval? = nil) async throws -> Data {
         if authenticated && session == nil { throw ClientError.missingSession }
         if authenticated && session?.server != server { throw ClientError.unsafeURL }
         var request = URLRequest(url: try server.endpoint(path, query: query))
+        if let requestTimeout { request.timeoutInterval = requestTimeout }
         request.httpMethod = method
         request.httpBody = body
         request.setValue(identity.authorization(token: authenticated ? session?.token : nil), forHTTPHeaderField: "Authorization")
@@ -68,8 +69,11 @@ public struct JellyfinClient: Sendable {
             }
             return try await fetch()
         } catch {
-            if error as? ClientError == .unauthorized {
+            if error as? ClientError == .unauthorized && !extensionToken {
                 await responseCache?.invalidateMetadata()
+            } else if error as? ClientError == .unauthorized {
+                // Refusal by an optional module must not cancel core library reads.
+                await responseCache?.remove(key, policy: cachePolicy ?? .detail)
             } else if error as? ClientError == .forbidden {
                 // A viewer may browse movies while lacking access to Live TV or
                 // an optional extension. Denying that resource must not cancel
@@ -79,6 +83,29 @@ public struct JellyfinClient: Sendable {
             }
             throw error
         }
+    }
+
+    /// An authenticated extension call whose JSON error body matters
+    /// (`{ "error": "code" }`). Only 401 throws; other statuses are returned.
+    func extensionCall(_ path: [String], query: [URLQueryItem] = [], method: String = "GET",
+                       body: Data? = nil) async throws -> (status: Int, data: Data) {
+        guard let session, session.server == server else { throw ClientError.missingSession }
+        let token = session.token
+        guard !token.isEmpty, token.unicodeScalars.allSatisfy({ $0.value >= 33 && $0.value < 127 }) else {
+            throw ClientError.missingSession
+        }
+        var request = URLRequest(url: try server.endpoint(path, query: query))
+        request.httpMethod = method
+        request.httpBody = body
+        request.timeoutInterval = 15
+        request.setValue(identity.authorization(token: token), forHTTPHeaderField: "Authorization")
+        request.setValue(token, forHTTPHeaderField: "X-Jellyfin-Token")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        let (data, response) = try await transport.send(request)
+        try Task.checkCancellation()
+        if response.statusCode == 401 { throw ClientError.unauthorized }
+        return (response.statusCode, data)
     }
 
     public func request<T: Decodable & Sendable>(_ type: T.Type, path: [String],
@@ -174,7 +201,8 @@ public struct JellyfinClient: Sendable {
         return [URLQueryItem(name: "userId", value: session.viewer.id)]
     }
     public func items(type: String? = nil, search: String? = nil, start: Int = 0,
-                      favorites: Bool = false, parentID: String? = nil) async throws -> ItemPage {
+                      favorites: Bool = false, parentID: String? = nil,
+                      options: LibraryBrowseOptions? = nil) async throws -> ItemPage {
         var query = try userQuery() + [
             URLQueryItem(name: "recursive", value: "true"),
             URLQueryItem(name: "limit", value: "30"),
@@ -183,13 +211,42 @@ public struct JellyfinClient: Sendable {
             URLQueryItem(name: "enableImageTypes", value: "Primary,Backdrop,Logo"),
             URLQueryItem(name: "imageTypeLimit", value: "1"),
             URLQueryItem(name: "includeItemTypes", value: type ?? "Movie,Series"),
-            URLQueryItem(name: "sortBy", value: search == nil ? "DateCreated,SortName" : "SortName"),
-            URLQueryItem(name: "sortOrder", value: search == nil ? "Descending" : "Ascending")
+            URLQueryItem(name: "sortBy", value: options?.sort.field ?? (search == nil ? "DateCreated,SortName" : "SortName")),
+            URLQueryItem(name: "sortOrder", value: options?.sort.order ?? (search == nil ? "Descending" : "Ascending"))
         ]
         if let search { query.append(URLQueryItem(name: "searchTerm", value: String(search.prefix(256)))) }
-        if favorites { query.append(URLQueryItem(name: "filters", value: "IsFavorite")) }
+        let filters = (favorites ? ["IsFavorite"] : []) + (options?.unwatched == true ? ["IsUnplayed"] : [])
+        if !filters.isEmpty { query.append(.init(name: "filters", value: filters.joined(separator: ","))) }
+        if let genre = options?.genre, !genre.isEmpty { query.append(.init(name: "genres", value: genre)) }
         if let parentID { query.append(URLQueryItem(name: "parentId", value: parentID)) }
         return try await request(ItemPage.self, path: ["Items"], query: query, cachePolicy: .library)
+    }
+    /// Viewer-scoped collection cards or direct members; no companion required.
+    public func collectionPage(parentID: String? = nil, start: Int = 0) async throws -> ItemPage {
+        if let parentID {
+            guard try await item(parentID).type == "BoxSet" else { throw ClientError.invalidResponse }
+        }
+        var query = try userQuery() + [
+            URLQueryItem(name: "includeItemTypes", value: parentID == nil ? "BoxSet" : "Movie,Series,BoxSet"),
+            URLQueryItem(name: "recursive", value: parentID == nil ? "true" : "false"),
+            URLQueryItem(name: "startIndex", value: String(max(0, min(start, 1_000_000)))),
+            URLQueryItem(name: "limit", value: "48"),
+            URLQueryItem(name: "sortBy", value: "SortName"),
+            URLQueryItem(name: "sortOrder", value: "Ascending"),
+            URLQueryItem(name: "enableTotalRecordCount", value: "true"),
+            URLQueryItem(name: "fields", value: "Overview,Genres,MediaStreams"),
+            URLQueryItem(name: "enableUserData", value: "true"),
+            URLQueryItem(name: "excludeLocationTypes", value: "Virtual"),
+            URLQueryItem(name: "isPlaceHolder", value: "false")
+        ]
+        if let parentID { query.append(URLQueryItem(name: "parentId", value: parentID)) }
+        return try await request(ItemPage.self, path: ["Items"], query: query, cachePolicy: .library)
+    }
+
+    public func libraryGenres(type: String) async throws -> [String] {
+        let page = try await request(ItemPage.self, path: ["Genres"], query: userQuery() + [
+            .init(name: "includeItemTypes", value: type), .init(name: "recursive", value: "true")], cachePolicy: .library)
+        return Array(Set(page.items.map(\.name))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
     public func resume() async throws -> ItemPage {
         try await request(ItemPage.self, path: ["UserItems", "Resume"], query: userQuery() + [
@@ -247,6 +304,20 @@ public struct JellyfinClient: Sendable {
         try Task.checkCancellation()
         guard response.statusCode == 200 else { throw ClientError.unavailable(response.statusCode) }
         return data
+    }
+    public func homeCrestData(path: String) async throws -> Data {
+        guard HomeRowCard.validCrest(path), session?.server == server else { throw ClientError.unsafeURL }
+        let url = try server.endpoint(path.split(separator: "/").map(String.init))
+        let fetch: @Sendable () async throws -> Data = {
+            var request = URLRequest(url: url)
+            request.httpShouldHandleCookies = false
+            request.timeoutInterval = 8
+            let (data, response) = try await self.transport.send(request)
+            guard response.statusCode == 200 else { throw ClientError.unavailable(response.statusCode) }
+            return data
+        }
+        if let responseCache { return try await responseCache.value(url.absoluteString, policy: .homeCrest, fetch: fetch) }
+        return try await fetch()
     }
     public func image(itemID: String, kind: String = "Primary", tag: String? = nil, width: Int) async throws -> Data {
         var query = [URLQueryItem(name: "maxWidth", value: String(min(1920, max(80, width)))),

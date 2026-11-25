@@ -1,4 +1,5 @@
 sub init()
+    m.top.findNode("statusIcon").blendColor = ZAccent()
     m.page = m.top.findNode("page")
     m.page.id = "page"
     m.statusGroup = m.top.findNode("statusGroup")
@@ -12,13 +13,31 @@ sub init()
     m.hero = invalid
     m.lastLoad = 0
     m.content = invalid
+    m.rows = []
+    m.liveRow = invalid
+    m.liveShelf = invalid
+    m.hasLiveTv = false
+    m.liveTask = invalid
+    m.liveLoaded = 0
+    m.scoresUntil = 0
+    m.liveFeatures = {}
+    m.liveArt = invalid
+    m.liveArtAt = 0
+    ' Live now refreshes every minute while Home is on screen (scores move).
+    m.liveTimer = CreateObject("roSGNode", "Timer")
+    m.liveTimer.duration = 60
+    m.liveTimer.repeat = true
+    m.liveTimer.observeField("fire", "onLiveTimer")
+    initPreview()
     load()
 end sub
 
 sub load()
     if m.content = invalid then showStatus("film", "Loading your library…", "", false)
     task = CreateObject("roSGNode", "JellyfinTask")
-    task.request = { cmd: "home" }
+    m.task = task
+    task.request = { cmd: "home", cold: m.content = invalid }
+    task.observeField("cachedHome", "onCachedHome")
     task.observeField("response", "onHome")
     task.control = "RUN"
     m.task = task
@@ -34,10 +53,30 @@ sub showStatus(icon as string, title as string, detail as string, retry as boole
     m.statusGroup.visible = true
 end sub
 
+sub onCachedHome(event as object)
+    if m.content <> invalid or not m.task.isSameNode(event.getRoSGNode()) then return
+    content = event.getData()
+    if content = invalid then return
+    m.content = content
+    m.rows = content.getChildren(-1, 0)
+    m.statusGroup.visible = false
+    hadFocus = m.top.isInFocusChain()
+    build()
+    if hadFocus then restoreFocus()
+end sub
+
 sub onHome(event as object)
+    if not m.task.isSameNode(event.getRoSGNode()) then return
     r = event.getData()
     content = m.task.content
     if not r.ok then
+        if r.status = 401 or r.status = 403 then
+            m.content = invalid
+            m.rows = []
+            m.banner = invalid
+            m.liveRow = invalid
+            build()
+        end if
         if r.error = "unauthorized" then
             m.top.sessionExpired = true
             return
@@ -63,9 +102,87 @@ sub onHome(event as object)
     hadFocus = m.top.isInFocusChain()
     keep = focusKey()
     m.content = content
+    ' Snapshot first: a Shelf adopts its row, which removes it from content,
+    ' so a later rebuild (Live now appearing) reuses this list.
+    m.rows = []
+    for i = 0 to content.getChildCount() - 1
+        m.rows.push(content.getChild(i))
+    end for
     build()
     if hadFocus then restoreFocus(keep)
     m.top.loaded = { views: r.views, features: r.features }
+    m.hasLiveTv = false
+    if r.views <> invalid then
+        for each v in r.views
+            if v.collectionType = "livetv" then m.hasLiveTv = true
+        end for
+    end if
+    m.liveFeatures = r.features
+    if m.hasLiveTv then
+        loadLive()
+        m.liveTimer.control = "start"
+    else
+        m.liveTimer.control = "stop"
+        if m.liveShelf <> invalid then
+            m.liveRow = invalid
+            rebuild()
+        end if
+    end if
+end sub
+
+' MARK: Live now
+
+sub loadLive()
+    if m.liveTask <> invalid then return
+    task = CreateObject("roSGNode", "JellyfinTask")
+    ' No companion (404) or the sports module off (403): guide-only for ten minutes.
+    req = { cmd: "liveNow", sports: ZNum(m.liveFeatures.sportsEvents, 0) = 1, scores: ZNowSeconds() >= m.scoresUntil }
+    ' The artwork catalogue is reused for five minutes.
+    if m.liveArt <> invalid and ZNowSeconds() - m.liveArtAt < 300 then req.art = m.liveArt
+    task.request = req
+    task.observeField("response", "onLive")
+    task.control = "RUN"
+    m.liveTask = task
+    m.liveLoaded = ZNowSeconds()
+end sub
+
+sub onLiveTimer()
+    ' Only while Home is attached and visible (screens detach when covered).
+    if m.top.getParent() = invalid or not m.top.visible then return
+    loadLive()
+end sub
+
+sub onLive(event as object)
+    r = event.getData()
+    row = m.liveTask.content
+    m.liveTask = invalid
+    if r = invalid or not r.ok then return
+    if r.scoresStatus = 404 or r.scoresStatus = 403 then m.scoresUntil = ZNowSeconds() + 600
+    if ZIsMap(r.art) and (m.liveArt = invalid or ZNowSeconds() - m.liveArtAt >= 300) then
+        m.liveArt = r.art
+        m.liveArtAt = ZNowSeconds()
+    end if
+    if row = invalid or row.getChildCount() = 0 then row = invalid
+    if row <> invalid and m.liveShelf <> invalid then
+        ' Same shelf: swap its cards in place and keep the viewer's card.
+        index = m.liveShelf.focusIndex
+        m.liveShelf.content = row
+        m.liveRow = row
+        if index > 0 then m.liveShelf.jumpTo = ZMin(index, row.getChildCount() - 1)
+        return
+    end if
+    if row = invalid and m.liveShelf = invalid then return
+    m.liveRow = row
+    rebuild()
+end sub
+
+' Re-lays the page when the Live now row appears or goes away.
+sub rebuild()
+    if m.content = invalid and m.banner = invalid then return
+    hadFocus = m.top.isInFocusChain()
+    keep = focusKey()
+    build()
+    if hadFocus then restoreFocus(keep)
 end sub
 
 ' Which shelf and card had focus, so a refresh keeps the viewer's place.
@@ -91,21 +208,21 @@ sub build()
     else
         m.hero = invalid
     end if
-    ' Snapshot first: a Shelf adopts its row, which removes it from m.content.
-    rows = []
-    for i = 0 to m.content.getChildCount() - 1
-        rows.push(m.content.getChild(i))
-    end for
-    for each row in rows
+    m.liveShelf = invalid
+    for each row in ZHomeDisplayRows(m.rows, m.liveRow)
         if row <> invalid and row.getChildCount() > 0 then
             shelf = CreateObject("roSGNode", "Shelf")
             shelf.landscape = row.hasField("landscape") and row.landscape = true
+            if m.liveRow <> invalid and row.isSameNode(m.liveRow) then
+                shelf.itemComponent = "LiveEventCard"
+                m.liveShelf = shelf
+            end if
             shelf.title = row.title
-            rowId = row.id
             shelf.content = row
             shelf.observeField("itemSelected", "onItemSelected")
+            if not shelf.landscape then shelf.observeField("itemFocused", "onCardFocused")
             m.page.appendChild(shelf)
-            sections.push({ id: rowId, node: shelf, focus: shelf, height: shelf.height })
+            sections.push({ id: row.id, node: shelf, focus: shelf, height: shelf.height })
         end if
     end for
     ZPageSet(sections)
@@ -173,6 +290,7 @@ sub onFavorite(event as object)
 end sub
 
 sub onItemSelected(event as object)
+    stopPreview()
     item = event.getData()
     if item = invalid then return
     ' Every card opens details, Continue Watching included, so Resume is an
@@ -190,9 +308,11 @@ end function
 
 function onKeyEvent(key as string, press as boolean) as boolean
     if not press then return false
+    if key = "down" or key = "up" or key = "back" then stopPreview()
     if key = "down" then return ZPageMove(1)
     if key = "up" then return ZPageMove(-1)
     if key = "play" then
+        stopPreview()
         item = focusedCard()
         if item <> invalid and item.itemType <> "Series" and item.itemType <> "Season" and not item.isFolder then
             m.top.navigate = { to: "player", id: item.id, startTicks: item.positionTicks, live: item.itemType = "TvChannel" }
@@ -201,3 +321,114 @@ function onKeyEvent(key as string, press as boolean) as boolean
     end if
     return false
 end function
+
+' MARK: Trailer previews (Apple TV Home, adapted to Roku)
+'
+' Rest on a movie or show poster for two seconds and its local trailer plays
+' muted in a window just above that row (a Roku RowList can't widen one card).
+' Moving, selecting or leaving Home stops it; it returns to the artwork after
+' 30 seconds. Direct play only, never reported as playback.
+
+sub initPreview()
+    m.previewTimer = CreateObject("roSGNode", "Timer")
+    m.previewTimer.duration = 2
+    m.previewTimer.repeat = false
+    m.previewTimer.observeField("fire", "onPreviewDwell")
+    frame = CreateObject("roSGNode", "Rectangle")
+    frame.width = 652
+    frame.height = 372
+    frame.color = ZTheme().panel
+    frame.visible = false
+    video = CreateObject("roSGNode", "Video")
+    video.width = 640
+    video.height = 360
+    video.translation = [6, 6]
+    video.enableUI = false
+    video.mute = true
+    video.observeField("state", "onPreviewState")
+    video.observeField("position", "onPreviewPosition")
+    frame.appendChild(video)
+    m.top.appendChild(frame)
+    m.previewFrame = frame
+    m.preview = video
+    m.previewItem = invalid
+    m.previewShelf = invalid
+    m.previewTask = invalid
+    m.top.observeField("visible", "onHomeVisible")
+end sub
+
+sub onHomeVisible()
+    if not m.top.visible then stopPreview()
+end sub
+
+sub stopPreview()
+    if m.previewTimer = invalid then return
+    m.previewTimer.control = "stop"
+    m.previewTask = invalid
+    if m.previewFrame.visible or m.preview.state = "playing" or m.preview.state = "buffering" then
+        m.preview.control = "stop"
+        m.preview.content = invalid
+        m.previewFrame.visible = false
+    end if
+    m.previewItem = invalid
+end sub
+
+sub onCardFocused(event as object)
+    item = event.getData()
+    shelf = event.getRoSGNode()
+    stopPreview()
+    if item = invalid or not shelf.isInFocusChain() then return
+    if item.itemType <> "Movie" and item.itemType <> "Series" then return
+    if m.global.settings <> invalid and m.global.settings.autoplayPreviews = false then return
+    m.previewItem = item
+    m.previewShelf = shelf
+    m.previewTimer.control = "start"
+end sub
+
+sub onPreviewDwell()
+    item = m.previewItem
+    if item = invalid or m.previewShelf = invalid or not m.previewShelf.isInFocusChain() then return
+    task = CreateObject("roSGNode", "JellyfinTask")
+    task.request = { cmd: "trailer", id: item.id }
+    task.observeField("response", "onTrailer")
+    task.control = "RUN"
+    m.previewTask = task
+end sub
+
+sub onTrailer(event as object)
+    r = event.getData()
+    item = m.previewItem
+    if m.previewTask = invalid or item = invalid or r = invalid or ZStr(r.id) <> item.id or ZStr(r.url) = "" then return
+    m.previewTask = invalid
+    shelf = m.previewShelf
+    if shelf = invalid or not shelf.isInFocusChain() then return
+    ' Just above the focused row's cards, on the right; below it when the
+    ' row is near the top of the screen.
+    y = m.page.translation[1] + shelf.translation[1] - 384
+    if y < 140 then y = m.page.translation[1] + shelf.translation[1] + shelf.height + 8
+    if y + 372 > 1070 then y = 1070 - 372
+    m.previewFrame.translation = [1920 - 96 - 652, y]
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = r.url
+    content.streamFormat = "mp4"
+    if r.caption <> invalid then content.subtitleTracks = [r.caption]
+    m.preview.content = content
+    if r.caption <> invalid then
+        m.preview.subtitleTrack = r.caption.TrackName
+    end if
+    m.preview.mute = true
+    m.preview.control = "play"
+end sub
+
+sub onPreviewState()
+    state = m.preview.state
+    if state = "playing" then
+        if m.previewItem <> invalid then m.previewFrame.visible = true
+    else if state = "error" or state = "finished" then
+        stopPreview()
+    end if
+end sub
+
+sub onPreviewPosition()
+    if m.preview.position >= 30 then stopPreview()
+end sub

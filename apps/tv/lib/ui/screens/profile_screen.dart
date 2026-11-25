@@ -3,33 +3,46 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
+import '../../extras_state.dart';
 import '../../core/catalog.dart';
+import '../../core/public_info.dart';
+import '../../core/tv_platform.dart';
+import '../../core/errors.dart';
 import '../theme.dart';
 import '../widgets/focusable.dart';
 import 'accounts_screen.dart';
+import 'public_info_screen.dart';
 import 'settings_screen.dart';
 import 'shell.dart';
 
-/// Profile (Apple `ProfileView` TV layout): avatar, viewer and server, the
-/// account and settings rows, administration for administrators, utilities,
-/// then Sign Out.
+/// TV Settings (Apple `ProfileView` TV layout, docs/design/TV_PROFILE_MENU.md):
+/// avatar, viewer and server, then Account, Home & display, Playback,
+/// Subtitles, Notifications, Help & about, Manage server for administrators,
+/// and Sign Out. Switching profiles, Pick Together, Watch Together, Calendar
+/// and Catch Up live in the avatar menu instead.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.state,
     required this.catalog,
-    this.moduleRows = const [],
-    this.utilityRows = const [],
+    this.onTeams,
+    this.onNotifications,
+    this.onSupport,
     this.accountApprovals = false,
   });
 
   final AppState state;
   final Catalog catalog;
 
-  /// Rows from Zorofin server modules, after Display (Your teams, Watch
-  /// together) and in the utility group (Support, Notifications).
-  final List<ProfileRowData> moduleRows;
-  final List<ProfileRowData> utilityRows;
+  /// Your teams, on Home & display.
+  final VoidCallback? onTeams;
+
+  /// Notifications with the server's alert settings; null opens the page
+  /// without them.
+  final VoidCallback? onNotifications;
+
+  /// Message the server owner, on Help & about, when the server offers it.
+  final VoidCallback? onSupport;
 
   /// The server's account approvals page, offered to administrators.
   final bool accountApprovals;
@@ -57,11 +70,19 @@ class ProfileRowData {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _administrator = false;
+  bool _hasStore = false;
+  bool _openingStore = false;
+  bool _settingRecommendations = false;
 
   @override
   void initState() {
     super.initState();
     unawaited(_checkAdministrator());
+    unawaited(
+      TvPlatform.store().then((store) {
+        if (mounted) setState(() => _hasStore = store != null);
+      }),
+    );
   }
 
   /// Administration stays hidden without fresh permission evidence.
@@ -77,48 +98,205 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (_) {}
   }
 
-  void _push(Widget page) =>
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  Future<void> _toggleRecommendations() async {
+    if (_settingRecommendations) return;
+    final recommendations = widget.state.recommendations;
+    final enabling = !recommendations.enabled;
+    if (!enabling) {
+      final off = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Turn off Fire TV recommendations?'),
+          content: const SizedBox(
+            width: 640,
+            child: Text(
+              'Titles from this account will be removed from the Fire TV home screen.',
+            ),
+          ),
+          actions: [
+            ZoroButton(
+              label: 'Keep on',
+              autofocus: true,
+              onPressed: () => Navigator.pop(context, false),
+            ),
+            ZoroButton(
+              label: 'Turn off',
+              onPressed: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      );
+      if (off != true || !mounted) return;
+    }
+    if (enabling) {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Show recommendations on Fire TV?'),
+          content: const SizedBox(
+            width: 640,
+            child: Text(
+              'Titles and artwork from this account will be visible on the Fire TV home screen. Anyone using this TV may see them.',
+            ),
+          ),
+          actions: [
+            ZoroButton(
+              label: 'Cancel',
+              autofocus: true,
+              onPressed: () => Navigator.pop(context, false),
+            ),
+            ZoroButton(
+              label: 'Enable',
+              onPressed: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted) return;
+    }
+    setState(() => _settingRecommendations = true);
+    final success = await recommendations.setEnabled(enabling);
+    if (!mounted) return;
+    setState(() => _settingRecommendations = false);
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Recommendations are unavailable. Check the TV notification permissions and try again.',
+          ),
+        ),
+      );
+    }
+  }
 
-  void _settings(SettingsPage page) => _push(
-    SettingsScreen(
-      page: page,
-      preferences: widget.state.preferences,
-      catalog: widget.catalog,
-    ),
-  );
+  Future<void> _rate() async {
+    if (_openingStore) return;
+    _openingStore = true;
+    final opened = await TvPlatform.openRating();
+    _openingStore = false;
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the store. Try again later.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await widget.state.signOut();
+    } on ClientError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  /// Pushed pages leave the shell's subtree, so the scope goes with them.
+  void _push(Widget page) {
+    final extras = ExtrasScope.maybeOf(context);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            extras == null ? page : ExtrasScope(extras: extras, child: page),
+      ),
+    );
+  }
+
+  void _settings(SettingsPage page, [List<SettingsLink> links = const []]) =>
+      _push(
+        SettingsScreen(
+          page: page,
+          preferences: widget.state.preferences,
+          catalog: widget.catalog,
+          grouped: true,
+          links: links,
+        ),
+      );
+
+  List<SettingsLink> _links(SettingsPage page) => switch (page) {
+    SettingsPage.account => [
+      SettingsLink(
+        'Quick Connect',
+        () => _push(QuickConnectScreen(state: widget.state)),
+        icon: Icons.phonelink_ring_rounded,
+        subtitle: 'Sign in another device',
+      ),
+    ],
+    SettingsPage.display => [
+      // Fire TV only: lives under Home & display so the main Settings list
+      // keeps the shared order (checklist H3).
+      if (widget.state.recommendations.canEnable)
+        SettingsLink(
+          'Fire TV home-screen recommendations',
+          _toggleRecommendations,
+          icon: Icons.tv_rounded,
+          subtitle: widget.state.recommendations.enabled
+              ? 'On · titles from this account show on the Fire TV home'
+              : 'Off · keep this account off the Fire TV home',
+        ),
+      if (widget.onTeams != null)
+        SettingsLink(
+          'Your teams',
+          widget.onTeams!,
+          icon: Icons.sports_basketball_rounded,
+        ),
+    ],
+    SettingsPage.help => [
+      if (widget.onSupport != null)
+        SettingsLink(
+          'Message your server owner',
+          widget.onSupport!,
+          icon: Icons.support_agent_rounded,
+        ),
+      SettingsLink(
+        'App Support',
+        () => _push(const PublicInfoScreen(page: PublicDocument.support)),
+        icon: Icons.help_outline_rounded,
+      ),
+      SettingsLink(
+        'Privacy Policy',
+        () => _push(const PublicInfoScreen(page: PublicDocument.privacy)),
+        icon: Icons.back_hand_outlined,
+      ),
+      if (_hasStore)
+        SettingsLink('Rate Zorofin', _rate, icon: Icons.star_outline_rounded),
+    ],
+    _ => const [],
+  };
+
+  static const _subtitles = {
+    SettingsPage.account: 'Photo, password, Quick Connect',
+    SettingsPage.display: 'Posters, previews, your teams',
+    SettingsPage.playback: 'Quality, audio, skipping, chapters',
+    SettingsPage.subtitles: 'Language and look',
+    SettingsPage.notifications: 'Email and push alerts',
+    SettingsPage.help: 'Support, privacy, storage, version',
+  };
 
   @override
   Widget build(BuildContext context) {
     final catalog = widget.catalog;
     final rows = <ProfileRowData>[
-      ProfileRowData(
-        'Change account',
-        Icons.people_alt_rounded,
-        () => _push(AccountsScreen(state: widget.state)),
-      ),
-      ProfileRowData(
-        SettingsPage.account.title,
-        SettingsPage.account.icon,
-        () => _settings(SettingsPage.account),
-      ),
-      ProfileRowData(
-        'Quick Connect',
-        Icons.phonelink_ring_rounded,
-        () => _push(QuickConnectScreen(state: widget.state)),
-      ),
-      // Watch together sits after Quick Connect, as on Apple.
-      ...widget.moduleRows.where((r) => r.after == SettingsPage.account),
       for (final page in [
+        SettingsPage.account,
         SettingsPage.display,
         SettingsPage.playback,
         SettingsPage.subtitles,
-        SettingsPage.controls,
-        SettingsPage.storage,
-      ]) ...[
-        ProfileRowData(page.title, page.icon, () => _settings(page)),
-        ...widget.moduleRows.where((r) => r.after == page),
-      ],
+        SettingsPage.notifications,
+        SettingsPage.help,
+      ])
+        ProfileRowData(
+          page.tvTitle,
+          page.icon,
+          page == SettingsPage.notifications && widget.onNotifications != null
+              ? widget.onNotifications!
+              : () => _settings(page, _links(page)),
+          subtitle: _subtitles[page],
+        ),
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(Zoro.gutter, 24, Zoro.gutter, 40),
@@ -168,55 +346,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   _ProfileRow(
                     data: ProfileRowData(
-                      'Dashboard',
+                      'Manage server',
                       Icons.speed_rounded,
                       () => _push(
-                        WebHandoffScreen(
-                          title: 'Dashboard',
-                          path: 'dashboard',
+                        _ManageServerScreen(
                           state: widget.state,
+                          accountApprovals: widget.accountApprovals,
+                          push: _push,
                         ),
                       ),
-                    ),
-                  ),
-                  _ProfileRow(
-                    data: ProfileRowData(
-                      'Metadata Manager',
-                      Icons.edit_note_rounded,
-                      () => _push(
-                        WebHandoffScreen(
-                          title: 'Metadata Manager',
-                          path: 'metadata',
-                          state: widget.state,
-                        ),
-                      ),
+                      subtitle: widget.accountApprovals
+                          ? 'Dashboard, metadata, approvals'
+                          : 'Dashboard, metadata',
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
-                if (_administrator && widget.accountApprovals)
-                  _ProfileRow(
-                    utility: true,
-                    data: ProfileRowData(
-                      'Account approvals',
-                      Icons.how_to_reg_rounded,
-                      () => _push(
-                        WebHandoffScreen(
-                          title: 'Account approvals',
-                          path: 'mypreferencesmenu',
-                          state: widget.state,
-                        ),
-                      ),
-                    ),
-                  ),
-                for (final row in widget.utilityRows)
-                  _ProfileRow(data: row, utility: true),
                 const SizedBox(height: 16),
                 ZoroButton(
                   label: catalog.isPreview ? 'Leave preview' : 'Sign Out',
                   icon: Icons.logout_rounded,
                   expand: true,
-                  onPressed: widget.state.signOut,
+                  onPressed: _signOut,
                 ),
               ],
             ),
@@ -227,16 +377,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-class _ProfileRow extends StatelessWidget {
-  const _ProfileRow({
-    required this.data,
-    this.autofocus = false,
-    this.utility = false,
+/// Manage server: the server's own pages, opened on another device.
+class _ManageServerScreen extends StatelessWidget {
+  const _ManageServerScreen({
+    required this.state,
+    required this.accountApprovals,
+    required this.push,
   });
+
+  final AppState state;
+  final bool accountApprovals;
+  final void Function(Widget page) push;
+
+  @override
+  Widget build(BuildContext context) => SettingsScaffold(
+    title: 'Manage server',
+    actions: const [],
+    children: [
+      for (final (title, path, icon) in [
+        ('Dashboard', 'dashboard', Icons.speed_rounded),
+        ('Metadata Manager', 'metadata', Icons.edit_note_rounded),
+        if (accountApprovals)
+          ('Account approvals', 'mypreferencesmenu', Icons.how_to_reg_rounded),
+      ])
+        SettingsAction(
+          title: title,
+          icon: icon,
+          onPressed: () =>
+              push(WebHandoffScreen(title: title, path: path, state: state)),
+        ),
+    ],
+  );
+}
+
+class _ProfileRow extends StatelessWidget {
+  const _ProfileRow({required this.data, this.autofocus = false});
 
   final ProfileRowData data;
   final bool autofocus;
-  final bool utility;
 
   @override
   Widget build(BuildContext context) {
@@ -251,7 +429,7 @@ class _ProfileRow extends StatelessWidget {
           constraints: const BoxConstraints(minHeight: 66),
           padding: const EdgeInsets.symmetric(horizontal: 24),
           decoration: BoxDecoration(
-            color: utility ? Zoro.panel.withValues(alpha: 0.6) : Zoro.panel,
+            color: Zoro.panel,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: focused ? Zoro.jade : Zoro.border,

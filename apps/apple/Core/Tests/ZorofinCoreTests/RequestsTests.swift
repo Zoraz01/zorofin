@@ -195,3 +195,15 @@ private let showJSON = #"{"id":20,"name":"Fixture show","mediaType":"tv","season
         #expect(queue.label(for: item) == "Adding to library")
     }
 }
+
+extension RequestsTests {
+    @Test func downloadingShowsZeroOrUnknownProgressWithoutInventingApproval() throws {
+        let queue = try JSONDecoder().decode(RequestQueue.self, from: Data(#"{"items":[{"tmdbId":10,"source":"Sonarr","progress":0,"status":"downloading"},{"tmdbId":11,"source":"Radarr","status":"downloading"}]}"#.utf8))
+        let approved = try JSONDecoder().decode(RequestActivityItem.self, from: Data(#"{"id":1,"type":"tv","tmdbId":10,"requestStatus":2,"mediaStatus":"Processing"}"#.utf8))
+        let pending = try JSONDecoder().decode(RequestActivityItem.self, from: Data(#"{"id":2,"type":"tv","tmdbId":10,"requestStatus":1,"mediaStatus":"Pending"}"#.utf8))
+        #expect(queue.download(for: approved)?.label == "Downloading · 0%")
+        #expect(queue.items[1].label == "Downloading")
+        #expect(queue.download(for: pending) == nil)
+        #expect(pending.statusLabel == "Pending approval")
+    }
+}

@@ -234,6 +234,16 @@ public extension MediaItem {
 }
 
 public extension JellyfinClient {
+    /// Never trust the policy in a persisted login or the library cache. Unknown
+    /// permission is denied; a response for another viewer cannot authorize work.
+    func contentDownloadPermission() async throws -> Bool {
+        guard let session else { throw ClientError.missingSession }
+        let viewer = try await currentViewer()
+        try Task.checkCancellation()
+        guard viewer.id == session.viewer.id else { throw ClientError.invalidResponse }
+        return viewer.policy?.enableContentDownloading == true
+    }
+
     /// Saves offline progress on the server once the device is back online.
     func syncOfflineProgress(itemID: String, positionTicks: Int64, played: Bool) async throws {
         guard let session else { throw ClientError.missingSession }

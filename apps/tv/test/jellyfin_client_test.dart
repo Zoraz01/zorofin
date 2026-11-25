@@ -32,7 +32,7 @@ void main() {
   test('authorization header strips quotes and control characters', () {
     expect(
       identity.authorization('tok'),
-      'MediaBrowser Client="Zorofin", Device="Test TV", DeviceId="dev-1", Version="0.1.0", Token="tok"',
+      'MediaBrowser Client="Zorofin", Device="Test TV", DeviceId="dev-1", Version="1.5.0", Token="tok"',
     );
   });
 
@@ -133,12 +133,216 @@ void main() {
     ]);
   });
 
+  test(
+    'catalog fallback includes the next season when Resume is unavailable',
+    () async {
+      final c = client((request) async {
+        if (request.url.path.endsWith('/Resume')) return http.Response('', 503);
+        return http.Response(
+          jsonEncode({
+            'Items': request.url.path.endsWith('/NextUp')
+                ? [
+                    {
+                      'Id': 'premiere',
+                      'Name': 'Premiere',
+                      'Type': 'Episode',
+                      'SeriesId': 'show',
+                      'ParentIndexNumber': 4,
+                      'IndexNumber': 1,
+                    },
+                  ]
+                : [],
+          }),
+          200,
+        );
+      }, signedIn: session);
+      final rows = await JellyfinCatalog(c).home();
+      expect(rows, hasLength(1));
+      expect(rows.single.title, 'Continue Watching');
+      expect(rows.single.items.single.id, 'premiere');
+      expect(rows.single.items.single.resumeTicks, 0);
+    },
+  );
+
+  for (final status in [401, 403]) {
+    test('catalog does not hide a Next Up session failure ($status)', () async {
+      final c = client(
+        (request) async => request.url.path.endsWith('/NextUp')
+            ? http.Response('', status)
+            : http.Response(
+                jsonEncode({
+                  'Items': [
+                    {'Id': 'movie', 'Name': 'Movie', 'Type': 'Movie'},
+                  ],
+                }),
+                200,
+              ),
+        signedIn: session,
+      );
+      await expectLater(
+        JellyfinCatalog(c).home(),
+        throwsA(
+          ClientError(
+            status == 401
+                ? ClientErrorKind.unauthorized
+                : ClientErrorKind.forbidden,
+          ),
+        ),
+      );
+    });
+  }
+
   test('home surfaces an expired session', () async {
     final c = client((_) async => http.Response('', 401), signedIn: session);
     await expectLater(
       JellyfinCatalog(c).home(),
       throwsA(const ClientError(ClientErrorKind.unauthorized)),
     );
+  });
+
+  test('remux negotiation keeps selected source and authenticated HLS', () async {
+    final requests = <http.Request>[];
+    final c = client((request) async {
+      requests.add(request);
+      return http.Response(
+        jsonEncode({
+          'PlaySessionId': 'play',
+          'MediaSources': [
+            {
+              'Id': 'chosen-source',
+              'Container': 'mkv',
+              'SupportsDirectPlay': false,
+              'SupportsDirectStream': false,
+              'SupportsTranscoding': true,
+              'TranscodingSubProtocol': 'hls',
+              'TranscodingUrl':
+                  '/jf/Videos/movie/master.m3u8?api_key=old&TranscodeReasons=ContainerNotSupported',
+            },
+          ],
+        }),
+        200,
+      );
+    }, signedIn: session);
+    final plan = await c.preparePlayback(
+      MediaItem(
+        id: 'movie',
+        name: 'Fixture',
+        type: 'Movie',
+        mediaSources: [MediaSource(id: 'chosen-source')],
+      ),
+      PlaybackOptions(bitrate: 8000000),
+    );
+    expect(requests, hasLength(1));
+    final request = requests.single;
+    expect(request.method, 'POST');
+    expect(request.url.path, '/jf/Items/movie/PlaybackInfo');
+    expect(request.headers['Authorization'], contains('Token="tok"'));
+    expect(request.url.queryParameters, isNot(contains('ApiKey')));
+    final body = jsonDecode(request.body) as Map;
+    expect(body['MediaSourceId'], 'chosen-source');
+    expect(body['EnableDirectStream'], true);
+    expect(body['EnableDirectPlay'], true);
+    expect(body['AllowVideoStreamCopy'], true);
+    expect(body['MaxStreamingBitrate'], 8000000);
+    final conversions = body['DeviceProfile']['TranscodingProfiles'] as List;
+    expect(conversions, isNotEmpty);
+    expect(conversions.every((p) => p['Protocol'] == 'hls'), true);
+    // The response's DirectStream=false must not block its valid HLS plan.
+    expect(plan.sourceId, 'chosen-source');
+    expect(plan.method, 'Transcode');
+    expect(plan.url.path, '/jf/Videos/movie/master.m3u8');
+    expect(plan.url.host, 'example.com');
+    expect(plan.url.queryParameters['ApiKey'], 'tok');
+    expect(plan.url.queryParameters.containsKey('api_key'), false);
+  });
+
+  test(
+    'stopping a transcoded stream ends its encode, direct play does not',
+    () async {
+      final requests = <http.Request>[];
+      final c = client((request) async {
+        requests.add(request);
+        return http.Response('', 204);
+      }, signedIn: session);
+      PlaybackPlan plan(MediaSource source) => PlaybackPlan.make(
+        PlaybackInfo(playSessionId: 'ps', mediaSources: [source]),
+        itemId: 'item1',
+        client: c,
+        options: PlaybackOptions(),
+      );
+      await c.stopEncoding(
+        plan(
+          MediaSource(
+            id: 'src',
+            supportsTranscoding: true,
+            transcodingUrl: '/jf/videos/item1/master.m3u8?x=1',
+            transcodingSubProtocol: 'hls',
+          ),
+        ),
+      );
+      expect(requests, hasLength(1));
+      expect(requests.single.method, 'DELETE');
+      expect(requests.single.url.path, endsWith('/Videos/ActiveEncodings'));
+      expect(requests.single.url.queryParameters['playSessionId'], 'ps');
+      expect(requests.single.url.queryParameters['deviceId'], isNotEmpty);
+      requests.clear();
+      await c.stopEncoding(
+        plan(MediaSource(id: 'src', supportsDirectPlay: true)),
+      );
+      expect(requests, isEmpty);
+    },
+  );
+
+  group('download permission', () {
+    Future<bool> ask(String body, {int status = 200}) => client(
+      (_) async => http.Response(body, status),
+      signedIn: session,
+    ).contentDownloadPermission();
+    final me = session.viewer.id;
+
+    test('only an explicit allow for this viewer grants downloads', () async {
+      expect(
+        await ask(
+          jsonEncode({
+            'Id': me,
+            'Policy': {'EnableContentDownloading': true},
+          }),
+        ),
+        isTrue,
+      );
+      for (final policy in [
+        {'EnableContentDownloading': false},
+        <String, Object?>{},
+        {'IsAdministrator': true},
+        {'EnableContentDownloading': null},
+        null,
+      ]) {
+        expect(
+          await ask(jsonEncode({'Id': me, 'Policy': ?policy})),
+          isFalse,
+          reason: '$policy',
+        );
+      }
+    });
+
+    test('another viewer or an HTTP failure never grants downloads', () async {
+      await expectLater(
+        ask(
+          jsonEncode({
+            'Id': 'someone-else',
+            'Policy': {'EnableContentDownloading': true},
+          }),
+        ),
+        throwsA(isA<ClientError>()),
+      );
+      for (final status in [401, 403, 503]) {
+        await expectLater(
+          ask('{}', status: status),
+          throwsA(isA<ClientError>()),
+          reason: '$status',
+        );
+      }
+    });
   });
 
   group('playback plan', () {
@@ -185,6 +389,59 @@ void main() {
       expect(plan.method, 'Transcode');
       expect(plan.url.host, 'example.com');
     });
+
+    test('accepts the HLS playlist negotiated for a remux-only viewer', () {
+      final info = PlaybackInfo.fromJson({
+        'PlaySessionId': 'play',
+        'MediaSources': [
+          {
+            'Id': 'source',
+            'SupportsDirectStream': true,
+            'SupportsTranscoding': false,
+            'TranscodingUrl':
+                '/jf/Videos/movie/master.m3u8?TranscodeReasons=ContainerNotSupported',
+          },
+        ],
+      });
+      final plan = PlaybackPlan.make(
+        info,
+        itemId: 'movie',
+        client: signedIn,
+        options: options,
+      );
+      expect(plan.url.path, '/jf/Videos/movie/master.m3u8');
+    });
+
+    for (final supportsTranscoding in [true, false]) {
+      test(
+        'remux permission still rejects HTTP conversion ($supportsTranscoding)',
+        () {
+          final info = PlaybackInfo.fromJson({
+            'PlaySessionId': 'play',
+            'MediaSources': [
+              {
+                'Id': 'source',
+                'SupportsDirectPlay': false,
+                'SupportsDirectStream': true,
+                'SupportsTranscoding': supportsTranscoding,
+                'TranscodingSubProtocol': 'http',
+                'TranscodingUrl':
+                    '/jf/Videos/movie/stream?TranscodeReasons=ContainerNotSupported',
+              },
+            ],
+          });
+          expect(
+            () => PlaybackPlan.make(
+              info,
+              itemId: 'movie',
+              client: signedIn,
+              options: options,
+            ),
+            throwsA(const ClientError(ClientErrorKind.unsupportedPlayback)),
+          );
+        },
+      );
+    }
 
     test('rejects errors, missing sources and off-server streams', () {
       for (final info in [

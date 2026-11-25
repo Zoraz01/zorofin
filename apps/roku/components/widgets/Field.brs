@@ -1,4 +1,5 @@
 sub init()
+    m.top.findNode("ring").blendColor = ZAccent()
     m.top.focusable = true
     m.bg = m.top.findNode("bg")
     m.ring = m.top.findNode("ring")

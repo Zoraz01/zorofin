@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/request_progress.dart';
 
 import '../../core/models.dart';
 import '../../core/requests.dart';
@@ -40,6 +41,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
   List<RequestJournalEntry> _entries = [];
   RequestActivityItem? _activity;
   String? _download;
+  double? _downloadProgress;
   bool _loading = true;
   bool _updating = false;
   bool _sending = false;
@@ -224,13 +226,16 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
           .toList();
       RequestActivityItem? personal;
       String? queueLabel;
+      double? queueProgress;
       try {
         final page = await client.requestActivity();
         personal = page.requests
             .where((r) => r.tmdbId == widget.titleId && r.kind == widget.kind)
             .firstOrNull;
         if (personal != null) {
-          queueLabel = (await client.requestQueue()).label(personal);
+          final download = (await client.requestQueue()).download(personal);
+          queueLabel = download?.label;
+          queueProgress = download?.progress;
         }
       } catch (_) {}
       if (!mounted || load != _load) return;
@@ -241,6 +246,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
         _entries = saved;
         _activity = personal;
         _download = queueLabel;
+        _downloadProgress = queueProgress;
         _error = null;
         _blocked = saved.any((e) => e.receiptId == null);
         _unconfirmed = _blocked;
@@ -386,7 +392,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
       children.add(
         Row(
           children: [
-            const SizedBox(
+            SizedBox(
               width: 28,
               height: 28,
               child: CircularProgressIndicator(
@@ -581,6 +587,14 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
                         _statusLabel,
                         style: Zoro.font(26, weight: FontWeight.w600),
                       ),
+                      if (_statusLabel.startsWith('Downloading')) ...[
+                        const SizedBox(height: 12),
+                        LinearProgressIndicator(
+                          value: _downloadProgress?.isFinite == true
+                              ? (_downloadProgress! / 100).clamp(0, 1)
+                              : null,
+                        ),
+                      ],
                       if (_unconfirmed)
                         Text(
                           'The server may have received your request. We’ll keep checking; nothing is resent automatically.',
@@ -592,6 +606,7 @@ class _RequestDetailsScreenState extends State<RequestDetailsScreen> {
               ],
             ),
           ),
+          if (!_unconfirmed) RequestProgress(status: _statusLabel),
           const SizedBox(height: 14),
           ZoroButton(
             label: 'View request activity',

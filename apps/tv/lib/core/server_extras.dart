@@ -7,19 +7,41 @@ import 'viewer_settings.dart';
 
 /// Optional Zorofin server modules, scoped to the connected server and the
 /// signed-in viewer (Apple `ServerFeatures`). Plain Jellyfin has none.
+enum HomeRowsContract {
+  legacy(1),
+  plugin(2);
+
+  const HomeRowsContract(this.version);
+  final int version;
+  List<String> get path => this == plugin
+      ? ['Zorofin', 'Home', 'Rows']
+      : ['support', 'home', 'rows'];
+  static HomeRowsContract? fromVersion(Object? version) => switch (version) {
+    1 => legacy,
+    2 => plugin,
+    _ => null,
+  };
+}
+
 class ServerFeatures {
   const ServerFeatures({
     this.support = false,
     this.notifications = false,
     this.requests = false,
-    this.homeRows = false,
+    bool homeRows = false,
+    HomeRowsContract? homeRowsContract,
     this.liveArtwork = false,
     this.enhancedSettings = false,
     this.accountApprovals = false,
     this.notificationSettings = false,
     this.liveTVAvailability = false,
     this.liveTvStreams = false,
-  });
+    this.sportsEvents = false,
+    this.notificationReads = false,
+    this.pickTogether = false,
+    this.playbackReports = false,
+  }) : homeRowsContract =
+           homeRowsContract ?? (homeRows ? HomeRowsContract.legacy : null);
 
   /// Fictional preview only. Real connections discover their own modules.
   static const preview = ServerFeatures(
@@ -36,7 +58,9 @@ class ServerFeatures {
   final bool support;
   final bool notifications;
   final bool requests;
-  final bool homeRows;
+  final HomeRowsContract? homeRowsContract;
+  bool get homeRows => homeRowsContract != null;
+  bool get legacyHomeRows => homeRowsContract == HomeRowsContract.legacy;
   final bool liveArtwork;
   final bool enhancedSettings;
   final bool accountApprovals;
@@ -45,9 +69,18 @@ class ServerFeatures {
 
   /// The companion names the channels using Live TV streams.
   final bool liveTvStreams;
+  final bool sportsEvents;
+  final bool notificationReads;
 
-  /// Only version 1 of an enabled feature counts, except Requests, which
-  /// also takes version 2 (the Zorofin plugin's own routes).
+  /// The companion's pickTogether module (schemaVersion 1): group swiping.
+  /// TVs host and show the session; phones vote.
+  final bool pickTogether;
+
+  /// The plugin collects playback problem reports (version 1). Absent when
+  /// the owner switched collection off; the app then sends nothing.
+  final bool playbackReports;
+
+  /// Versions are negotiated per module; homeSections never enables app rows.
   factory ServerFeatures.fromManifest(Map<String, dynamic> json) {
     if (json['schemaVersion'] != 1 || json['features'] is! Map) {
       throw const ClientError(ClientErrorKind.invalidResponse);
@@ -60,17 +93,25 @@ class ServerFeatures {
           feature['enabled'] == true;
     }
 
+    final home = features['homeRows'];
+    final contract = home is Map && home['enabled'] == true
+        ? HomeRowsContract.fromVersion(home['version'])
+        : null;
     return ServerFeatures(
       support: supports('support'),
       notifications: supports('notifications'),
       requests: RequestRoutes.fromManifest(features) != null,
-      homeRows: supports('homeRows'),
+      homeRowsContract: contract,
       liveArtwork: supports('liveArtwork'),
       enhancedSettings: supports('enhancedSettings'),
       accountApprovals: supports('accountApprovals'),
       notificationSettings: supports('notificationSettings'),
       liveTVAvailability: supports('liveTVAvailability'),
       liveTvStreams: supports('liveTvStreams'),
+      sportsEvents: supports('sportsEvents'),
+      notificationReads: supports('notificationReads'),
+      pickTogether: supports('pickTogether'),
+      playbackReports: supports('playbackReports'),
     );
   }
 
@@ -82,39 +123,48 @@ class ServerFeatures {
       other.support == support &&
       other.notifications == notifications &&
       other.requests == requests &&
-      other.homeRows == homeRows &&
+      other.homeRowsContract == homeRowsContract &&
       other.liveArtwork == liveArtwork &&
       other.enhancedSettings == enhancedSettings &&
       other.accountApprovals == accountApprovals &&
       other.notificationSettings == notificationSettings &&
       other.liveTVAvailability == liveTVAvailability &&
-      other.liveTvStreams == liveTvStreams;
+      other.liveTvStreams == liveTvStreams &&
+      other.sportsEvents == sportsEvents &&
+      other.notificationReads == notificationReads &&
+      other.pickTogether == pickTogether &&
+      other.playbackReports == playbackReports;
 
   @override
   int get hashCode => Object.hash(
     support,
     notifications,
     requests,
-    homeRows,
+    homeRowsContract,
     liveArtwork,
     enhancedSettings,
     accountApprovals,
     notificationSettings,
     liveTVAvailability,
     liveTvStreams,
+    sportsEvents,
+    notificationReads,
+    pickTogether,
+    playbackReports,
   );
 }
 
 /// A stable 64-bit FNV-1a hash; identities only, never security.
 String stableHash(String text) {
-  var hash = 0xcbf29ce484222325;
+  var hash = BigInt.parse('cbf29ce484222325', radix: 16);
+  final prime = BigInt.from(0x100000001b3);
   for (final unit in text.codeUnits) {
-    hash ^= unit & 0xff;
-    hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
-    hash ^= unit >> 8;
-    hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+    hash = ((hash ^ BigInt.from(unit & 0xff)) * prime).toUnsigned(64);
+    hash = ((hash ^ BigInt.from(unit >> 8)) * prime).toUnsigned(64);
   }
-  return hash.toUnsigned(64).toRadixString(16).padLeft(16, '0');
+  // Preserve the existing native signed hexadecimal keys, including their
+  // leading minus sign. Changing the representation would orphan saved state.
+  return hash.toSigned(64).toRadixString(16).padLeft(16, '0');
 }
 
 final _ticketId = RegExp(r'^T[a-z0-9]{6,20}$');
@@ -162,6 +212,12 @@ class SupportReply {
   final String message;
   final String updatedAt;
 
+  /// Announcements use a separate ID namespace in the existing inbox/history
+  /// row format. They must never be acknowledged as support tickets.
+  bool get isAnnouncement => id.startsWith('announcement:');
+  String get sourceLabel =>
+      isAnnouncement ? 'Server announcement' : 'Support reply';
+
   /// A later response on the same ticket is a new notification, even when a
   /// server repeats a timestamp for two different messages.
   String get notificationKey =>
@@ -175,6 +231,62 @@ class SupportReply {
     'message': message,
     'updatedAt': updatedAt,
   };
+}
+
+/// Independent inbox sources: a failed refresh retains that source's old rows.
+class ServerInbox {
+  const ServerInbox(this.replies, this.announcements);
+  final List<SupportReply>? replies;
+  final List<SupportReply>? announcements;
+  bool get partial => replies == null || announcements == null;
+  List<SupportReply> keeping(List<SupportReply> previous) => [
+    ...?announcements,
+    if (announcements == null) ...previous.where((r) => r.isAnnouncement),
+    ...?replies,
+    if (replies == null) ...previous.where((r) => !r.isAnnouncement),
+  ];
+}
+
+/// Normalize the authenticated server announcement into the inbox row format.
+/// Content stays plain text; server-supplied markup is never executed.
+SupportReply? announcementMessage(Map<String, dynamic> json, {DateTime? now}) {
+  if (json['enabled'] == false) return null;
+  final id = json['id'], title = json['title'], message = json['message'];
+  if (json['enabled'] != true ||
+      id is! String ||
+      !RegExp(r'^[A-Za-z0-9._-]{1,80}$').hasMatch(id) ||
+      title is! String ||
+      title.trim().isEmpty ||
+      title.length > 80 ||
+      message is! String ||
+      message.trim().isEmpty ||
+      message.length > 320) {
+    throw const ClientError(ClientErrorKind.invalidResponse);
+  }
+  DateTime? date(String key) {
+    final value = json[key];
+    if (value == null || value == '') return null;
+    final parsed = value is String ? DateTime.tryParse(value) : null;
+    if (parsed == null) {
+      throw const ClientError(ClientErrorKind.invalidResponse);
+    }
+    return parsed;
+  }
+
+  final start = date('startAt'),
+      end = date('endAt'),
+      current = now ?? DateTime.now();
+  if ((start != null && current.isBefore(start)) ||
+      (end != null && !current.isBefore(end))) {
+    return null;
+  }
+  return SupportReply(
+    id: 'announcement:$id-${stableHash(title)}',
+    status: 'Server announcement',
+    issueType: title,
+    message: message,
+    updatedAt: json['startAt'] as String? ?? '',
+  );
 }
 
 /// The support form's content, trimmed and bounded (Apple `SupportReport`).
@@ -463,6 +575,47 @@ extension ServerExtras on JellyfinClient {
       throw const ClientError(ClientErrorKind.invalidResponse);
     }
     return replies;
+  }
+
+  /// Optional legacy announcement adapter, always on the selected server.
+  Future<List<SupportReply>> serverAnnouncements() async {
+    try {
+      final json = await requestJson(
+        ['support', 'announcement', 'me'],
+        extensionToken: true,
+        expectedStatus: 200,
+      );
+      if (json is! Map<String, dynamic>) {
+        throw const ClientError(ClientErrorKind.invalidResponse);
+      }
+      final notice = announcementMessage(json);
+      return [?notice];
+    } on ClientError catch (e) {
+      if (e.kind == ClientErrorKind.unavailable && e.status == 404) return [];
+      rethrow;
+    }
+  }
+
+  Future<ServerInbox> inboxMessages() async {
+    Future<List<SupportReply>?> source(Future<List<SupportReply>> work) async {
+      try {
+        return await work;
+      } on ClientError catch (e) {
+        if (e.kind == ClientErrorKind.unauthorized ||
+            e.kind == ClientErrorKind.forbidden) {
+          rethrow;
+        }
+        return null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final values = await Future.wait([
+      source(supportReplies()),
+      source(serverAnnouncements()),
+    ]);
+    return ServerInbox(values[0], values[1]);
   }
 
   /// One POST only: a lost receipt must never silently create a duplicate.

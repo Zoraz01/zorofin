@@ -1,6 +1,6 @@
-// Copied from apps/apple/release/public-content.json (release/zorofin).
-// Keep in step with that file; the wording still names Apple services and
-// needs a TV edition before a store submission (docs/TV_APPLE_PARITY.md).
+// Android and TV privacy text. Keep changes aligned with the implemented
+// phone, tablet and TV capabilities;
+// Apple maintains its separate public policy in apps/apple/release/.
 
 /// Privacy Policy, App Support and Sample Media Credits (Apple
 /// `PublicDocument`).
@@ -12,8 +12,9 @@ enum PublicDocument {
       (
         "Your device and saved sign-ins",
         [
-          "Saved sign-in tokens and connection credentials are kept in the Apple Keychain. Zorofin saves account and server details, app preferences and account-scoped caches on your device. Your password is used to authenticate with the server you enter; Zorofin does not keep that password as a saved sign-in credential.",
+          "On Android phones and tablets, Android TV, Google TV and Fire OS, saved sign-ins are encrypted on the device with keys protected by Android Keystore. Existing saved sign-ins are migrated out of ordinary preferences after the encrypted copy is verified. The LG webOS and Linux preview ports currently use app-private preferences and do not claim Keystore protection. Zorofin saves account and server details, app preferences and account-scoped caches on your device. Your password is used to authenticate with the server you enter; Zorofin does not keep that password as a saved sign-in credential.",
           "Removing a saved account removes its saved credentials from this app. Storage & app settings let you clear cached artwork and library responses. Removing local data does not delete the account, watch history or other records held by your server.",
+          "On phones and tablets, titles you choose to download are saved in the app's private storage on this device, with their artwork and the account they belong to. They stay until you remove them or remove that account. Watching a download offline saves your progress on the device and sends it to your server once it can be reached.",
         ],
       ),
       (
@@ -21,6 +22,13 @@ enum PublicDocument {
         [
           "The server you select receives connection and account information needed to sign in, plus requests for library items, searches, artwork and playback. Jellyfin session reporting sends playback progress, pause/stop state, the app/client version and a generated client device identifier. Favorites, watched status, playlists and other changes are sent when you use those features.",
           "Your server and its hosting/network providers can see your network address and may retain access logs and account activity. Its operator controls that processing and retention. Use a server you trust and contact its operator about server-side records. HTTPS is preferred; allowing local HTTP sends traffic without transport encryption on that local connection.",
+        ],
+      ),
+      (
+        "Fire TV home-screen recommendations",
+        [
+          "Recommendations are off by default for each saved account. If you enable them, the app shares selected library titles, episode labels and thumbnail images with the Fire TV launcher on that device. Anyone using the TV may see them. The app does not include a server address, password or sign-in token in those cards. Device features are also governed by your device provider's policies.",
+          "Turning recommendations off, signing out or switching accounts clears the app's previous cards. A card opens only within its original signed-in account. This feature does not integrate Amazon's cloud watch-history personalization API.",
         ],
       ),
       (
@@ -34,21 +42,21 @@ enum PublicDocument {
         "Support reports and AI assistance",
         [
           "Sending a server support report shares the issue type, your description, any affected title you enter and your signed-in account context with that server's administrators and support service. That service may use an external AI provider to investigate or draft replies, and may consult relevant server or playback diagnostics. Review the notice in the report form before agreeing to send a report. Do not include passwords, payment details or other sensitive information.",
-          "The server operator determines its support providers and retention practices. Ask the operator for provider-specific information before sending anything you do not want processed that way. You can use the app support email instead of server support. Emailing us sends the information you choose to include to Vitality Labs LLC and our email provider; Apple handles feedback submitted through TestFlight under its own policies.",
+          "The server operator determines its support providers and retention practices. Ask the operator for provider-specific information before sending anything you do not want processed that way. You can use the app support email instead of server support. Emailing us sends the information you choose to include to Vitality Labs LLC and our email provider. App stores handle feedback submitted through their own services under their policies.",
         ],
       ),
       (
         "Profile photos, settings and administration",
         [
-          "If you choose a profile photo, the image you select is resized and uploaded to your signed-in server. The photo picker grants access to the selected image, not your entire photo library. Account, subtitle, alert and playback preferences are sent to your server when those settings are server-managed.",
-          "For administrators, embedded dashboard and metadata pages connect to the selected server's web application. That server and any integrations it loads handle the web page's data and storage. Zorofin uses a separate nonpersistent web data store for the administrative session rather than a shared persistent browser profile.",
+          "The app can display or remove the profile photo held by your server. It does not provide a photo-library picker. Account, subtitle, alert and playback preferences are sent to your server when those settings are server-managed.",
+          "On TVs, administrator pages provide instructions for opening the selected server's web interface on another device. On phones and tablets, the Dashboard and Metadata Manager open the server's web interface in your browser, where you sign in to the server separately. The app does not embed an administrative browser or share its saved token with the browser or another device.",
         ],
       ),
       (
         "Advertising, tracking and diagnostics",
         [
           "Zorofin does not include advertising, cross-app tracking, a data-broker integration, or a third-party analytics SDK. We do not sell app data or use it for targeted advertising. We do not receive a central copy of every connected server's library or activity just because you installed the client.",
-          "Apple may provide crash or beta diagnostics according to your Apple settings and choices. Zorofin does not automatically upload a separate diagnostic bundle to Vitality Labs LLC. Information you include in a support report or email is handled as described above.",
+          "Your device manufacturer or app store may provide crash or beta diagnostics according to your device settings and choices. Zorofin does not automatically upload a separate diagnostic bundle to Vitality Labs LLC. Information you include in a support report or email is handled as described above.",
         ],
       ),
       (
@@ -61,7 +69,7 @@ enum PublicDocument {
         "Retention, deletion and your choices",
         [
           "Local caches are bounded and may be cleared or replaced as you use the app. You can remove saved accounts, clear caches and change preferences in the app. Server operators control the retention and deletion of accounts, watch history, requests, photos and server support records; local sign-out does not erase those records.",
-          "For support correspondence held by Vitality Labs LLC, contact us to request access, correction or deletion. We retain correspondence as needed to investigate and resolve issues, maintain necessary support records, and meet legal obligations. We do not promise to delete records controlled by an independent server operator or Apple.",
+          "For support correspondence held by Vitality Labs LLC, contact us to request access, correction or deletion. We retain correspondence as needed to investigate and resolve issues, maintain necessary support records, and meet legal obligations. We do not promise to delete records controlled by an independent server operator, device manufacturer or app store.",
         ],
       ),
       (
@@ -79,7 +87,7 @@ enum PublicDocument {
       (
         "Report an app problem",
         [
-          "Include your app version, device model, operating system version, what you expected, what happened and the steps to reproduce it. A redacted screenshot can help. Do not send passwords, authentication tokens, private server addresses, payment details or unredacted account information. TestFlight testers can also use Send Beta Feedback in TestFlight.",
+          "Include your app version, device model, operating system version, what you expected, what happened and the steps to reproduce it. A redacted screenshot can help. Do not send passwords, authentication tokens, private server addresses, payment details or unredacted account information. Beta testers can also use the feedback options provided by their app store.",
         ],
       ),
       (
@@ -154,7 +162,7 @@ enum PublicDocument {
   const PublicDocument(this.title, this.intro, this.sections);
 
   static const contact = "zoraz@vitalitylabssolutions.com";
-  static const updated = "October 25, 2026";
+  static const updated = "November 7, 2026";
 
   final String title;
   final String intro;

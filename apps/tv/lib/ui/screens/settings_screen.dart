@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../extras_state.dart';
 import '../../core/app_info.dart';
 import '../../core/catalog.dart';
 import '../../core/errors.dart';
@@ -14,6 +15,30 @@ import '../widgets/subtitle_text.dart';
 import 'shell.dart';
 import '../widgets/tv_text_field.dart';
 
+/// Phone and tablet layouts show the same settings pages at touch sizes:
+/// smaller type, shorter rows, an app bar and system dialogs.
+class CompactSettings extends InheritedWidget {
+  const CompactSettings({super.key, required super.child});
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CompactSettings>() != null;
+
+  @override
+  bool updateShouldNotify(CompactSettings oldWidget) => false;
+}
+
+/// Settings type: TV sizes, or about two thirds of them on phones.
+TextStyle settingsFont(
+  BuildContext context,
+  double size, {
+  FontWeight weight = FontWeight.w400,
+  Color color = Zoro.text,
+}) => Zoro.font(
+  CompactSettings.of(context) ? (size * .68).roundToDouble() : size,
+  weight: weight,
+  color: color,
+);
+
 enum SettingsPage {
   account('Account', Icons.person_rounded),
   display('Display', Icons.desktop_windows_outlined),
@@ -21,7 +46,10 @@ enum SettingsPage {
   subtitles('Subtitles', Icons.closed_caption_rounded),
   controls('Controls', Icons.sports_esports_outlined),
   notifications('Notification settings', Icons.tune_rounded),
-  storage('Storage & app', Icons.storage_rounded);
+  storage('Storage & app', Icons.storage_rounded),
+
+  /// TV only: support, privacy, problem reports, storage and version.
+  help('Help & about', Icons.help_outline_rounded);
 
   const SettingsPage(this.title, this.icon);
 
@@ -31,6 +59,24 @@ enum SettingsPage {
   /// Pages that read the account's server settings.
   bool get usesAccount =>
       this == account || this == playback || this == subtitles;
+
+  /// The name on the TV Settings list (docs/design/TV_PROFILE_MENU.md).
+  String get tvTitle => switch (this) {
+    display => 'Home & display',
+    notifications => 'Notifications',
+    _ => title,
+  };
+}
+
+/// A row on a TV settings page that opens another screen (Quick Connect,
+/// Your teams, Support, Privacy Policy).
+class SettingsLink {
+  const SettingsLink(this.title, this.onPressed, {this.icon, this.subtitle});
+
+  final String title;
+  final VoidCallback onPressed;
+  final IconData? icon;
+  final String? subtitle;
 }
 
 /// One settings page (Apple `NativeSettingsView` TV layout): the title with
@@ -44,11 +90,22 @@ class SettingsScreen extends StatefulWidget {
     required this.preferences,
     required this.catalog,
     this.extraFields,
+    this.grouped = false,
+    this.links = const [],
   });
 
   final SettingsPage page;
   final Preferences preferences;
   final Catalog catalog;
+
+  /// The grouped Settings used on TVs and the phone Profile tab: Controls
+  /// folds into Playback, trailer previews and the unread badge sit on Home &
+  /// display, problem reports on Help & about, and changes save as you go
+  /// (no Save or Done).
+  final bool grouped;
+
+  /// Rows that open other screens, shown in this page's own section.
+  final List<SettingsLink> links;
 
   /// Server delivery settings for Notification settings, when the server
   /// provides them.
@@ -71,8 +128,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _current = TextEditingController();
   final _new = TextEditingController();
   final _confirmation = TextEditingController();
+  Timer? _autosave;
 
   Catalog get _catalog => widget.catalog;
+  bool get _grouped => widget.grouped;
 
   Map<String, Object> get _changes {
     final baseline = _baseline;
@@ -108,6 +167,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    // Leaving mid-pause still keeps the last change.
+    if (_autosave?.isActive ?? false) {
+      _autosave!.cancel();
+      unawaited(_saveQuietly());
+    }
     // Passwords are never kept after leaving the page.
     for (final field in [_current, _new, _confirmation]) {
       field.dispose();
@@ -216,7 +280,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _status = 'Cache cleared');
   }
 
+  /// Grouped pages save a moment after the last change, without disabling the
+  /// form, so focus stays on the row being changed.
+  void _scheduleSave() {
+    if (!_grouped) return;
+    _autosave?.cancel();
+    _autosave = Timer(const Duration(milliseconds: 600), _saveQuietly);
+  }
+
+  Future<void> _saveQuietly() async {
+    try {
+      if (_draft != _prefs.value) await _prefs.save(_draft);
+      final changes = _changes;
+      if (changes.isNotEmpty && _baseline != null) {
+        final confirmed = await _catalog.saveViewerConfiguration(
+          changes,
+          _baseline!,
+        );
+        if (!mounted) return;
+        setState(() {
+          _baseline = confirmed;
+          _configuration = Map.of(confirmed.configuration);
+        });
+      } else if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = _message(e));
+    }
+  }
+
   Future<void> _done() async {
+    if (_autosave?.isActive ?? false) {
+      _autosave!.cancel();
+      await _saveQuietly();
+      if (!mounted) return;
+    }
     if (!_dirty ||
         await _confirm('Discard unsaved changes?', 'Discard changes')) {
       if (mounted) Navigator.of(context).pop();
@@ -245,15 +344,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<bool> _confirm(String title, String action, {String? detail}) =>
       confirmDialog(context, title, action, detail: detail);
 
-  void _edit(DevicePreferences value) => setState(() {
-    _draft = value;
-    _status = null;
-  });
+  void _edit(DevicePreferences value) {
+    setState(() {
+      _draft = value;
+      _status = null;
+    });
+    _scheduleSave();
+  }
 
-  void _setConfig(String key, Object value) => setState(() {
-    _configuration[key] = value;
-    _status = null;
-  });
+  void _setConfig(String key, Object value) {
+    setState(() {
+      _configuration[key] = value;
+      _status = null;
+    });
+    _scheduleSave();
+  }
+
+  List<Widget> _links() => [
+    for (final link in widget.links)
+      SettingsAction(
+        title: link.title,
+        icon: link.icon,
+        subtitle: link.subtitle,
+        onPressed: link.onPressed,
+      ),
+  ];
 
   Widget _flag(String title, String key, {bool fallback = false}) {
     final value = _configuration[key];
@@ -299,7 +414,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     SettingsPage.controls => _controlFields(),
     SettingsPage.notifications => _notificationFields(),
     SettingsPage.storage => _storageFields(),
+    SettingsPage.help => _helpFields(),
   };
+
+  /// TV Help & about: links, problem reports, then storage and version.
+  List<Widget> _helpFields() => [
+    if (widget.links.isNotEmpty) ...[
+      const SettingsSectionHeader('Help'),
+      ..._links(),
+    ],
+    if (_reportsOffered) ...[
+      const SettingsSectionHeader('Problem reports'),
+      ..._reportsToggle(),
+    ],
+    ..._storageFields(),
+  ];
+
+  bool get _reportsOffered =>
+      ExtrasScope.maybeOf(context)?.features.playbackReports ?? false;
+
+  List<Widget> _reportsToggle() => [
+    SettingsToggle(
+      title: 'Send playback problem reports to this server',
+      value: _draft.sendPlaybackReports,
+      onChanged: (v) => _edit(_draft.copyWith(sendPlaybackReports: v)),
+    ),
+    const SettingsFootnote(
+      'When a title won\'t start or keeps buffering, the app tells your server owner the title, app version and what went wrong. Nothing leaves your server.',
+    ),
+  ];
 
   List<Widget> _accountFields() {
     final client = _catalog.client;
@@ -329,16 +472,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: Zoro.font(30, weight: FontWeight.w700)),
+                  Text(
+                    name,
+                    style: settingsFont(context, 30, weight: FontWeight.w700),
+                  ),
                   if (_catalog.serverName.isNotEmpty)
                     Text(
                       _catalog.serverName,
-                      style: Zoro.font(22, color: Zoro.muted),
+                      style: settingsFont(context, 22, color: Zoro.muted),
                     ),
                   if (client != null)
                     Text(
                       client.server.url.toString(),
-                      style: Zoro.font(18, color: Zoro.muted),
+                      style: settingsFont(context, 18, color: Zoro.muted),
                     ),
                 ],
               ),
@@ -353,8 +499,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           enabled: editable,
           onPressed: _removePhoto,
         ),
-      const SettingsFootnote(
-        'To choose a new profile photo, use Zorofin on your phone or your server’s web app.',
+      SettingsFootnote(
+        CompactSettings.of(context)
+            ? 'To choose a new profile photo, use your server’s web app.'
+            : 'To choose a new profile photo, use Zorofin on your phone or your server’s web app.',
       ),
       const SettingsSectionHeader('Change password'),
       SettingsTextField(
@@ -387,18 +535,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SettingsFootnote(
         'Other devices may need to sign in again after you change your password.',
       ),
+      if (widget.links.isNotEmpty) ...[
+        const SettingsSectionHeader('Other devices'),
+        ..._links(),
+      ],
       ..._accountStatus(),
     ];
   }
 
   List<Widget> _displayFields() => [
     const SettingsSectionHeader('On this device'),
-    SettingsPicker<double>(
-      title: 'Poster size',
-      value: _draft.posterScale,
-      options: const [(0.85, 'Compact'), (1.0, 'Comfortable'), (1.2, 'Large')],
-      onChanged: (v) => _edit(_draft.copyWith(posterScale: v)),
-    ),
+    // The server's "Same look for every viewer" picks the card size.
+    if (_prefs.cardSizeFromServer)
+      const SettingsInfo(title: 'Poster size', value: 'Set by your server')
+    else
+      SettingsPicker<double>(
+        title: 'Poster size',
+        value: _draft.posterScale,
+        options: const [
+          (0.85, 'Compact'),
+          (1.0, 'Comfortable'),
+          (1.2, 'Large'),
+        ],
+        onChanged: (v) => _edit(_draft.copyWith(posterScale: v)),
+      ),
     SettingsToggle(
       title: 'Show titles under posters',
       value: _draft.showTitles,
@@ -432,10 +592,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       value: _draft.reduceMotion,
       onChanged: (v) => _edit(_draft.copyWith(reduceMotion: v)),
     ),
-    const SettingsFootnote(
-      'Your TV’s accessibility preferences are always respected.',
+    SettingsFootnote(
+      CompactSettings.of(context)
+          ? 'Your device’s accessibility preferences are always respected.'
+          : 'Your TV’s accessibility preferences are always respected.',
     ),
+    if (_grouped) ...[
+      const SettingsSectionHeader('Home'),
+      _autoplayToggle(),
+      SettingsToggle(
+        title: 'Show unread badge',
+        value: _draft.showUnreadBadge,
+        onChanged: (v) => _edit(_draft.copyWith(showUnreadBadge: v)),
+      ),
+      ..._links(),
+    ],
   ];
+
+  Widget _autoplayToggle() => SettingsToggle(
+    title: 'Autoplay trailer previews on Home',
+    value: _draft.autoplayPreviews,
+    onChanged: (v) => _edit(_draft.copyWith(autoplayPreviews: v)),
+  );
 
   List<Widget> _playbackFields() => [
     const SettingsSectionHeader('On this device'),
@@ -467,6 +645,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       fallback: true,
     ),
     _flag('Play the next episode automatically', 'EnableNextEpisodeAutoPlay'),
+    // Grouped Settings fold Controls into Playback.
+    if (_grouped) ...[
+      const SettingsSectionHeader('In the player'),
+      ..._playerControls(),
+    ],
     ..._accountStatus(),
   ];
 
@@ -561,6 +744,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   List<Widget> _controlFields() => [
     const SettingsSectionHeader('On this device'),
+    ..._playerControls(),
+    _autoplayToggle(),
+    // Only offered while this server collects them.
+    if (_reportsOffered) ..._reportsToggle(),
+  ];
+
+  List<Widget> _playerControls() => [
     SettingsPicker<int>(
       title: 'Skip backward',
       value: _draft.skipBack,
@@ -585,19 +775,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       value: _draft.pauseInBackground,
       onChanged: (v) => _edit(_draft.copyWith(pauseInBackground: v)),
     ),
+    SettingsToggle(
+      title: 'Show chapters',
+      value: _draft.showChapters,
+      onChanged: (v) => _edit(_draft.copyWith(showChapters: v)),
+    ),
+    const SettingsFootnote(
+      'Chapter names and pictures in the player can give the story away. Off by default.',
+    ),
   ];
 
   List<Widget> _notificationFields() => [
-    const SettingsSectionHeader('In the app'),
-    SettingsToggle(
-      title: 'Show unread badge',
-      value: _draft.showUnreadBadge,
-      onChanged: (v) => _edit(_draft.copyWith(showUnreadBadge: v)),
-    ),
+    // Grouped Settings keep the badge on Home & display.
+    if (!_grouped) ...[
+      const SettingsSectionHeader('In the app'),
+      SettingsToggle(
+        title: 'Show unread badge',
+        value: _draft.showUnreadBadge,
+        onChanged: (v) => _edit(_draft.copyWith(showUnreadBadge: v)),
+      ),
+    ],
     ?widget.extraFields,
     if (widget.extraFields == null)
-      const SettingsFootnote(
-        'This server does not provide email or push alert settings. The unread badge applies to the app’s inbox.',
+      SettingsFootnote(
+        _grouped
+            ? 'This server does not provide email or push alert settings.'
+            : 'This server does not provide email or push alert settings. The unread badge applies to the app’s inbox.',
       ),
   ];
 
@@ -623,7 +826,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       const SettingsSectionHeader('Zorofin'),
       const SettingsInfo(title: 'App', value: 'Jellyfin client'),
-      const SettingsInfo(title: 'Version', value: appVersion),
+      const SettingsInfo(title: 'Version', value: appVersion, focusOnTv: true),
       const SettingsFootnote(
         'Connect to a server you already use. Your server manages your library and account.',
       ),
@@ -642,18 +845,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (!didPop) _done();
         },
         child: SettingsScaffold(
-          title: widget.page.title,
-          actions: [
-            if (_canSave || _busy) ...[
-              ZoroButton(
-                label: _busy ? 'Saving…' : 'Save',
-                primary: true,
-                onPressed: _save,
-              ),
-              const SizedBox(width: 12),
-            ],
-            ZoroButton(label: 'Done', onPressed: _done),
-          ],
+          title: _grouped ? widget.page.tvTitle : widget.page.title,
+          // Grouped pages save as you go; Back leaves.
+          actions: _grouped
+              ? const []
+              : CompactSettings.of(context)
+              ? [
+                  if (_canSave || _busy)
+                    TextButton(
+                      onPressed: _busy ? null : _save,
+                      style: TextButton.styleFrom(foregroundColor: Zoro.jade),
+                      child: Text(_busy ? 'Saving…' : 'Save'),
+                    ),
+                ]
+              : [
+                  if (_canSave || _busy) ...[
+                    ZoroButton(
+                      label: _busy ? 'Saving…' : 'Save',
+                      primary: true,
+                      onPressed: _save,
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  ZoroButton(label: 'Done', onPressed: _done),
+                ],
           children: [
             if (_catalog.isPreview)
               const SettingsFootnote('Preview changes stay in this preview.'),
@@ -662,7 +877,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.all(8),
                 child: Text(
                   _error!,
-                  style: Zoro.font(22, color: const Color(0xFFFFB74D)),
+                  style: settingsFont(
+                    context,
+                    22,
+                    color: const Color(0xFFFFB74D),
+                  ),
                 ),
               ),
               if (widget.page.usesAccount)
@@ -675,7 +894,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (_status != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                child: Text(_status!, style: Zoro.font(22, color: Zoro.jade)),
+                child: Text(
+                  _status!,
+                  style: settingsFont(context, 22, color: Zoro.jade),
+                ),
               ),
             ..._fields(),
           ],
@@ -700,7 +922,44 @@ class SettingsScaffold extends StatelessWidget {
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    if (CompactSettings.of(context)) {
+      return Scaffold(
+        backgroundColor: Zoro.background,
+        appBar: AppBar(
+          backgroundColor: Zoro.background,
+          surfaceTintColor: Colors.transparent,
+          title: Text(
+            title,
+            style: settingsFont(context, 26, weight: FontWeight.w600),
+          ),
+          actions: [...actions, const SizedBox(width: 8)],
+        ),
+        body: ListView(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            8,
+            16,
+            MediaQuery.paddingOf(context).bottom + 24,
+          ),
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _tv(context);
+  }
+
+  Widget _tv(BuildContext context) => Scaffold(
     body: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -709,7 +968,10 @@ class SettingsScaffold extends StatelessWidget {
           child: FocusTraversalGroup(
             child: Row(
               children: [
-                Text(title, style: Zoro.font(32, weight: FontWeight.w700)),
+                Text(
+                  title,
+                  style: settingsFont(context, 32, weight: FontWeight.w700),
+                ),
                 const Spacer(),
                 ...actions,
               ],
@@ -750,6 +1012,26 @@ Future<bool> confirmDialog(
   String action, {
   String? detail,
 }) async {
+  if (CompactSettings.of(context)) {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: detail == null ? null : Text(detail),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
   final result = await showDialog<bool>(
     context: context,
     barrierColor: const Color(0xCC000000),
@@ -767,10 +1049,16 @@ Future<bool> confirmDialog(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: Zoro.font(32, weight: FontWeight.w700)),
+              Text(
+                title,
+                style: settingsFont(context, 32, weight: FontWeight.w700),
+              ),
               if (detail != null) ...[
                 const SizedBox(height: 12),
-                Text(detail, style: Zoro.font(22, color: Zoro.muted)),
+                Text(
+                  detail,
+                  style: settingsFont(context, 22, color: Zoro.muted),
+                ),
               ],
               const SizedBox(height: 28),
               Row(
@@ -806,7 +1094,8 @@ class SettingsSectionHeader extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(8, 16, 8, 10),
     child: Text(
       title.toUpperCase(),
-      style: Zoro.font(
+      style: settingsFont(
+        context,
         18,
         weight: FontWeight.w600,
         color: Zoro.muted,
@@ -823,7 +1112,7 @@ class SettingsFootnote extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(8, 10, 8, 6),
-    child: Text(text, style: Zoro.font(18, color: Zoro.muted)),
+    child: Text(text, style: settingsFont(context, 18, color: Zoro.muted)),
   );
 }
 
@@ -845,7 +1134,42 @@ class _Cell extends StatelessWidget {
   final bool enabled;
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context) {
+    if (CompactSettings.of(context)) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Semantics(
+          button: true,
+          enabled: enabled,
+          label: label,
+          excludeSemantics: label != null,
+          child: Opacity(
+            opacity: enabled ? 1 : 0.45,
+            child: Material(
+              color: Zoro.panel,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: enabled ? onPressed : null,
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 52),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  alignment: Alignment.centerLeft,
+                  child: builder(Zoro.text, Zoro.muted),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return _tv(context);
+  }
+
+  Widget _tv(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Focusable(
       onPressed: enabled ? onPressed : () {},
@@ -897,11 +1221,12 @@ class SettingsToggle extends StatelessWidget {
     builder: (fg, secondary) => Row(
       children: [
         Expanded(
-          child: Text(title, style: Zoro.font(24, color: fg)),
+          child: Text(title, style: settingsFont(context, 24, color: fg)),
         ),
         Text(
           value ? 'On' : 'Off',
-          style: Zoro.font(
+          style: settingsFont(
+            context,
             24,
             weight: FontWeight.w600,
             color: value
@@ -971,9 +1296,12 @@ class _SettingsPickerState<T> extends State<SettingsPicker<T>> {
           builder: (fg, secondary) => Row(
             children: [
               Expanded(
-                child: Text(widget.title, style: Zoro.font(24, color: fg)),
+                child: Text(
+                  widget.title,
+                  style: settingsFont(context, 24, color: fg),
+                ),
               ),
-              Text(_label, style: Zoro.font(24, color: secondary)),
+              Text(_label, style: settingsFont(context, 24, color: secondary)),
               const SizedBox(width: 10),
               Icon(
                 _open
@@ -1010,7 +1338,10 @@ class _SettingsPickerState<T> extends State<SettingsPicker<T>> {
                                   )
                                 : null,
                           ),
-                          Text(label, style: Zoro.font(24, color: fg)),
+                          Text(
+                            label,
+                            style: settingsFont(context, 24, color: fg),
+                          ),
                         ],
                       ),
                     ),
@@ -1057,10 +1388,10 @@ class SettingsAction extends StatelessWidget {
             const SizedBox(width: 16),
           ],
           Expanded(
-            child: Text(title, style: Zoro.font(24, color: color)),
+            child: Text(title, style: settingsFont(context, 24, color: color)),
           ),
           if (subtitle != null)
-            Text(subtitle!, style: Zoro.font(22, color: secondary)),
+            Text(subtitle!, style: settingsFont(context, 22, color: secondary)),
         ],
       );
     },
@@ -1069,28 +1400,57 @@ class SettingsAction extends StatelessWidget {
 
 /// A label and value that is not editable.
 class SettingsInfo extends StatelessWidget {
-  const SettingsInfo({super.key, required this.title, required this.value});
+  const SettingsInfo({
+    super.key,
+    required this.title,
+    required this.value,
+    this.focusOnTv = false,
+  });
 
   final String title;
   final String value;
+  final bool focusOnTv;
 
   @override
-  Widget build(BuildContext context) => Container(
-    constraints: const BoxConstraints(minHeight: 64),
+  Widget build(BuildContext context) {
+    if (!focusOnTv || CompactSettings.of(context)) return _row(context, false);
+    return Focus(
+      onFocusChange: (focused) {
+        if (focused) {
+          Scrollable.ensureVisible(
+            context,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          );
+        }
+      },
+      child: Builder(
+        builder: (context) => _row(context, Focus.of(context).hasFocus),
+      ),
+    );
+  }
+
+  Widget _row(BuildContext context, bool focused) => Container(
+    constraints: BoxConstraints(
+      minHeight: CompactSettings.of(context) ? 48 : 64,
+    ),
     margin: const EdgeInsets.only(bottom: 6),
-    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+    padding: EdgeInsets.symmetric(
+      horizontal: CompactSettings.of(context) ? 16 : 24,
+      vertical: CompactSettings.of(context) ? 10 : 12,
+    ),
     decoration: BoxDecoration(
       color: Zoro.panel.withValues(alpha: 0.6),
       borderRadius: BorderRadius.circular(14),
+      border: focused ? Border.all(color: Colors.white, width: 2) : null,
     ),
     child: Row(
       children: [
-        Expanded(child: Text(title, style: Zoro.font(24))),
+        Expanded(child: Text(title, style: settingsFont(context, 24))),
         Flexible(
           child: Text(
             value,
             textAlign: TextAlign.right,
-            style: Zoro.font(24, color: Zoro.muted),
+            style: settingsFont(context, 24, color: Zoro.muted),
           ),
         ),
       ],
@@ -1121,17 +1481,30 @@ class SettingsTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
-    child: TvTextField(
-      controller: controller,
-      enabled: enabled,
-      obscureText: obscure,
-      autofocus: autofocus,
-      autocorrect: false,
-      enableSuggestions: !obscure,
-      keyboardType: keyboardType,
-      onSubmitted: onSubmitted,
-      style: Zoro.font(24),
-      decoration: InputDecoration(labelText: label),
-    ),
+    child: CompactSettings.of(context)
+        ? TextField(
+            controller: controller,
+            enabled: enabled,
+            obscureText: obscure,
+            autofocus: autofocus,
+            autocorrect: false,
+            enableSuggestions: !obscure,
+            keyboardType: keyboardType,
+            onSubmitted: onSubmitted,
+            style: settingsFont(context, 24),
+            decoration: InputDecoration(labelText: label),
+          )
+        : TvTextField(
+            controller: controller,
+            enabled: enabled,
+            obscureText: obscure,
+            autofocus: autofocus,
+            autocorrect: false,
+            enableSuggestions: !obscure,
+            keyboardType: keyboardType,
+            onSubmitted: onSubmitted,
+            style: settingsFont(context, 24),
+            decoration: InputDecoration(labelText: label),
+          ),
   );
 }

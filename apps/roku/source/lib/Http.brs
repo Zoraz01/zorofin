@@ -13,7 +13,6 @@ function ZHttp(method as string, url as string, headers as object, body = invali
     xfer.RetainBodyOnError(true)
     if LCase(Left(url, 6)) = "https:" then
         xfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
-        xfer.InitClientCertificates()
     end if
     xfer.AddHeader("Accept", "application/json")
     for each key in headers

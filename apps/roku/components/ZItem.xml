@@ -34,5 +34,9 @@
     <field id="programEnd" type="integer" />
     <field id="landscape" type="boolean" />
     <field id="action" type="string" />
+    <!-- Live now card: name, competition, kind, channel, start, finish, favoriteTeam, score -->
+    <field id="live" type="assocarray" />
+    <!-- Your teams game on Home: title, status, crests (two absolute URLs) -->
+    <field id="game" type="assocarray" />
   </interface>
 </component>

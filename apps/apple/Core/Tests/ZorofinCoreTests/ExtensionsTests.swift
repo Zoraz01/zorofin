@@ -324,3 +324,14 @@ private func extensionClient(_ transport: any HTTPTransport, token: String = "fi
         #expect(await transport.requests.isEmpty)
     }
 }
+
+@Suite("Sports capability") struct SportsCapabilityTests {
+    @Test func advertisedSportsModuleIsDiscovered() async throws {
+        let transport = ExtensionTransport([(200, #"{"schemaVersion":1,"features":{"sportsEvents":{"version":1,"enabled":true},"notificationReads":{"version":1,"enabled":true},"liveTvStreams":{"version":1,"enabled":true}}}"#)])
+        let server = try ServerAddress("https://media.example/jellyfin")
+        let client = JellyfinClient(server: server, identity: .init(deviceID: "fixture", deviceName: "Fixture"), session: .init(server: server, viewer: .init(id: "viewer", name: "Viewer"), token: "fixture", deviceID: "fixture"), transport: transport)
+        let result = try await client.discoverFeatures()
+        #expect(result.features.sportsEvents && result.features.liveTvStreams && result.features.notificationReads)
+        #expect(!ServerFeatures().sportsEvents)
+    }
+}

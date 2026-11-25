@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Live now card, the sports card approved Nov 9 for every Zorofin app (web,
+  Flutter, Apple). Scored games: the matchup art with a bottom-to-top dark
+  fade and both teams with their scores over it, a red LIVE tag (hidden
+  once final) and a star for the server's favorite teams; under the card
+  "NBA · Q3 4:12" and the channel. Other events: the programme art, a LIVE
+  tag, the event name and channel. RowList item component; itemContent is
+  a ZItem with the "live" field.
+-->
+<component name="LiveEventCard" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="onContent" />
+    <field id="width" type="float" onChange="layout" />
+    <field id="height" type="float" />
+    <field id="focusPercent" type="float" onChange="onFocus" />
+    <field id="rowFocusPercent" type="float" />
+    <field id="itemHasFocus" type="boolean" />
+    <field id="rowHasFocus" type="boolean" />
+    <field id="rowListHasFocus" type="boolean" onChange="onFocus" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveEvents.brs" />
+  <script type="text/brightscript" uri="pkg:/components/widgets/LiveEventCard.brs" />
+  <children>
+    <Group id="frame" translation="[12,12]">
+      <Group id="lift">
+        <Rectangle id="placeholder" color="0x1B211EFF" />
+        <!-- The sport's illustration (same art as web, Apple and Flutter): the last fallback -->
+        <Poster id="sport" loadDisplayMode="scaleToZoom" visible="false" />
+        <Rectangle id="tint" visible="false" />
+        <Label id="sportLabel" horizAlign="center" color="0xBBC5BDFF" />
+        <Poster id="logo" loadDisplayMode="scaleToFit" />
+        <Poster id="awayCrest" loadDisplayMode="scaleToFit" visible="false" />
+        <Poster id="homeCrest" loadDisplayMode="scaleToFit" visible="false" />
+        <Poster id="art" loadDisplayMode="scaleToFit" />
+        <Poster id="fade" uri="pkg:/images/score_fade.png" visible="false" />
+        <Group id="teams" visible="false">
+          <Group id="awayRow">
+            <Label id="awayName" color="0xFFFFFFFF" height="36" vertAlign="center" maxLines="1" />
+            <Label id="awayScore" color="0xFFFFFFFF" height="36" vertAlign="center" horizAlign="right" />
+          </Group>
+          <Group id="homeRow" translation="[0,38]">
+            <Label id="homeName" color="0xFFFFFFFF" height="36" vertAlign="center" maxLines="1" />
+            <Label id="homeScore" color="0xFFFFFFFF" height="36" vertAlign="center" horizAlign="right" />
+          </Group>
+        </Group>
+        <Poster id="corners" uri="pkg:/images/corners.9.png" />
+        <Rectangle id="progressFill" height="4" />
+        <Poster id="livePill" uri="pkg:/images/pill.9.png" blendColor="0x000000BF" height="30" />
+        <Poster id="liveDot" uri="pkg:/images/circle.png" blendColor="0xFF453AFF" width="10" height="10" />
+        <Label id="liveText" text="LIVE" color="0xFFFFFFFF" height="30" horizAlign="left" vertAlign="center" />
+        <Poster id="starPill" uri="pkg:/images/badge.9.png" blendColor="0x000000D1" width="38" height="30" visible="false" />
+        <Label id="starText" text="★" color="0xFFD60AFF" width="38" height="30" horizAlign="center" vertAlign="center" visible="false" />
+        <Poster id="ring" uri="pkg:/images/card_ring.9.png" opacity="0" />
+      </Group>
+      <Label id="title" color="0xF5F7F5FF" maxLines="1" />
+      <Label id="caption" color="0xBBC5BDFF" maxLines="1" />
+    </Group>
+  </children>
+</component>

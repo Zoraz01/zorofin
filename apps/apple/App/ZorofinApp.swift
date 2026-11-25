@@ -88,7 +88,9 @@ struct PhonePlaybackOrientation: UIViewRepresentable {
             }
             // UIKit handles geometry changes; never force UIDevice orientation
             // through private KVC. A background scene may decline the request.
-            window.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { _ in }
+            // UIKit can deliver errors off-main. We ignore them, so omit the
+            // optional handler instead of supplying a MainActor-isolated closure.
+            window.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: orientations))
         }
     }
 }

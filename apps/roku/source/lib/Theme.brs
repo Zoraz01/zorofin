@@ -7,7 +7,7 @@ function ZTheme() as object
         border: "0x39423CFF",
         text: "0xF5F7F5FF",
         muted: "0xBBC5BDFF",
-        jade: "0x72E79BFF",
+        jade: ZAccent(),
         play: "0x1CB956FF",
         avatar: "0x24543EFF",
         gold: "0xFFD60AFF",
@@ -70,4 +70,26 @@ function ZSectionTitle(text as string, x = 96 as integer, y = 0 as integer) as o
     g.appendChild(bar)
     g.appendChild(label)
     return g
+end function
+
+' The accent colour (jade unless the server's looks.json sets one), with
+' the given alpha. m.global.accent is "0xRRGGBB", set by MainScene.
+function ZAccent(alpha = "FF" as string) as string
+    accent = ""
+    if m.global <> invalid and m.global.hasField("accent") then accent = ZStr(m.global.accent)
+    if Len(accent) <> 8 then accent = "0x72E79B"
+    return accent + alpha
+end function
+
+' Poster size: the server's card size when its looks set one, else the
+' viewer's own Display setting.
+function ZPosterScale() as float
+    if m.global = invalid then return 1.0
+    forced = 0.0
+    serverDefault = 0.0
+    if m.global.hasField("cardScale") then forced = m.global.cardScale
+    if m.global.hasField("defaultCardScale") then serverDefault = m.global.defaultCardScale
+    s = m.global.settings
+    if s = invalid then s = {}
+    return ZEffectivePosterScale(forced, serverDefault, ZNum(s.posterScale, 1.0), s.posterSizeChosen = true)
 end function

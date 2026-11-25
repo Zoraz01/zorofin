@@ -1,4 +1,6 @@
 sub init()
+    m.top.findNode("resultIcon").blendColor = ZAccent()
+    m.top.findNode("resultTitle").color = ZAccent()
     m.top.findNode("title").font = ZFont(32, "bold")
     m.top.findNode("intro").font = ZFont(22)
     m.top.findNode("sender").font = ZFont(20, "semibold")

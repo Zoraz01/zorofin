@@ -10,6 +10,8 @@
     <field id="content" type="node" onChange="onContent" />
     <field id="landscape" type="boolean" value="false" onChange="onContent" />
     <field id="cardWidth" type="integer" value="0" onChange="onContent" />
+    <!-- MediaCard, or LiveEventCard for the Live now row -->
+    <field id="itemComponent" type="string" value="MediaCard" onChange="onContent" />
     <field id="height" type="integer" />
     <field id="itemSelected" type="node" alwaysNotify="true" />
     <field id="itemFocused" type="node" alwaysNotify="true" />

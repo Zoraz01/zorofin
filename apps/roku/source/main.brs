@@ -11,7 +11,15 @@ sub Main(args as dynamic)
         session: {},
         features: {},
         appVersion: AppVersion(),
-        settings: {}
+        settings: {},
+        ' Server looks (looks.json): "0xRRGGBB" accent, card scale (0 = viewer's own).
+        accent: "",
+        ' Plugin extras the server turned on: { calendar, catchUp }.
+        extras: {},
+        ' Playback problem reports this run: { sent, refused }.
+        playbackProblems: {},
+        cardScale: 0.0,
+        defaultCardScale: 0.0
     })
 
     scene = screen.CreateScene("MainScene")
@@ -25,6 +33,20 @@ sub Main(args as dynamic)
 
     input = CreateObject("roInput")
     input.setMessagePort(port)
+
+    ' Roku's memory monitor: log warnings with the channel's headroom so low
+    ' memory shows up in the developer console and crash reports.
+    ' Low general memory comes from roDeviceInfo (roAppMemoryMonitor has no
+    ' such method on Roku OS 15.3 and stops the channel at launch).
+    memory = CreateObject("roAppMemoryMonitor")
+    if memory <> invalid then
+        memory.SetMessagePort(port)
+        memory.EnableMemoryWarningEvent(true)
+        print "[memory] limit "; FormatJson(memory.GetChannelMemoryLimit()); ", available "; memory.GetChannelAvailableMemory(); " KB"
+    end if
+    device = CreateObject("roDeviceInfo")
+    device.SetMessagePort(port)
+    device.EnableLowGeneralMemoryEvent(true)
 
     while true
         msg = wait(0, port)
@@ -43,6 +65,10 @@ sub Main(args as dynamic)
                     end for
                     print "[textures] unloaded "; urls.count()
                 end if
+            end if
+        else if kind = "roAppMemoryWarningEvent" or kind = "roAppMemoryNotificationEvent" or kind = "roDeviceInfoEvent"
+            if memory <> invalid then
+                print "[memory] "; kind; " used "; memory.GetMemoryLimitPercent(); "% , available "; memory.GetChannelAvailableMemory(); " KB"
             end if
         else if kind = "roInputEvent"
             if msg.isInput() then

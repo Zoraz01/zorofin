@@ -58,7 +58,12 @@ end sub
 sub ZForgetAccount(key as string)
     list = []
     for each a in ZAccounts()
-        if a.key <> key then list.push(a)
+        if a.key <> key then
+            list.push(a)
+        else
+            scope = ZNotificationScope(a)
+            if scope <> "" then DeleteFile("cachefs:/zorofin-home-v1-" + scope + ".json")
+        end if
     end for
     ZRegWrite("accounts", list)
     if ZRegRead("active") = key then ZRegWrite("active", invalid)
@@ -93,13 +98,20 @@ function ZSettings() as object
         subtitles: "default",     ' default | always | off
         autoplayNext: true,
         skipIntro: true,
+        ' Home: rest on a movie or show to play its trailer, muted.
+        autoplayPreviews: true,
+        ' Player: chapter names can give the story away, so off until asked for.
+        showChapters: false,
+        ' Tell the server owner when a title won't start or keeps failing.
+        sendPlaybackReports: true,
         ' Display, as in the Apple app's NativePreferences.
         showTitles: true,
         showProgress: true,
-        showRatings: false,
+        showRatings: true,
         showQualityBadges: true,
         showUnreadBadge: true,
         posterScale: 1.0,
+        posterSizeChosen: false,
         reduceMotion: false,
         ' Controls.
         skipBack: 10,
@@ -107,15 +119,69 @@ function ZSettings() as object
     }
     saved = ZRegRead("settings")
     if ZIsMap(saved) then
-        for each k in defaults
-            if saved[k] <> invalid then defaults[k] = saved[k]
+        ' Iterate a copy of the keys: writing into an associative array while
+        ' "for each" walks it skips entries, so saved toggles such as Show
+        ' chapters and the report opt-out came back as defaults (Nov 24).
+        ' Match keys without regard to case: dot assignments (p.showChapters)
+        ' are written in lower case, and parsed JSON maps can be case-sensitive,
+        ' so saved toggles came back as defaults (Roku tasks 227/327, Nov 24).
+        lower = {}
+        for each sk in saved
+            lower[LCase(sk)] = saved[sk]
         end for
+        for each k in defaults.Keys()
+            v = lower[LCase(k)]
+            if v <> invalid then defaults[k] = v
+        end for
+    end if
+    key = ZPosterSettingKey()
+    ' Migrate the old device-wide choice only to the account using it.
+    if ZIsMap(saved) and (saved.doesExist("posterScale") or saved.doesExist("posterscale")) then
+        oldScale = saved["posterScale"]
+        if oldScale = invalid then oldScale = saved["posterscale"]
+        if key <> "" and ZNum(oldScale, 1.0) <> 1.0 and ZRegRead(key) = invalid then ZRegWrite(key, oldScale)
+        for each dead in ["posterScale", "posterscale", "posterSizeChosen", "postersizechosen"]
+            saved.delete(dead)
+        end for
+        ZRegWrite("settings", saved)
+    end if
+    defaults.posterScale = 1.0
+    defaults.posterSizeChosen = false
+    if key <> "" then
+        scale = ZRegRead(key)
+        if ZIsPosterScale(scale) then
+            defaults.posterScale = scale
+            defaults.posterSizeChosen = true
+        end if
     end if
     return defaults
 end function
 
+function ZPosterSettingKey() as string
+    account = ZActiveAccount()
+    if account = invalid then return ""
+    return "poster:" + ZStr(account.key)
+end function
+
+function ZIsPosterScale(value as dynamic) as boolean
+    return ZNum(value, 0) = 0.85 or ZNum(value, 0) = 1.0 or ZNum(value, 0) = 1.2
+end function
+
 sub ZSaveSettings(settings as object)
-    ZRegWrite("settings", settings)
+    key = ZPosterSettingKey()
+    if key <> "" then
+        if settings.posterSizeChosen = true and ZIsPosterScale(settings.posterScale) then
+            ZRegWrite(key, settings.posterScale)
+        else
+            ZRegWrite(key, invalid)
+        end if
+    end if
+    general = {}
+    for each k in settings
+        lk = LCase(k)
+        if lk <> "posterscale" and lk <> "postersizechosen" then general[lk] = settings[k]
+    end for
+    ZRegWrite("settings", general)
 end sub
 
 ' Stable per-channel device id from Roku (not the serial number).
@@ -165,6 +231,7 @@ function ZSeenReplies() as object
 end function
 
 sub ZMarkRepliesSeen(replies as object)
+    if replies.count() = 0 then return
     key = ZSeenRepliesKey()
     if key = "" then return
     seen = ZSeenReplies()
@@ -194,3 +261,74 @@ function ZUnreadReplies(replies as dynamic) as integer
     end for
     return count
 end function
+
+' The last server looks seen per server, so the first frame after launch
+' already wears them.
+function ZCachedLooks(server as string) as object
+    saved = ZRegRead("looks")
+    if ZIsMap(saved) and ZIsMap(saved[server]) then return saved[server]
+    return { accent: "", cardScale: 0.0 }
+end function
+
+sub ZSaveLooks(server as string, looks as object)
+    saved = ZRegRead("looks")
+    if not ZIsMap(saved) then saved = {}
+    saved[server] = { accent: ZStr(looks.accent), cardScale: ZNum(looks.cardScale, 0.0), defaultCardScale: ZNum(looks.defaultCardScale, 0.0) }
+    ZRegWrite("looks", saved)
+end sub
+
+' Catch Up titles this viewer skipped, on this Roku only (as the web keeps
+' them per browser). Capped so the registry stays small.
+function ZCatchUpSkips() as object
+    saved = ZRegRead("catchUpSkips:" + ZCatchUpAccount())
+    if ZIsArray(saved) then return saved
+    return []
+end function
+
+sub ZSaveCatchUpSkips(skips as object)
+    ZRegWrite("catchUpSkips:" + ZCatchUpAccount(), skips)
+end sub
+
+function ZCatchUpAccount() as string
+    s = m.global.session
+    if s = invalid then return ""
+    return ZStr(s.serverId) + ":" + ZStr(s.userId)
+end function
+
+
+' Bounded device fallback/migration receipts. The server stores full account
+' history; Roku's small registry stores no titles or message text here.
+function ZLocalRequestReads() as object
+    key = ZSeenRepliesKey()
+    saved = ZRegRead("requests:" + key)
+    state = { initialized: false, requests: {} }
+    if key = "" or not ZIsMap(saved) then return state
+    state.initialized = saved.initialized = true
+    if ZIsArray(saved.ids) then
+        for each id in saved.ids
+            state.requests[id.toStr()] = true
+        end for
+    end if
+    return state
+end function
+
+sub ZMarkRequestsSeen(ids as object, initialize = false as boolean)
+    if ids.count() = 0 and not initialize then return
+    key = ZSeenRepliesKey()
+    if key = "" then return
+    state = ZLocalRequestReads()
+    ordered = []
+    for each id in state.requests
+        ordered.push(id.toInt())
+    end for
+    for each id in ids
+        if state.requests[id.toStr()] <> true then
+            ordered.push(id)
+            state.requests[id.toStr()] = true
+        end if
+    end for
+    while ordered.count() > 200
+        ordered.shift()
+    end while
+    ZRegWrite("requests:" + key, { initialized: initialize or state.initialized, ids: ordered })
+end sub

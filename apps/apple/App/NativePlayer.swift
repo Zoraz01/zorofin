@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import Combine
 import ZorofinCore
 
 struct PlaybackPresentation: Identifiable {
@@ -9,9 +10,61 @@ struct PlaybackPresentation: Identifiable {
 }
 
 @MainActor @Observable final class PlaybackController {
-    let player = AVPlayer()
+    /// The app's own AVPlayer, or the on-device player's once it opened the file.
+    private(set) var player: AVPlayer = {
+        let player = AVPlayer()
+        #if DEBUG
+        // UI tests on the Mac play silently.
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-muted") { player.isMuted = true }
+        #endif
+        return player
+    }()
     @ObservationIgnored weak var watchTogether: WatchTogetherModel?
+    /// Set while the original file plays on the device (`OnDevicePlayback`).
+    private(set) var onDevice: OnDevicePlayer?
+    @ObservationIgnored private var engineSubscriptions: [AnyCancellable] = []
+    @ObservationIgnored private var client: JellyfinClient?
+    /// Playback problems go to the viewer's server only while it collects
+    /// them and the viewer left reporting on; the caller decides both.
+    @ObservationIgnored private var problemReports = false
+    @ObservationIgnored private var problemItem: MediaItem?
+    static var problemPlatform: String {
+        #if os(tvOS)
+        return "Apple TV"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #endif
+    }
+    func reportProblem(_ kind: PlaybackProblem, reason: String = "", startMs: Int? = nil) {
+        guard problemReports, let client, let item = problemItem else { return }
+        let report = PlaybackProblemReport(kind: kind, item: item, platform: Self.problemPlatform, identity: client.identity,
+            method: PlaybackProblemReport.method(plan?.method, isLive: live, onDevice: onDevice != nil), reason: reason,
+            startMs: startMs, positionSeconds: live || !ready ? nil : Int(currentSeconds.isFinite ? currentSeconds : 0))
+        Task { await PlaybackProblemLog.shared.send(report, client: client) }
+    }
     private(set) var syncItemID: String?
+    /// Positive: subtitles appear later. The on-device player's overlay reads
+    /// it directly; for AVPlayer's own text subtitles `shiftedSubtitles` takes
+    /// over the drawing while it is not zero.
+    var subtitleOffset: Double = 0 { didSet { applySubtitleShift() } }
+    @ObservationIgnored let shiftedSubtitles = ShiftedSubtitles()
+    private func applySubtitleShift() {
+        shiftedSubtitles.apply(offset: ready && !stopped && onDevice == nil && !live ? subtitleOffset : 0, to: player.currentItem)
+    }
+    /// Positive: sound plays later. Only the on-device player can move it.
+    private(set) var audioOffset: Double = 0
+    @ObservationIgnored private var audioOffsetTask: Task<Void, Never>?
+    /// Each change re-anchors playback, so wait until the viewer stops stepping.
+    func setAudioOffset(_ seconds: Double, immediately: Bool = false) {
+        audioOffset = seconds
+        audioOffsetTask?.cancel()
+        if immediately { onDevice?.setAudioDelay(seconds); return }
+        audioOffsetTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            guard let self, !self.stopped else { return }
+            self.onDevice?.setAudioDelay(self.audioOffset)
+        }
+    }
     private var groupFeedbackSuppressedUntil = Date.distantPast
     private var soloPlaybackRate: Float = 1
     private var bufferingTask: Task<Void, Never>?
@@ -33,6 +86,13 @@ struct PlaybackPresentation: Identifiable {
     private var live = false
     var resolvedOptions: PlaybackOptions? { plan?.options }
     var playbackMethod: String? { plan?.method }
+    var conversionReasons: [String] { plan?.conversionReasons ?? [] }
+    var deliveryDescription: String {
+        onDevice != nil ? "Original file, played on this device" : plan?.deliveryDescription ?? "Preparing"
+    }
+    /// Set when this stream was negotiated with a text subtitle, so its HLS
+    /// manifest carries every text track and switching needs no new stream.
+    private var manifestCarriesSubtitles = false
     private var reporter: PlaybackReporter?
     private var plan: PlaybackPlan?
     private var observation: NSKeyValueObservation?
@@ -45,16 +105,23 @@ struct PlaybackPresentation: Identifiable {
     private(set) var isPreparing = false
     private var unreleasedStream: (JellyfinClient, String)?
 
-    func prepare(client: JellyfinClient, presentation: PlaybackPresentation, preferences: NativePreferences, liveTVCapacityEnabled: Bool = false) async {
+    func prepare(client: JellyfinClient, presentation: PlaybackPresentation, preferences: NativePreferences, liveTVCapacityEnabled: Bool = false,
+                 problemReports: Bool = false) async {
         guard !stopped else { return }
+        self.problemReports = problemReports; problemItem = presentation.item
+        let began = ContinuousClock.now
         isPreparing = true
         defer { isPreparing = false }
         var options = presentation.options
         syncItemID = presentation.item.id
         if presentation.item.isLive { options.startTicks = 0 }
+        // Text subtitles ride in the HLS manifest for movies and episodes, so
+        // choosing one remuxes instead of re-encoding the video.
+        else { options.manifestSubtitles = true }
         var ownedStream: String?
         mediaDuration = presentation.item.runTimeTicks.map(MediaTime.seconds)
         live = presentation.item.isLive
+        self.client = client
         do {
             #if os(tvOS)
             if live { try await client.checkLiveTVCapacity(channelID: presentation.item.id, enabled: liveTVCapacityEnabled) }
@@ -68,72 +135,104 @@ struct PlaybackPresentation: Identifiable {
                 if source?.requiresClosing == true { ownedStream = source?.liveStreamId }
             }
             try ensureActive()
-            let plan = try PlaybackPlan.make(info: info, source: source, itemID: presentation.item.id, client: client, options: options)
+            let serverPlan = try PlaybackPlan.make(info: info, source: source, itemID: presentation.item.id, client: client, options: options)
+            var plan = serverPlan
+            // MKV with DTS/TrueHD, PGS or styled subtitles: open the original
+            // file on the device instead of having the server convert it.
+            var onDeviceRequest: OnDevicePlayback.Request?
+            if let source, OnDevicePlayer.shared != nil,
+               OnDevicePlayback.shouldUse(plan: plan, source: source, isLive: live,
+                   hardwareHEVC: PlaybackProfile.hardwareHEVC, maxBitrate: options.bitrate),
+               let request = try? OnDevicePlayback.request(plan: plan, source: source, client: client) {
+                onDeviceRequest = request
+                plan = plan.playedOnDevice(url: request.url)
+            }
             self.plan = plan
             resolvedSource = source
+            manifestCarriesSubtitles = !live && plan.method == "Transcode" && options.manifestSubtitles && options.subtitleIndex >= 0
             reporter = PlaybackReporter(client: client, plan: plan)
             ownedStream = nil // The reporter now owns final cleanup, even if setup fails.
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try AVAudioSession.sharedInstance().setActive(true)
-            let preparation = AVPlayerPreparationDriver(player: player, url: plan.url,
-                allowsLiveResourcesWhilePaused: live && customControls && keepsLiveWindowFresh,
-                subtitleAppearance: preferences.subtitleAppearance,
-                isActive: { [weak self] in self?.stopped == false })
             let startSeconds = live ? 0 : MediaTime.seconds(ticks: options.startTicks)
-            try await PlayerPreparation.run(preparation,
-                startSeconds: startSeconds,
-                primePausedFrame: !live && startsPaused,
-                recoverPausedHLS: !live && startsPaused && options.startTicks > 0 && plan.method == "Transcode",
-                timeout: PlayerPreparation.timeout(method: plan.method, isLive: live, startSeconds: startSeconds))
-            try ensureActive()
-            guard let item = preparation.item else { throw ClientError.unsupportedPlayback }
+            if let onDeviceRequest, let device = OnDevicePlayer.shared {
+                do {
+                    player = try await device.load(onDeviceRequest, client: client, owner: self)
+                    onDevice = device
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // The engine couldn't open it: use the server's stream instead.
+                    // Nothing was reported yet, so the session simply changes plan.
+                    device.stop(owner: self)
+                    self.plan = serverPlan
+                    plan = serverPlan
+                    reporter = PlaybackReporter(client: client, plan: serverPlan)
+                    manifestCarriesSubtitles = !live && serverPlan.method == "Transcode" && options.manifestSubtitles && options.subtitleIndex >= 0
+                }
+                try ensureActive()
+            }
+            let item: AVPlayerItem
+            if onDevice == nil {
+                let preparation = AVPlayerPreparationDriver(player: player, url: plan.url,
+                    allowsLiveResourcesWhilePaused: live && customControls && keepsLiveWindowFresh,
+                    subtitleAppearance: preferences.subtitleAppearance, startSeconds: startSeconds,
+                    isActive: { [weak self] in self?.stopped == false })
+                try await PlayerPreparation.run(preparation,
+                    startSeconds: startSeconds,
+                    primePausedFrame: !live && startsPaused,
+                    recoverPausedHLS: !live && startsPaused && options.startTicks > 0 && plan.method == "Transcode",
+                    timeout: PlayerPreparation.timeout(method: plan.method, isLive: live, startSeconds: startSeconds))
+                try ensureActive()
+                guard let prepared = preparation.item else { throw ClientError.unsupportedPlayback }
+                if !live, plan.method != "DirectPlay" { await ManifestSubtitles.applyServerSelection(to: prepared) }
+                item = prepared
+            } else {
+                guard let current = player.currentItem else { throw ClientError.unsupportedPlayback }
+                item = current
+            }
             // Item readiness alone does not mean the resume seek/preroll is done.
             ready = true; loading = false
-            itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-                let status = item.status
-                Task { @MainActor [weak self] in
-                    guard let self, !self.stopped else { return }
-                    if status == .failed {
-                        #if DEBUG
-                        // Numeric diagnostics only: AVFoundation error descriptions and
-                        // log URIs can contain authenticated media URLs.
-                        let failure = item.error as NSError?
-                        let underlying = failure?.userInfo[NSUnderlyingErrorKey] as? NSError
-                        let mediaCodes = item.errorLog()?.events.map(\.errorStatusCode) ?? []
-                        print("ZorofinPlayerDiagnostic failure=\(failure?.code ?? 0) underlying=\(underlying?.code ?? 0) media=\(mediaCodes)")
-                        #endif
-                        self.error = "Playback could not start. Check the server's transcoding settings and try another audio or subtitle track."
-                        self.loading = false
-                        await self.stop(failed: true)
+            applySubtitleShift()
+            let took = PlaybackProblemReport.milliseconds(began.duration(to: .now))
+            if took >= 10_000 { reportProblem(.slowStart, startMs: took) }
+            if let onDevice {
+                observeEngine(onDevice)
+            } else {
+                itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                    let status = item.status
+                    Task { @MainActor [weak self] in
+                        guard let self, !self.stopped else { return }
+                        if status == .failed {
+                            #if DEBUG
+                            // Numeric diagnostics only: AVFoundation error descriptions and
+                            // log URIs can contain authenticated media URLs.
+                            let failure = item.error as NSError?
+                            let underlying = failure?.userInfo[NSUnderlyingErrorKey] as? NSError
+                            let mediaCodes = item.errorLog()?.events.map(\.errorStatusCode) ?? []
+                            print("ZorofinPlayerDiagnostic failure=\(failure?.code ?? 0) underlying=\(underlying?.code ?? 0) media=\(mediaCodes)")
+                            #endif
+                            // Numeric codes only, as above: descriptions can carry media URLs.
+                            let stopError = item.error as NSError?
+                            self.reportProblem(.stopped, reason: "Playback could not continue (AVFoundation \(stopError?.domain ?? "") \(stopError?.code ?? 0))")
+                            self.error = "Playback could not continue. Try again or choose a lower quality."
+                            self.loading = false
+                            await self.stop(failed: true)
+                        }
+                        self.refreshPresentation()
                     }
-                    self.refreshPresentation()
+                }
+                endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+                    Task { @MainActor [weak self] in await self?.playedToEnd() }
                 }
             }
-            observation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-                let status = player.timeControlStatus
-                Task { @MainActor [weak self] in await self?.stateChanged(status) }
-            }
-            if customControls && !live {
-                uiObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
-                    Task { @MainActor [weak self] in self?.refreshPresentation() }
-                }
-            }
-            periodicObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 10, preferredTimescale: 600), queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in await self?.progress() }
-            }
-            endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    let grouped = self?.watchTogether?.isJoined == true
-                    if grouped { await self?.watchTogether?.nextItem() }
-                    await self?.stop(keepingGroupPlayback: grouped); self?.finished = true
-                }
-            }
+            attachPlayerObservers()
             try ensureActive()
             soloPlaybackRate = live ? 1 : Float(preferences.playbackSpeed)
             player.defaultRate = watchTogether?.isJoined == true ? 1 : soloPlaybackRate
             if watchTogether?.isJoined == true {
                 await watchTogether?.playerReady(self, itemID: presentation.item.id)
-            } else if !pausedForEpisodeBrowser && !startsPaused { player.play() }
+            } else if !pausedForEpisodeBrowser && !startsPaused { resume() }
             refreshPresentation()
         } catch {
             #if DEBUG
@@ -149,13 +248,111 @@ struct PlaybackPresentation: Identifiable {
                 do { try await client.closeLive(ownedStream) }
                 catch { unreleasedStream = (client, ownedStream) }
             }
+            if !(error is CancellationError) {
+                let why: String
+                if case let PlayerPreparationFailure.failed(code, underlying, _) = error { why = "The player failed to open the stream (\(code), \(underlying))" }
+                else if case PlayerPreparationFailure.timedOut = error { why = "The stream did not open in time" }
+                else if case PlayerPreparationFailure.interrupted = error { why = "Opening the stream was interrupted" }
+                else { why = (error as? ClientError)?.localizedDescription ?? (error as? LiveTVCapacityError)?.localizedDescription ?? "Playback is unavailable" }
+                reportProblem(.startFailed, reason: why, startMs: PlaybackProblemReport.milliseconds(began.duration(to: .now)))
+            }
             await stop(failed: !(error is CancellationError))
             loading = false
             if !(error is CancellationError) { self.error = (error as? LiveTVCapacityError)?.localizedDescription ?? (error as? ClientError)?.localizedDescription ?? "Playback is unavailable. Please try again." }
             refreshPresentation()
         }
     }
+    /// Time observers live on the AVPlayer, which the on-device player can swap.
+    private func attachPlayerObservers() {
+        observation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            let status = player.timeControlStatus
+            Task { @MainActor [weak self] in await self?.stateChanged(status) }
+        }
+        if customControls && !live {
+            uiObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.refreshPresentation() }
+            }
+        }
+        periodicObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 10, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.progress() }
+        }
+    }
+    private func detachPlayerObservers() {
+        if let periodicObserver { player.removeTimeObserver(periodicObserver); self.periodicObserver = nil }
+        if let uiObserver { player.removeTimeObserver(uiObserver); self.uiObserver = nil }
+        observation?.invalidate(); observation = nil
+    }
+    /// The engine reports the end, a failure, and a new AVPlayer after it
+    /// rebuilds a session; the original file has no AVPlayerItem of our own.
+    private func observeEngine(_ device: OnDevicePlayer) {
+        engineSubscriptions = device.observe(ended: { [weak self] in
+            guard let self, !self.stopped, self.onDevice != nil else { return }
+            Task { await self.playedToEnd() }
+        }, failed: { [weak self] in
+            guard let self, !self.stopped, self.onDevice != nil else { return }
+            self.error = "Playback could not continue. Try again or choose a lower quality."
+            self.loading = false
+            Task { await self.stop(failed: true); self.refreshPresentation() }
+        }, changed: { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.refreshPresentation()
+        }, playerReplaced: { [weak self] next in
+            guard let self, !self.stopped, self.onDevice != nil, next !== self.player else { return }
+            self.detachPlayerObservers()
+            next.defaultRate = self.player.defaultRate
+            self.player = next
+            self.attachPlayerObservers()
+        })
+    }
+    private func playedToEnd() async {
+        let grouped = watchTogether?.isJoined == true
+        if grouped { await watchTogether?.nextItem() }
+        await stop(keepingGroupPlayback: grouped); finished = true
+    }
+    private func resume() {
+        if let onDevice { onDevice.play() } else { player.play() }
+    }
+    private func pausePlayback() {
+        if let onDevice { onDevice.pause() } else { player.pause() }
+    }
+    /// The playback position in the file's seconds, on either route.
+    private var currentSeconds: Double { onDevice?.position ?? player.currentTime().seconds }
+    private func seekPlayer(to seconds: Double) async -> Bool {
+        if let onDevice { await onDevice.seek(to: seconds); return true }
+        return await player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+    /// Switch between text subtitles (or off) inside the current HLS stream.
+    /// Returns false when the change needs a new stream from the server.
+    func switchManifestSubtitle(to index: Int) async -> Bool {
+        if let onDevice, ready, !stopped, let plan, let client {
+            // The on-device player draws every subtitle format it was chosen for.
+            if index >= 0 {
+                guard let format = resolvedSource?.mediaStreams?.first(where: { $0.index == index && $0.type == "Subtitle" })?
+                    .codec?.lowercased(), OnDevicePlayback.drawnSubtitles.contains(format) else { return false }
+            }
+            guard let subtitle = try? OnDevicePlayback.subtitle(index, plan: plan, source: resolvedSource, server: client.server)
+            else { return false }
+            onDevice.selectSubtitle(subtitle, client: client)
+            self.plan = plan.selectingSubtitle(index)
+            await reporter?.selectSubtitle(index)
+            return true
+        }
+        guard manifestCarriesSubtitles, ready, !stopped, let plan, let item = player.currentItem,
+              let streams = resolvedSource?.mediaStreams else { return false }
+        guard await ManifestSubtitles.select(streamIndex: index, streams: streams, in: item),
+              !stopped, player.currentItem === item else { return false }
+        self.plan = plan.selectingSubtitle(index)
+        await reporter?.selectSubtitle(index)
+        return true
+    }
     func skip(seconds: Int) {
+        if let onDevice, ready, !stopped {
+            let target = max(0, min(onDevice.duration ?? .infinity, currentSeconds + Double(seconds)))
+            guard target.isFinite else { return }
+            if let group = watchTogether, group.isJoined { Task { await group.requestSeek(seconds: target) }; return }
+            Task { await onDevice.seek(to: target); refreshPresentation() }
+            return
+        }
         guard ready, !stopped, let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue else { return }
         let start = range.start.seconds, end = CMTimeRangeGetEnd(range).seconds
         guard start.isFinite, end.isFinite, player.currentTime().seconds.isFinite else { return }
@@ -173,13 +370,22 @@ struct PlaybackPresentation: Identifiable {
             }
         }
         let item = player.currentItem
-        let duration = mediaDuration ?? item?.duration.seconds
+        let duration = mediaDuration ?? onDevice?.duration ?? item?.duration.seconds
         // Retain the intended position through startup failure/retry. An empty
         // replacement item reports zero before its initial seek has completed.
-        let localPosition = !ready && !live ? MediaTime.seconds(ticks: plan?.options.startTicks ?? 0) : player.currentTime().seconds
-        timeline = PlayerTimeline(localPosition: localPosition, duration: live ? nil : duration,
-                                  isLive: live, seekable: ranges(item?.seekableTimeRanges ?? []),
-                                  buffered: ranges(item?.loadedTimeRanges ?? []), liveEdgeOffset: item?.recommendedTimeOffsetFromLive.seconds ?? 2)
+        let localPosition = !ready && !live ? MediaTime.seconds(ticks: plan?.options.startTicks ?? 0) : currentSeconds
+        if let onDevice {
+            // The engine's AVPlayer runs its own local timeline; the engine maps it to the file's.
+            let end = onDevice.duration ?? duration ?? 0
+            timeline = PlayerTimeline(localPosition: localPosition, duration: duration, isLive: false,
+                                      seekable: [PlayerTimeRange(start: 0, end: end)].compactMap { $0 },
+                                      buffered: [PlayerTimeRange(start: localPosition, end: onDevice.buffered)].compactMap { $0 },
+                                      liveEdgeOffset: 2)
+        } else {
+            timeline = PlayerTimeline(localPosition: localPosition, duration: live ? nil : duration,
+                                      isLive: live, seekable: ranges(item?.seekableTimeRanges ?? []),
+                                      buffered: ranges(item?.loadedTimeRanges ?? []), liveEdgeOffset: item?.recommendedTimeOffsetFromLive.seconds ?? 2)
+        }
         if error != nil { phase = .failed }
         else if finished { phase = .ended }
         else if stopped { phase = .paused }
@@ -200,16 +406,16 @@ struct PlaybackPresentation: Identifiable {
             let paused = player.timeControlStatus != .paused
             Task { await group.requestPause(paused) }; return
         }
-        if player.timeControlStatus == .paused { player.play() } else { player.pause() }
+        if player.timeControlStatus == .paused { resume() } else { pausePlayback() }
         refreshPresentation()
     }
     func seekLocal(seconds: Double, resume: Bool) async {
         guard !stopped, ready, seconds.isFinite else { return }
         if let group = watchTogether, group.isJoined { await group.requestSeek(seconds: seconds); return }
-        player.pause()
-        let completed = await player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        pausePlayback()
+        let completed = await seekPlayer(to: seconds)
         guard completed, !stopped, !Task.isCancelled else { return }
-        if resume { player.play() }
+        if resume { self.resume() }
         refreshPresentation()
     }
     private func ensureActive() throws {
@@ -218,9 +424,9 @@ struct PlaybackPresentation: Identifiable {
     }
     private var position: Int64 {
         // AVPlayer reports the absolute VOD playlist position, including HLS.
-        MediaTime.ticks(seconds: player.currentTime().seconds)
+        MediaTime.ticks(seconds: currentSeconds)
     }
-    private var canSeek: Bool { player.currentItem?.seekableTimeRanges.isEmpty == false }
+    private var canSeek: Bool { onDevice != nil || player.currentItem?.seekableTimeRanges.isEmpty == false }
     private func stateChanged(_ status: AVPlayer.TimeControlStatus) async {
         refreshPresentation()
         guard !stopped, let reporter else { return }
@@ -249,7 +455,7 @@ struct PlaybackPresentation: Identifiable {
     func pauseForInterface() {
         groupPlaybackSuspended = true
         groupFeedbackSuppressedUntil = .distantFuture
-        player.pause()
+        pausePlayback()
         if let group = watchTogether, group.isJoined { Task { await group.pauseForInterface(self) } }
     }
     func allowGroupCommands() {
@@ -260,7 +466,7 @@ struct PlaybackPresentation: Identifiable {
         allowGroupCommands()
         if let group = watchTogether, group.isJoined, let syncItemID {
             Task { await group.playerReady(self, itemID: syncItemID) }
-        } else { player.play() }
+        } else { resume() }
     }
     func leaveSyncPlay() {
         watchTogether = nil; bufferingTask?.cancel()
@@ -273,16 +479,16 @@ struct PlaybackPresentation: Identifiable {
         guard !stopped, ready else { return }
         groupFeedbackSuppressedUntil = .distantFuture
         defer { groupFeedbackSuppressedUntil = Date().addingTimeInterval(1) }
-        if command == "Stop" { player.pause(); refreshPresentation(); return }
+        if command == "Stop" { pausePlayback(); refreshPresentation(); return }
         guard ["Pause", "Unpause", "Seek"].contains(command) else { return }
         let seconds = MediaTime.seconds(ticks: ticks)
         let shouldPlay = command == "Unpause" || command == "Seek" && watchTogether?.group?.state == "Playing"
-        player.pause()
-        if seconds.isFinite, abs(player.currentTime().seconds - seconds) > 0.15 {
-            _ = await player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-        }
+        pausePlayback()
+        if seconds.isFinite, abs(currentSeconds - seconds) > 0.15 { _ = await seekPlayer(to: seconds) }
         guard !stopped, !Task.isCancelled else { return }
-        if shouldPlay { player.playImmediately(atRate: 1) }
+        if shouldPlay {
+            if onDevice != nil { player.defaultRate = 1; resume() } else { player.playImmediately(atRate: 1) }
+        }
         refreshPresentation()
         if command == "Seek" { await watchTogether?.reportReadiness(buffering: false) }
     }
@@ -304,26 +510,36 @@ struct PlaybackPresentation: Identifiable {
         if let stopTask { await stopTask.value; return }
         refreshPresentation()
         stopped = true
+        shiftedSubtitles.detach()
         bufferingTask?.cancel()
         let finalPosition = position
         player.currentItem?.canUseNetworkResourcesForLiveStreamingWhilePaused = false
         player.cancelPendingPrerolls()
         player.currentItem?.cancelPendingSeeks()
-        player.pause()
-        if let periodicObserver { player.removeTimeObserver(periodicObserver); self.periodicObserver = nil }
-        if let uiObserver { player.removeTimeObserver(uiObserver); self.uiObserver = nil }
+        pausePlayback()
+        engineSubscriptions.removeAll()
+        detachPlayerObservers()
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
-        observation?.invalidate(); itemObservation?.invalidate()
+        itemObservation?.invalidate()
         let cleanup = Task { @MainActor in
             if !keepingGroupPlayback { await watchTogether?.playerClosed(self) }
             await reporter?.stop(positionTicks: finalPosition, failed: failed)
-            player.replaceCurrentItem(with: nil)
+            if let onDevice { onDevice.stop(owner: self) } else { player.replaceCurrentItem(with: nil) }
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
         stopTask = cleanup
         await cleanup.value
         refreshPresentation()
     }
+}
+
+private struct IntroSegmentPage: Decodable, Sendable {
+    struct Segment: Decodable, Sendable {
+        let type: String
+        let startTicks: Int64
+        let endTicks: Int64
+    }
+    let items: [Segment]
 }
 
 struct NativePlayerView: View {
@@ -334,6 +550,8 @@ struct NativePlayerView: View {
     let onClose: () -> Void
     @State private var controller = PlaybackController()
     @State private var active: PlaybackPresentation?
+    @State private var introItemID: String?
+    @State private var intros: [IntroSegmentPage.Segment] = []
     @State private var nextEpisode: MediaItem?
     @State private var countdown = 5
     @State private var nextTask: Task<Void, Never>?
@@ -345,9 +563,15 @@ struct NativePlayerView: View {
     @State private var resolvedItem: MediaItem?
     @State private var chrome = PlayerInteraction()
     @State private var customPanel: PlayerPanel?
+    @State private var extras = PlayerExtrasModel()
+    @State private var trackMemory = TrackMemory()
+    @State private var queuedChapter: Double?
     @State private var queuedSettings: PlaybackOptions?
     @State private var queuedSettingsResume = false
     @State private var customBitrate: Int?
+    @State private var automaticQuality = true
+    @State private var adaptive: AdaptiveQuality?
+    @State private var adaptiveItemID: String?
     @State private var videoFeatures = CustomVideoFeatures()
     @State private var seekTask: Task<Void, Never>?
     @State private var pendingSeek = PlayerPendingSeek()
@@ -388,6 +612,11 @@ struct NativePlayerView: View {
     }
     private var episodeContext: MediaItem { resolvedItem?.id == current.item.id ? resolvedItem! : current.item }
     private var current: PlaybackPresentation { active ?? presentation }
+    private var trackStore: TrackMemoryStore? {
+        guard !model.isDemo, let session = model.session else { return nil }
+        return TrackMemoryStore(scope: "\(session.server.storageKey).\(session.viewer.id)")
+    }
+    private func saveTrackMemory() { trackStore?.save(trackMemory, for: TrackMemory.key(for: episodeContext)) }
     private var playerSettingsItem: MediaItem {
         var item = episodeContext
         if let source = controller.resolvedSource { item.mediaSources = [source] }
@@ -406,13 +635,25 @@ struct NativePlayerView: View {
         if current.item.isLive { return liveProgram == nil ? "Live TV" : [current.item.channelNumber, current.item.name].compactMap { $0 }.joined(separator: " · ") }
         return episodeContext.isEpisode ? episodeContext.episodeLabel : ""
     }
+    private var introEnd: Double? {
+        guard introItemID == current.item.id, !model.watchTogether.isJoined, !controller.loading,
+              let duration = controller.timeline.duration, controller.error == nil, !switchingEpisode, !showEpisodes, customPanel == nil else { return nil }
+        let at = controller.timeline.position
+        return intros.first {
+            $0.type == "Intro" && $0.startTicks >= 0 && $0.endTicks > $0.startTicks &&
+            MediaTime.seconds(ticks: $0.startTicks) <= at && at < MediaTime.seconds(ticks: $0.endTicks) &&
+            MediaTime.seconds(ticks: $0.endTicks) < duration
+        }.map { MediaTime.seconds(ticks: $0.endTicks) }
+    }
     private var playbackCanvas: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             #if os(tvOS)
-            SystemTVPlayerSurface(player: controller.player, title: playerTitle, subtitle: playerSubtitle,
+            SystemTVPlayerSurface(player: controller.player, engineSwitchesDisplay: controller.onDevice != nil,
+                title: playerTitle, subtitle: playerSubtitle,
                 overview: episodeContext.overview ?? "", allowsPiP: model.preferences.pictureInPicture,
                 menuState: .init(episodes: episodeContext.isEpisode && episodeContext.seriesId != nil,
+                                 chapters: !current.item.isLive && extras.hasChapters,
                                  live: current.item.isLive, canSeek: controller.timeline.canSeek && (!current.item.isLive || controller.timeline.canTimeShiftLive),
                                  canGoLive: controller.timeline.liveEdgeTarget != nil && (!controller.timeline.isAtLiveEdge || controller.phase == .paused),
                                  enabled: !controller.loading && !switchingEpisode && !controller.finished,
@@ -439,6 +680,7 @@ struct NativePlayerView: View {
                     hasEpisodes: episodeContext.isEpisode && episodeContext.seriesId != nil,
                     hasTracks: !(playerSettingsItem.mediaSources?.first?.mediaStreams ?? []).isEmpty,
                     showsRoutes: true, pipAvailable: videoFeatures.possible, isLive: current.item.isLive,
+                    extras: current.item.isLive ? nil : extras,
                     interaction: $chrome, action: customAction)
                     .disabled(showEpisodes || customPanel != nil)
                     .allowsHitTesting(!showEpisodes && customPanel == nil)
@@ -448,6 +690,18 @@ struct NativePlayerView: View {
                               onPiPChange: { controller.inPictureInPicture = $0 }).ignoresSafeArea()
             }
             #endif
+            if let device = controller.onDevice {
+                #if os(tvOS)
+                OnDeviceSubtitleOverlay(player: device, offset: controller.subtitleOffset).ignoresSafeArea()
+                #else
+                // The custom surface fits the picture inside the safe area.
+                let fill = usesCustomPlayer && chrome.videoSizing == .fill
+                OnDeviceSubtitleOverlay(player: device, fill: fill, offset: controller.subtitleOffset).ignoresSafeArea(edges: usesCustomPlayer && !fill ? [] : .all)
+                #endif
+            } else {
+                // Empty unless a subtitle timing is set on a stream AVPlayer plays.
+                ShiftedSubtitleOverlay(subtitles: controller.shiftedSubtitles).ignoresSafeArea()
+            }
             if switchingEpisode { ProgressView("Preparing video…").padding(24).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12)) }
             else if controller.loading && !usesCustomPlayer { ProgressView("Preparing \(current.item.name)…").padding(24).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12)) }
             if let error = controller.error {
@@ -505,6 +759,11 @@ struct NativePlayerView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
+            if let end = introEnd, nextEpisode == nil {
+                Button("Skip intro") { seekCustom(to: end, resume: controller.phase != .paused) }
+                    .buttonStyle(ZoroButtonStyle()).padding(.trailing, Theme.isTV ? 48 : 16)
+                    .padding(.bottom, Theme.isTV ? 160 : 100)
+            }
             if let nextEpisode {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Up next in \(countdown)").font(.headline)
@@ -531,6 +790,16 @@ struct NativePlayerView: View {
         .onChange(of: customPanel) { previous, panel in
             if previous != nil && panel == nil { closeCustomPanel() }
         }
+        .task(id: "adaptive-\(current.id)-\(scenePhase == .active)") {
+            if adaptive == nil || adaptiveItemID != current.item.id {
+                adaptiveItemID = current.item.id
+                adaptive = AdaptiveQuality(ceiling: current.options.bitrate)
+            }
+            while !Task.isCancelled && !closingPlayer {
+                await adaptQuality()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
         .task(id: "live-clock-\(current.id)-\(scenePhase == .active)") {
             guard usesCustomPlayer, current.item.isLive, scenePhase == .active else { return }
             // AVPlayer's time observer stops while paused; the live window does not.
@@ -549,6 +818,23 @@ struct NativePlayerView: View {
                 do { try await Task.sleep(for: .seconds(60)) } catch { return }
             }
         }
+        .task(id: "extras-\(current.id)-\(controller.resolvedSource?.id ?? "")") {
+            let item = current.item
+            extras.showChapters = model.preferences.showChapters == true
+            guard !item.isLive, let client = model.client, let source = controller.resolvedSource else { extras.reset(); return }
+            if extras.itemID != item.id { await extras.load(client: client, itemID: item.id, mediaSourceID: source.id) }
+        }
+        .task(id: "intro-\(current.id)") {
+            intros = []
+            introItemID = nil
+            let item = current.item
+            guard item.isEpisode, let client = model.client else { return }
+            let page = try? await client.request(IntroSegmentPage.self, path: ["MediaSegments", item.id],
+                query: [URLQueryItem(name: "includeSegmentTypes", value: "Intro")])
+            guard !Task.isCancelled, current.item.id == item.id else { return }
+            intros = page?.items ?? []
+            introItemID = item.id
+        }
         .task(id: current.id) {
             guard let client = model.client else { return }
             let generation = model.generation, selected = current, preparing = controller
@@ -559,7 +845,21 @@ struct NativePlayerView: View {
             if let details = try? await client.item(item.id, fresh: true) { item = details; metadataFetchedAt = .now }
             guard !Task.isCancelled, !closingPlayer, generation == model.generation, current.id == selected.id else { return }
             resolvedItem = item; liveItemFetchedAt = metadataFetchedAt
-            var options = (model.viewerSettings ?? ViewerSettings(name: model.viewerName)).playbackOptions(selected.options, item: item)
+            // What the viewer last picked for this show wins over the account
+            // defaults, unless this playback asked for specific tracks.
+            var requested = selected.options
+            let memory = item.isLive ? TrackMemory() : trackStore?.memory(for: TrackMemory.key(for: item)) ?? TrackMemory()
+            if !item.isLive, requested.audioIndex == nil, requested.subtitleIndex == -2 {
+                let streams = item.mediaSources?.first?.mediaStreams ?? []
+                let audio = streams.filter { $0.type == "Audio" }
+                let picked = memory.pick(streams)
+                // Leave the file's default implicit to preserve direct playback.
+                if let index = picked.audio, index != (audio.first { $0.isDefault == true } ?? audio.first)?.index { requested.audioIndex = index }
+                if let index = picked.subtitle { requested.subtitleIndex = index }
+            }
+            trackMemory = memory
+            preparing.subtitleOffset = memory.subtitleOffset
+            var options = (model.viewerSettings ?? ViewerSettings(name: model.viewerName)).playbackOptions(requested, item: item)
             if options.subtitleIndex == -2 { options.subtitleIndex = -1 }
             preparing.customControls = usesCustomPlayer
             preparing.watchTogether = model.watchTogether.isJoined ? model.watchTogether : nil
@@ -567,7 +867,9 @@ struct NativePlayerView: View {
             var preferences = model.preferences
             preferences.playbackSpeed = selected.item.isLive ? 1 : preferences.playbackSpeed
             await preparing.prepare(client: client, presentation: .init(item: item, options: options), preferences: preferences,
-                                    liveTVCapacityEnabled: model.features.liveTVAvailability)
+                                    liveTVCapacityEnabled: model.features.liveTVAvailability,
+                                    problemReports: model.features.playbackReports && model.preferences.sendPlaybackReports != false)
+            preparing.setAudioOffset(memory.audioOffset, immediately: true)
             if showEpisodes || scenePhase == .background && model.preferences.pauseInBackground && !preparing.inPictureInPicture && !(usesCustomPlayer && preparing.player.isExternalPlaybackActive) {
                 preparing.pauseForInterface()
             }
@@ -902,10 +1204,14 @@ struct NativePlayerView: View {
         }
     }
     private func closeCustomPanel() {
-        guard !closingPlayer else { queuedSettings = nil; queuedChannel = nil; return }
+        guard !closingPlayer else { queuedSettings = nil; queuedChannel = nil; queuedChapter = nil; return }
         let pausedForPanel = controller.pausedForEpisodeBrowser
         controller.pausedForEpisodeBrowser = false
-        if let channel = queuedChannel {
+        if let chapter = queuedChapter {
+            queuedChapter = nil; queuedSettings = nil; queuedSettingsResume = false
+            _ = chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active)
+            seekCustom(to: chapter, resume: true)
+        } else if let channel = queuedChannel {
             queuedChannel = nil
             _ = chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active, replacing: true)
             switchTask = Task {
@@ -915,14 +1221,58 @@ struct NativePlayerView: View {
             queuedSettings = nil
             let resume = queuedSettingsResume && chrome.panelResumeIntent && scenePhase == .active
             queuedSettingsResume = false
-            _ = chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active, replacing: true)
+            let original = controller.resolvedOptions ?? current.options
             let item = episodeContext
-            switchTask = Task { await replacePlayback(item: item, options: options, resume: resume) }
+            if options.bitrate == original.bitrate, options.audioIndex == original.audioIndex,
+               options.subtitleIndex != original.subtitleIndex {
+                // Text subtitles already in the stream switch in place; anything
+                // else (first subtitle, image subtitles) falls back to a new stream.
+                _ = chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active)
+                let selected = controller
+                switchTask = Task {
+                    if await selected.switchManifestSubtitle(to: options.subtitleIndex) {
+                        guard selected === controller, !closingPlayer else { return }
+                        selected.refreshPresentation()
+                        if resume && scenePhase == .active && !selected.finished && selected.error == nil { selected.resumeAfterInterface() }
+                    } else {
+                        await replacePlayback(item: item, options: options, resume: resume)
+                    }
+                }
+            } else {
+                _ = chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active, replacing: true)
+                switchTask = Task { await replacePlayback(item: item, options: options, resume: resume) }
+            }
         } else if chrome.closePanel(now: ProcessInfo.processInfo.systemUptime, active: scenePhase == .active), pausedForPanel, !controller.finished, controller.error == nil {
             controller.resumeAfterInterface()
         }
         if controller.finished && !current.item.isLive { nextTask = Task { await prepareNext() } }
     }
+    private func adaptQuality() async {
+        let playerItem = controller.player.currentItem
+        let localPosition = controller.player.currentTime().seconds
+        let ahead = playerItem?.loadedTimeRanges.map { value in
+            let range = value.timeRangeValue, start = range.start.seconds, end = CMTimeRangeGetEnd(range).seconds
+            return start <= localPosition && end >= localPosition ? end-localPosition : 0
+        }.max() ?? 0
+        let options = controller.resolvedOptions ?? current.options
+        let next = adaptive?.sample(now: ProcessInfo.processInfo.systemUptime,
+            position: controller.timeline.position, bitrate: options.bitrate,
+            enabled: automaticQuality && !model.watchTogether.isJoined && scenePhase == .active,
+            ready: playerItem?.status == .readyToPlay && !controller.loading && !controller.finished && controller.error == nil && !switchingEpisode,
+            paused: controller.phase == .paused || customPanel != nil || showEpisodes,
+            seeking: pendingSeek.current != nil || chrome.scrubPosition != nil,
+            buffering: controller.player.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+            bufferedAhead: ahead, sourceBitrate: controller.resolvedSource?.bitrate)
+        guard let next, !closingPlayer, !Task.isCancelled else { return }
+        if next < options.bitrate {
+            controller.reportProblem(.qualityLowered, reason: "\(options.bitrate / 1_000_000) to \(next / 1_000_000) Mbps after buffering")
+        }
+        var replacement = options
+        replacement.bitrate = next
+        replacement.startTicks = current.item.isLive ? 0 : MediaTime.ticks(seconds: controller.timeline.position)
+        await replacePlayback(item: current.item, options: replacement, resume: true)
+    }
+
     private func changePlayerSetting(_ change: PlayerSettingChange) {
         guard !closingPlayer, !switchingEpisode, scenePhase == .active, controller.phase != .preparing else { return }
         do {
@@ -935,29 +1285,46 @@ struct NativePlayerView: View {
             } else {
                 queuedSettings = nil; queuedSettingsResume = false
             }
-            if case .bitrate(let value) = change { customBitrate = value }
+            if case .bitrate(let value) = change { customBitrate = value; automaticQuality = false }
+            if !current.item.isLive {
+                let streams = playerSettingsItem.mediaSources?.first?.mediaStreams ?? []
+                switch change {
+                case .audio(let index?):
+                    trackMemory = trackMemory.choosing(audio: streams.first { $0.type == "Audio" && $0.index == index }); saveTrackMemory()
+                case .subtitles(let index) where index == -1:
+                    trackMemory = trackMemory.choosing(off: true); saveTrackMemory()
+                case .subtitles(let index) where index >= 0:
+                    trackMemory = trackMemory.choosing(subtitle: streams.first { $0.type == "Subtitle" && $0.index == index }); saveTrackMemory()
+                default: break
+                }
+            }
         } catch { model.message = "That option is no longer available for this video. Reopen the player options and try again." }
     }
     private var customPanelTitle: String {
         switch customPanel {
         case .channels: "Channels & guide"
         case .tracks: "Audio & subtitles"
+        case .chapters: "Chapters"
         case .quality: "Quality"
         case .information: "Playback info"
         default: "Player options"
         }
     }
     private var episodeOptionsPanel: some View {
-        PlayerOptionsSurface(title: "Seasons & episodes", context: episodeContext.seriesName ?? episodeContext.displayTitle,
-                             wide: true, fullWidth: Theme.isTV, controlsClearance: controlsClearance, close: { showEpisodes = false }) { _ in
-            SeasonEpisodeBrowser(context: episodeContext, playSelection: { episode in
-                queuedEpisode = episode.id == current.item.id ? nil : episode
-                showEpisodes = false
-            }).id(model.generation)
+        ScrollViewReader { proxy in
+            PlayerOptionsSurface(title: "Seasons & episodes", context: episodeContext.seriesName ?? episodeContext.displayTitle,
+                                 wide: true, fullWidth: Theme.isTV, controlsClearance: controlsClearance, close: { showEpisodes = false }) { _ in
+                SeasonEpisodeBrowser(context: episodeContext,
+                    scrollToEpisode: { id in proxy.scrollTo(id, anchor: .center) }, playSelection: { episode in
+                        queuedEpisode = episode.id == current.item.id ? nil : episode
+                        showEpisodes = false
+                    }).id(model.generation)
+            }
         }
     }
     private var customSettingsPanel: some View {
-        PlayerOptionsSurface(title: customPanelTitle, context: playerTitle, wide: customPanel == .channels,
+        PlayerOptionsSurface(title: customPanelTitle, context: playerTitle, wide: customPanel == .channels || customPanel == .chapters && Theme.isTV,
+                             fullWidth: customPanel == .chapters && Theme.isTV, liveSchedule: customPanel == .channels,
                              controlsClearance: controlsClearance, close: { customPanel = nil }) { width in
             VStack(alignment: .leading, spacing: Theme.isTV ? 12 : 20) {
                 if customPanel == .channels {
@@ -979,14 +1346,23 @@ struct NativePlayerView: View {
                         : AnyLayout(VStackLayout(alignment: .leading, spacing: 28))
                     layout { audioChoices; subtitleChoices }
                     #endif
+                } else if customPanel == .chapters {
+                    ChapterChoices(extras: extras, position: controller.timeline.position) { chapter in
+                        queuedChapter = chapter.start; customPanel = nil
+                    }.playerFocusSection()
                 } else if customPanel == .quality {
                     Text(Theme.isTV ? (current.item.isLive ? "Changes restart at live." : "Maximum streaming bitrate") : (current.item.isLive ? "Changing quality reconnects at live and clears the rewind buffer." : "Maximum streaming bitrate. Original quality plays when it fits this limit and your device."))
                         .font(Theme.font(Theme.isTV ? 21 : 14)).foregroundStyle(Theme.muted)
                     VStack(spacing: 2) {
-                        ForEach([40, 20, 12, 8, 4, 2], id: \.self) { mbps in
-                            playerChoice("\(mbps) Mbps", selected: selectedPlayerOptions.bitrate == mbps * 1_000_000,
-                                         preferred: selectedPlayerOptions.bitrate == mbps * 1_000_000 ||
-                                            (mbps == 40 && ![40, 20, 12, 8, 4, 2].contains(where: { selectedPlayerOptions.bitrate == $0 * 1_000_000 }))) {
+                        playerChoice("Auto · up to \((adaptive?.ceiling ?? model.bitrate) / 1_000_000) Mbps", selected: automaticQuality,
+                                     preferred: automaticQuality) {
+                            changePlayerSetting(.bitrate(adaptive?.ceiling ?? model.bitrate)); automaticQuality = true
+                        }
+                        let bitrateChoices = [120, 80, 60, 40, 20, 12, 8, 4, 2]
+                        ForEach(bitrateChoices, id: \.self) { mbps in
+                            playerChoice("\(mbps) Mbps", selected: !automaticQuality && selectedPlayerOptions.bitrate == mbps * 1_000_000,
+                                         preferred: !automaticQuality && (selectedPlayerOptions.bitrate == mbps * 1_000_000 ||
+                                            (mbps == 40 && !bitrateChoices.contains(where: { selectedPlayerOptions.bitrate == $0 * 1_000_000 })))) {
                                 changePlayerSetting(.bitrate(mbps * 1_000_000))
                             }
                         }
@@ -1026,6 +1402,14 @@ struct NativePlayerView: View {
                     changePlayerSetting(.audio(stream.index))
                 }
             }
+            // Only the on-device player owns the sound, so only it can move it.
+            if controller.onDevice != nil {
+                Divider().overlay(Theme.border).padding(.vertical, 6)
+                TimingRow(title: "Audio timing", value: controller.audioOffset) { value in
+                    controller.setAudioOffset(value)
+                    trackMemory.audioOffset = value; saveTrackMemory()
+                }
+            }
         }.frame(maxWidth: .infinity, alignment: .leading).playerFocusSection()
     }
     private var subtitleChoices: some View {
@@ -1041,7 +1425,25 @@ struct NativePlayerView: View {
                     changePlayerSetting(.subtitles(stream.index))
                 }
             }
+            // The app draws these subtitles itself, so it can shift them: always
+            // on the on-device player, and for text subtitles in other streams
+            // by taking the cues over from AVPlayer.
+            if selectedPlayerOptions.subtitleIndex >= 0, controller.onDevice != nil || streamTextSubtitle(streams) {
+                Divider().overlay(Theme.border).padding(.vertical, 6)
+                TimingRow(title: "Subtitle timing", value: controller.subtitleOffset) { value in
+                    controller.subtitleOffset = value
+                    trackMemory.subtitleOffset = value; saveTrackMemory()
+                }
+            }
         }.frame(maxWidth: .infinity, alignment: .leading).playerFocusSection()
+    }
+    /// Whether the chosen subtitle reaches AVPlayer as text (not burned into
+    /// the picture), so its timing can be moved.
+    private func streamTextSubtitle(_ streams: [MediaStream]) -> Bool {
+        guard !current.item.isLive, controller.playbackMethod == "DirectPlay" || PlaybackProfile.hardwareHEVC,
+              let codec = streams.first(where: { $0.index == selectedPlayerOptions.subtitleIndex })?.codec?.lowercased()
+        else { return false }
+        return PlaybackProfile.manifestSubtitleFormats.contains(codec)
     }
     private func trackDetail(_ stream: MediaStream, among streams: [MediaStream]) -> String? {
         // Keep single tracks clean, but retain enough information to distinguish
@@ -1052,7 +1454,14 @@ struct NativePlayerView: View {
     private var playbackInformation: some View {
         VStack(alignment: .leading, spacing: 16) {
             let method = controller.playbackMethod
-            playbackFact("Playback", method == "DirectPlay" ? "Direct play" : method == "DirectStream" ? "Direct stream" : method == "Transcode" ? "Transcoding" : "Preparing")
+            playbackFact("Playback", controller.deliveryDescription)
+            if let bitrate = controller.resolvedSource?.bitrate, bitrate > 0 {
+                playbackFact("Source bitrate", String(format: "%.1f Mbps", Double(bitrate) / 1_000_000))
+            }
+            if method == "Transcode" {
+                playbackFact("Conversion reason", controller.conversionReasons.isEmpty ? "Not reported by server" : controller.conversionReasons.joined(separator: "; "))
+            }
+            playbackFact("Quality mode", automaticQuality ? "Auto" + (adaptive?.reason.map { " · " + $0 } ?? "") : "Fixed")
             playbackFact("Quality limit", "\((controller.resolvedOptions ?? current.options).bitrate / 1_000_000) Mbps")
             if let size = controller.player.currentItem?.presentationSize, size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 {
                 playbackFact("Playing resolution", "\(Int(size.width)) × \(Int(size.height))")
@@ -1114,8 +1523,22 @@ struct NativePlayerView: View {
                         .foregroundStyle(Theme.muted)
                 }
             }
-            if liveGuide?.channelID == current.item.id, let next = liveGuide?.next(at: liveClock) {
-                Text("Next · " + next.name).foregroundStyle(Theme.muted)
+            if let guide = liveGuide, guide.channelID == current.item.id,
+               (0..<120).contains(liveClock.timeIntervalSince(guide.fetchedAt)) {
+                let upcoming = guide.programs.filter { ($0.schedule?.start ?? .distantPast) > liveClock }
+                if !upcoming.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Coming up on this channel").font(Theme.font(Theme.isTV ? 24 : 17, weight: .semibold))
+                        ForEach(Array(upcoming.prefix(4).enumerated()), id: \.offset) { _, program in
+                            if let schedule = program.schedule {
+                                HStack(alignment: .top, spacing: 14) {
+                                    Text(schedule.start, style: .time).foregroundStyle(Theme.muted)
+                                    Text(program.name).frame(maxWidth: .infinity, alignment: .leading)
+                                }.font(Theme.font(Theme.isTV ? 22 : 14)).accessibilityElement(children: .combine)
+                            }
+                        }
+                    }.padding(.vertical, 8).accessibilityIdentifier("live-channel-schedule")
+                }
             }
             TextField("Find a channel", text: $channelQuery).modifier(ServerFieldInput())
                 .accessibilityLabel("Find a channel")
@@ -1219,6 +1642,7 @@ private struct PlayerOptionsSurface<Content: View>: View {
     let context: String
     var wide = false
     var fullWidth = false
+    var liveSchedule = false
     var controlsClearance: CGFloat = 0.22
     let close: () -> Void
     @ViewBuilder let content: (CGFloat) -> Content
@@ -1231,8 +1655,8 @@ private struct PlayerOptionsSurface<Content: View>: View {
         GeometryReader { geometry in
             #if os(tvOS)
             let bottom = geometry.size.height * min(0.55, max(0, controlsClearance)) + 8
-            let width = min(fullWidth ? geometry.size.width - 96 : wide ? 1180.0 : 560.0, geometry.size.width - 96)
-            let height = min(fullWidth ? 460.0 : wide ? 560.0 : 600.0, max(180, geometry.size.height - bottom - 48))
+            let width = min(fullWidth ? geometry.size.width - 96 : liveSchedule ? 680.0 : wide ? 1180.0 : 560.0, geometry.size.width - 96)
+            let height = min(fullWidth ? 460.0 : liveSchedule ? geometry.size.height - bottom - 48 : wide ? 560.0 : 600.0, max(180, geometry.size.height - bottom - 48))
             ZStack(alignment: .bottomTrailing) {
                 Color.black.opacity(0.12).contentShape(Rectangle()).onTapGesture(perform: close)
                     .accessibilityHidden(true)
@@ -1344,6 +1768,7 @@ private extension View {
 #if os(tvOS)
 private struct SystemTVPlayerMenuState: Equatable {
     let episodes: Bool
+    var chapters = false
     let live: Bool
     let canSeek: Bool
     let canGoLive: Bool
@@ -1355,6 +1780,8 @@ private struct SystemTVPlayerMenuState: Equatable {
 /// negotiated stream, session reporting and server-only options behind it.
 private struct SystemTVPlayerSurface: UIViewControllerRepresentable {
     let player: AVPlayer
+    /// The on-device player sets the TV's picture mode before its item loads.
+    let engineSwitchesDisplay: Bool
     let title: String
     let subtitle: String
     let overview: String
@@ -1391,6 +1818,7 @@ private struct SystemTVPlayerSurface: UIViewControllerRepresentable {
         coordinator.action = action; coordinator.close = close
         coordinator.onPiPChange = onPiPChange; coordinator.navigate = navigate
         coordinator.contentClearance = contentClearance
+        view.appliesPreferredDisplayCriteriaAutomatically = !engineSwitchesDisplay
         if view.player !== player { view.player = player }
         view.allowsPictureInPicturePlayback = allowsPiP
         view.requiresLinearPlayback = !menuState.canSeek
@@ -1503,6 +1931,7 @@ private struct SystemTVPlayerSurface: UIViewControllerRepresentable {
             if state.live { items.append(control("Channels & guide", "list.bullet.rectangle", .panel(.channels))) }
             else if state.episodes { items.append(control("Seasons & episodes", "rectangle.stack", .panel(.episodes))) }
             if state.live && state.canGoLive { items.append(control("Go live", "forward.end.fill", .goLive)) }
+            if state.chapters { items.append(control("Chapters", "list.bullet.rectangle", .panel(.chapters))) }
             if !state.live { items.append(control("Audio & subtitles", "captions.bubble", .panel(.tracks))) }
             items.append(control("Quality", "slider.horizontal.3", .panel(.quality)))
             items.append(control("Playback info", "info.circle", .panel(.information)))
@@ -1662,6 +2091,8 @@ private struct CustomPlayerControls: View {
     var showsRoutes = false
     var pipAvailable = false
     var isLive = false
+    /// Chapters and scrub thumbnails, when this title has them.
+    var extras: PlayerExtrasModel?
     @Binding var interaction: PlayerInteraction
     let action: (CustomPlayerAction) -> Void
     private var now: Double { ProcessInfo.processInfo.systemUptime }
@@ -1941,7 +2372,7 @@ private struct CustomPlayerControls: View {
             }, cancel: {
                 if interaction.cancelScrub(now: now) { action(.resumeAfterScrub) }
             }, adjust: { target in action(.seek(target, resume: playing)); interaction.reveal(now: now) },
-            focusChanged: { focused in if focused { interaction.reveal(now: now) } })
+            focusChanged: { focused in if focused { interaction.reveal(now: now) } }, extras: extras)
         #if os(tvOS)
         var remoteBar = bar
         remoteBar.remoteFocus = $focusedControl
@@ -1983,6 +2414,10 @@ private struct CustomPlayerControls: View {
                 #if os(tvOS)
                 .focused($focusedControl, equals: .quality)
                 #endif
+            if extras?.hasChapters == true {
+                icon("list.bullet.rectangle", label: "Chapters", size: 22, compact: true) { open(.chapters) }
+                    .disabled(phase == .preparing).accessibilityIdentifier("player-chapters")
+            }
             icon("captions.bubble", label: "Subtitles and audio", size: 22, compact: true) { open(.tracks) }
                 .disabled(!hasTracks || phase == .preparing).accessibilityIdentifier("player-subtitles")
                 #if os(tvOS)
@@ -2043,6 +2478,7 @@ private struct CustomTimelineBar: View {
     let cancel: () -> Void
     let adjust: (Double) -> Void
     let focusChanged: (Bool) -> Void
+    var extras: PlayerExtrasModel?
     var remoteFocus: FocusState<PlayerControlFocus?>.Binding?
     var preview: ((Double) -> Void)?
     @FocusState private var fallbackFocus: PlayerControlFocus?
@@ -2058,9 +2494,21 @@ private struct CustomTimelineBar: View {
                         .offset(x: width * timeline.fraction(at: range.start))
                 }
                 Capsule().fill(Theme.jade).frame(width: max(0, width * timeline.fraction(at: position)), height: active || focused ? 5 : 3)
+                if let extras, extras.hasChapters { ChapterMarks(timeline: timeline, chapters: extras.chapters).frame(height: 48) }
                 Circle().fill(Theme.jade).frame(width: active || focused ? 16 : 10, height: active || focused ? 16 : 10)
                     .offset(x: max(0, min(width - 16, width * timeline.fraction(at: position) - 8)))
             }.frame(height: 48).contentShape(Rectangle())
+            .overlay(alignment: .topLeading) {
+                // The frame, time and chapter under the thumb while scrubbing.
+                if active, let extras, !timeline.isLive {
+                    let half: CGFloat = Theme.isTV ? 168 : 96
+                    ScrubPreviewCard(extras: extras, seconds: position)
+                        .alignmentGuide(.leading) { $0.width / 2 }
+                        .alignmentGuide(.top) { $0.height + (Theme.isTV ? 34 : 6) }
+                        .offset(x: min(max(half, width * timeline.fraction(at: position)), max(half, width - half)))
+                        .transition(.opacity)
+                }
+            }
             #if os(iOS)
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 guard let target = timeline.time(at: value.location.x / width) else { return }
@@ -2410,7 +2858,7 @@ struct PlayerDesignPreview: View {
                     panel = nil; phase = .playing
                 })
             } else if panel == .quality {
-                ForEach([40, 20, 12, 8, 4, 2], id: \.self) { value in
+                ForEach([120, 80, 60, 40, 20, 12, 8, 4, 2], id: \.self) { value in
                     PlayerOptionRow(title: "\(value) Mbps", selected: previewQuality == value) { previewQuality = value }
                 }
             } else if panel == .tracks {

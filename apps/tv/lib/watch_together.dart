@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'core/notifier.dart';
 
 import 'core/errors.dart';
 import 'core/jellyfin_client.dart';

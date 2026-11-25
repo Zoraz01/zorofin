@@ -8,7 +8,7 @@ public actor PlaybackReporter {
         let payload: [String: JSONValue]
     }
     private let client: JellyfinClient
-    private let plan: PlaybackPlan
+    private var plan: PlaybackPlan
     private var pending: [Event] = []
     private var worker: Task<Void, Never>?
     private var started = false
@@ -18,6 +18,9 @@ public actor PlaybackReporter {
     private var closeRetry: Task<Bool, Never>?
 
     public init(client: JellyfinClient, plan: PlaybackPlan) { self.client = client; self.plan = plan }
+    /// A subtitle switch inside the HLS manifest keeps this play session, so
+    /// later progress and stop reports carry the new subtitle selection.
+    public func selectSubtitle(_ index: Int) { plan = plan.selectingSubtitle(index) }
     public func start(positionTicks: Int64, canSeek: Bool) {
         guard !started, !stopped else { return }
         started = true

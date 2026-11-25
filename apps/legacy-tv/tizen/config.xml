@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
-        id="https://zorofin.app/legacy-tv" version="1.5.1" viewmodes="maximized">
+        id="https://zorofin.app/legacy-tv" version="0.2.0" viewmodes="maximized">
     <tizen:application id="ZrfnLegacy.Zorofin" package="ZrfnLegacy" required_version="2.3"/>
     <name>Zorofin</name>
     <description>Zorofin for older Samsung TVs (2017 to 2020). A lightweight Zorofin TV app for your Jellyfin server: Home rows, Live TV, Pick Together and a player built for the remote.</description>

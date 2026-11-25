@@ -20,12 +20,19 @@ sub build()
     status = m.top.status
     m.cards.removeChildrenIndex(m.cards.getChildCount(), 0)
     m.streams = []
-    if status = invalid or status.streams = invalid or status.streams.count() = 0 then
+    if status = invalid or status.streams = invalid or status.legacy = true then
         m.summary.text = ""
         m.top.height = 0
         return
     end if
     m.streams = status.streams
+    m.top.focusable = m.streams.count() > 0
+    if m.streams.count() = 0 then
+        m.summary.text = ZLtsSummary(status)
+        m.summary.translation = [0, 0]
+        m.top.height = 34
+        return
+    end if
     now = ZNowSeconds()
     x = 0
     for each s in m.streams
@@ -61,7 +68,7 @@ function makeCard(s as object, now as integer, x as integer) as object
         edge.uri = "pkg:/images/card_ring.9.png"
         edge.width = w
         edge.height = h
-        edge.blendColor = "0x72E79B73"
+        edge.blendColor = ZAccent("73")
     end if
     ' Logo tile with the channel's initials until (or unless) the logo loads.
     tile = card.createChild("Poster")
@@ -95,7 +102,7 @@ function makeCard(s as object, now as integer, x as integer) as object
     live = card.createChild("Label")
     live.text = "LIVE"
     live.font = ZFont(15, "bold")
-    live.color = "0x72E79BFF"
+    live.color = ZAccent()
     live.width = 62
     live.height = 28
     live.horizAlign = "center"
@@ -160,7 +167,7 @@ sub paint()
             pill.blendColor = "0xFFFFFFFF"
             text.color = "0x111513FF"
         else if s <> invalid and not s.yours then
-            pill.blendColor = "0x72E79BFF"
+            pill.blendColor = ZAccent()
             text.color = "0x111513FF"
         else
             pill.blendColor = "0x2B342FFF"

@@ -8,22 +8,31 @@ public struct ServerFeatures: Sendable, Equatable {
     public var support: Bool
     public var notifications: Bool
     public var requests: Bool
-    public var homeRows: Bool
+    public var homeRowsContract: HomeRowsContract?
+    public var homeRows: Bool { homeRowsContract != nil }
     public var liveArtwork: Bool
     public var enhancedSettings: Bool
     public var accountApprovals: Bool
     public var notificationSettings: Bool
     public var liveTVAvailability: Bool
     /// The companion's liveTvStreams module: which channels are using the Live TV streams.
+    public var notificationReads: Bool
+    public var sportsEvents: Bool
     public var liveTvStreams: Bool
+    /// The companion's pickTogether module (schemaVersion 1): group swiping.
+    public var pickTogether: Bool
+    /// The plugin collects playback problem reports (version 1). Absent when
+    /// the owner switched collection off; the app then sends nothing.
+    public var playbackReports: Bool
     public init(support: Bool = false, notifications: Bool = false, requests: Bool = false, homeRows: Bool = false,
-                liveArtwork: Bool = false, enhancedSettings: Bool = false, accountApprovals: Bool = false,
-                notificationSettings: Bool = false, liveTVAvailability: Bool = false, liveTvStreams: Bool = false) {
-        self.support = support; self.notifications = notifications; self.requests = requests; self.homeRows = homeRows
+                homeRowsContract: HomeRowsContract? = nil, liveArtwork: Bool = false, enhancedSettings: Bool = false, accountApprovals: Bool = false,
+                notificationSettings: Bool = false, liveTVAvailability: Bool = false, liveTvStreams: Bool = false, sportsEvents: Bool = false, notificationReads: Bool = false, pickTogether: Bool = false, playbackReports: Bool = false) {
+        self.support = support; self.notifications = notifications; self.requests = requests; self.homeRowsContract = homeRowsContract ?? (homeRows ? .legacy : nil)
         self.liveArtwork = liveArtwork; self.enhancedSettings = enhancedSettings
         self.accountApprovals = accountApprovals; self.notificationSettings = notificationSettings
         self.liveTVAvailability = liveTVAvailability
-        self.liveTvStreams = liveTvStreams
+        self.liveTvStreams = liveTvStreams; self.sportsEvents = sportsEvents; self.notificationReads = notificationReads
+        self.pickTogether = pickTogether; self.playbackReports = playbackReports
     }
 }
 
@@ -77,7 +86,11 @@ private struct CapabilityManifest: Decodable {
     let schemaVersion: Int
     let features: [String: Feature]
     func supports(_ name: String) -> Bool { features[name]?.version == 1 && features[name]?.enabled == true }
-    /// Requests is the one feature with two versions: 1 is the Jellyfin Enhanced proxy, 2 the Zorofin plugin.
+    var homeRowsContract: HomeRowsContract? {
+        guard let feature = features["homeRows"], feature.enabled else { return nil }
+        return HomeRowsContract(rawValue: feature.version)
+    }
+    /// Requests v1 is the legacy proxy; v2 is the Zorofin plugin.
     var requestRoutes: RequestRoutes? {
         guard let feature = features["requests"], feature.enabled else { return nil }
         return RequestRoutes(manifestVersion: feature.version)
@@ -106,11 +119,12 @@ extension JellyfinClient {
                 RequestRoutes.remember(routes, server: server, viewer: session.viewer.id)
                 return FeatureDiscovery(features: .init(support: manifest.supports("support"),
                     notifications: manifest.supports("notifications"), requests: routes != nil,
-                    homeRows: manifest.supports("homeRows"), liveArtwork: manifest.supports("liveArtwork"),
+                    homeRowsContract: manifest.homeRowsContract, liveArtwork: manifest.supports("liveArtwork"),
                     enhancedSettings: manifest.supports("enhancedSettings"), accountApprovals: manifest.supports("accountApprovals"),
                     notificationSettings: manifest.supports("notificationSettings"),
                     liveTVAvailability: manifest.supports("liveTVAvailability"),
-                    liveTvStreams: manifest.supports("liveTvStreams")), needsRetry: false)
+                    liveTvStreams: manifest.supports("liveTvStreams"), sportsEvents: manifest.supports("sportsEvents"), notificationReads: manifest.supports("notificationReads"),
+                    pickTogether: manifest.supports("pickTogether"), playbackReports: manifest.supports("playbackReports")), needsRetry: false)
             } catch ClientError.unavailable(404) { continue }
         }
         RequestRoutes.remember(nil, server: server, viewer: session.viewer.id)

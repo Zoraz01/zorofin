@@ -5,15 +5,20 @@ provide a server, media subscription, account signup or bundled server directory
 is the visual and behavioral contract. This project ports that design and keeps
 its phone/TV compositions; it does not introduce another theme.
 
-Development status: pre-release native client. Release builds compile; final
-device acceptance, store materials and App Review remain separate gates.
-The native screens follow the current phone/TV compositions, with adaptive
-navigation and details for wider windows.
+Apple TV **1.3 (53)** is submitted for App Store Review. Internal TestFlight is
+Testing; the existing closed beta is Waiting for Review. Signed package checks,
+bounded physical playback/episode/account checks and the owner's picture, sound
+and remote confirmation passed. Apple approval and broader device-matrix checks
+remain separate. See the Apple TV validation and submission record.
 
-The current source testing candidate and distributed closed iOS beta are
-**1.2 (46)**. The affected physical phone's rotation retry remains open. See the
-1.2 release and device-testing record for its scope,
-build commands and remaining checks.
+iOS/iPadOS has a separate 1.3 (52) release record
+and its own review submission. Source defaults remain iOS 1.3 (52) and
+TV/Top Shelf 1.2 (49); the TV delivery used documented 1.3 (53) build overrides.
+Never reuse a consumed build number. Read the
+common handoff and
+validation matrix for exact shared source
+and remaining platform cases. The 1.2 record retains
+historical build and rotation evidence.
 
 Both platform targets use `org.zorofin.app` for one intended App Store Connect
 listing. Apple TV previously used `org.zorofin.app.tv`; the identity change needs

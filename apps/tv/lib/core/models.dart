@@ -31,6 +31,7 @@ class Viewer {
     this.isAdministrator = false,
     this.primaryImageTag,
     this.syncPlayAccess,
+    this.canAccessLiveTV = true,
   });
 
   factory Viewer.fromJson(Map<String, dynamic> json) {
@@ -41,6 +42,7 @@ class Viewer {
       isAdministrator: _as<bool>(policy?['IsAdministrator']) ?? false,
       primaryImageTag: _as<String>(json['PrimaryImageTag']),
       syncPlayAccess: _as<String>(policy?['SyncPlayAccess']),
+      canAccessLiveTV: _as<bool>(policy?['EnableLiveTvAccess']) ?? true,
     );
   }
 
@@ -53,6 +55,7 @@ class Viewer {
 
   /// `CreateAndJoinGroups`, `JoinGroups` or `None`.
   final String? syncPlayAccess;
+  final bool canAccessLiveTV;
 
   Map<String, dynamic> toJson() => {
     'Id': id,
@@ -61,6 +64,7 @@ class Viewer {
     'Policy': {
       'IsAdministrator': isAdministrator,
       'SyncPlayAccess': ?syncPlayAccess,
+      'EnableLiveTvAccess': canAccessLiveTV,
     },
   };
 }
@@ -118,6 +122,7 @@ class UserData {
     this.playedPercentage,
     this.isFavorite,
     this.played,
+    this.likes,
   });
 
   factory UserData.fromJson(Map<String, dynamic> json) => UserData(
@@ -125,12 +130,16 @@ class UserData {
     playedPercentage: _as<num>(json['PlayedPercentage'])?.toDouble(),
     isFavorite: _as<bool>(json['IsFavorite']),
     played: _as<bool>(json['Played']),
+    likes: _as<bool>(json['Likes']),
   );
 
   final int? playbackPositionTicks;
   final double? playedPercentage;
   final bool? isFavorite;
   final bool? played;
+
+  /// Jellyfin’s liked flag; separate from Catch Up’s seen/skipped choices.
+  final bool? likes;
 }
 
 class Person {
@@ -293,6 +302,13 @@ class MediaStream {
   final String? language;
   final String? displayTitle;
   final String? codec;
+
+  /// A PGS (Blu-ray image) subtitle stream.
+  /// ASS/SSA: styled text subtitles (colours, positions, fonts sizes).
+  bool get isStyled =>
+      type == 'Subtitle' && {'ass', 'ssa'}.contains(codec?.toLowerCase());
+  bool get isPgs =>
+      type == 'Subtitle' && {'pgssub', 'pgs'}.contains(codec?.toLowerCase());
   final int? channels;
   final bool isDefault;
   final bool isForced;
@@ -320,10 +336,12 @@ class MediaSource {
     this.id,
     this.container,
     this.supportsDirectPlay,
+    this.supportsDirectStream,
     this.supportsTranscoding,
     this.transcodingUrl,
     this.transcodingSubProtocol,
     this.requiresOpening,
+    this.openToken,
     this.requiresClosing,
     this.liveStreamId,
     this.mediaStreams = const [],
@@ -338,10 +356,12 @@ class MediaSource {
     id: _as<String>(json['Id']),
     container: _as<String>(json['Container']),
     supportsDirectPlay: _as<bool>(json['SupportsDirectPlay']),
+    supportsDirectStream: _as<bool>(json['SupportsDirectStream']),
     supportsTranscoding: _as<bool>(json['SupportsTranscoding']),
     transcodingUrl: _as<String>(json['TranscodingUrl']),
     transcodingSubProtocol: _as<String>(json['TranscodingSubProtocol']),
     requiresOpening: _as<bool>(json['RequiresOpening']),
+    openToken: _as<String>(json['OpenToken']),
     requiresClosing: _as<bool>(json['RequiresClosing']),
     liveStreamId: _as<String>(json['LiveStreamId']),
     mediaStreams: _list(json['MediaStreams'], MediaStream.fromJson),
@@ -357,10 +377,12 @@ class MediaSource {
   final String? id;
   final String? container;
   final bool? supportsDirectPlay;
+  final bool? supportsDirectStream;
   final bool? supportsTranscoding;
   final String? transcodingUrl;
   final String? transcodingSubProtocol;
   final bool? requiresOpening;
+  final String? openToken;
   final bool? requiresClosing;
   final String? liveStreamId;
   final List<MediaStream> mediaStreams;
@@ -526,8 +548,11 @@ class MediaItem {
   String get episodeLabel => isEpisode
       ? 'S${parentIndexNumber ?? 1} E${indexNumber ?? 1} · $name'
       : '';
+  // Dart compiled to JavaScript uses 32-bit bitwise shifts: `1 << 62`
+  // evaluates to zero there. Keep Jellyfin's 100ns ticks in the exact shared
+  // integer range instead of collapsing every web resume position to zero.
   int get resumeTicks =>
-      (userData?.playbackPositionTicks ?? 0).clamp(0, 1 << 62);
+      (userData?.playbackPositionTicks ?? 0).clamp(0, 9007199254740991);
 
   /// Watched fraction for progress bars, from 0 to 1.
   double get progress {

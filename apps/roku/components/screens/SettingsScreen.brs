@@ -14,7 +14,7 @@ sub init()
 end sub
 
 sub load()
-    titles = { account: "Account", display: "Display", playback: "Playback", subtitles: "Subtitles", controls: "Controls", notifications: "Notification settings", storage: "Storage & app" }
+    titles = { account: "Account", display: "Home & display", playback: "Playback", subtitles: "Subtitles", controls: "Controls", notifications: "Notifications", storage: "Storage & app", help: "Help & about" }
     title = titles[m.top.page]
     if title = invalid then title = "Settings"
     m.top.findNode("title").text = title
@@ -53,7 +53,8 @@ end sub
 ' The player reads two account defaults from this Roku's settings.
 sub syncLocal()
     v = m.account.values
-    p = m.prefs
+    ' Re-read: another Settings page may have saved since this one opened.
+    p = ZSettings()
     p.autoplayNext = v.EnableNextEpisodeAutoPlay = true
     mode = v.SubtitleMode
     if mode = "None" then
@@ -80,6 +81,7 @@ end function
 ' MARK: Pages
 
 sub paint()
+    m.prefs = ZSettings()
     rows = []
     page = m.top.page
     if page = "account" then
@@ -96,6 +98,8 @@ sub paint()
         rows = NotificationRows()
     else if page = "storage" then
         rows = StorageRows()
+    else if page = "help" then
+        rows = HelpRows()
     end if
     focus = m.rows.focusedId
     m.rows.rows = rows
@@ -119,6 +123,9 @@ function AccountRows() as object
         rows.push({ id: "password", title: "Update password", icon: "lock" })
         rows.push({ note: "Other devices may need to sign in again after you change your password." })
     end if
+    rows.push({ header: true, title: "Other devices" })
+    rows.push({ id: "quickConnect", title: "Quick Connect", icon: "phone" })
+    rows.push({ note: "Sign in a phone, tablet or computer with a six-digit code." })
     return rows
 end function
 
@@ -130,17 +137,23 @@ end function
 function DisplayRows() as object
     p = m.prefs
     sizes = { "0.85": "Compact", "1": "Comfortable", "1.2": "Large" }
-    size = sizes[PosterKey(p.posterScale)]
+    size = sizes[PosterKey(ZPosterScale())]
     if size = invalid then size = "Comfortable"
+    poster = { id: "posterScale", title: "Poster size", value: size }
+    ' The server's looks pick the card size for every viewer.
+    if m.global.cardScale > 0 then poster = { id: "posterLocked", title: "Poster size", value: "Set by your server" }
     return [
         { header: true, title: "On this device" },
-        { id: "posterScale", title: "Poster size", value: size },
+        poster,
         { id: "toggle:showTitles", title: "Show titles under posters", value: OnOff(p.showTitles) },
         { id: "toggle:showProgress", title: "Show watching progress", value: OnOff(p.showProgress) },
         { id: "toggle:showRatings", title: "Show ratings", value: OnOff(p.showRatings) },
         { id: "toggle:showQualityBadges", title: "Show quality badges", value: OnOff(p.showQualityBadges) },
         { id: "toggle:reduceMotion", title: "Reduce motion", value: OnOff(p.reduceMotion) },
-        { note: "Your Roku's accessibility settings are always respected." }
+        { note: "Your Roku's accessibility settings are always respected." },
+        { header: true, title: "Home" },
+        { id: "toggle:autoplayPreviews", title: "Autoplay trailer previews on Home", value: OnOff(p.autoplayPreviews) },
+        { id: "toggle:showUnreadBadge", title: "Show unread badge", value: OnOff(p.showUnreadBadge) }
     ]
 end function
 
@@ -157,13 +170,18 @@ end function
 
 function PlaybackRows() as object
     p = m.prefs
+    ' Controls folds into Playback (docs/design/TV_PROFILE_MENU.md).
     rows = [
         { header: true, title: "On this device" },
         { id: "quality", title: "Streaming quality", value: QualityLabel(p.maxBitrate) },
-        { id: "toggle:skipIntro", title: "Show Skip intro", value: OnOff(p.skipIntro) },
         { note: "Streaming quality is a maximum bitrate. Your server and connection determine the available quality." },
-        { header: true, title: "Account defaults" }
+        { header: true, title: "In the player" },
+        { id: "toggle:skipIntro", title: "Show Skip intro", value: OnOff(p.skipIntro) },
+        { id: "skipBack", title: "Instant replay", value: p.skipBack.toStr() + " seconds" },
+        { id: "toggle:showChapters", title: "Show chapters", value: OnOff(p.showChapters) },
+        { note: "Chapter names in the player can give the story away. Off by default." }
     ]
+    rows.push({ header: true, title: "Account defaults" })
     if m.account = invalid then
         rows.append(AccountStatus())
         return rows
@@ -223,11 +241,27 @@ function ControlRows() as object
 end function
 
 function NotificationRows() as object
+    ' The unread badge switch is on Home & display.
     return [
-        { header: true, title: "In the app" },
-        { id: "toggle:showUnreadBadge", title: "Show unread badge", value: OnOff(m.prefs.showUnreadBadge) },
         { note: "Email and push alerts can be set up in the Zorofin app on your phone or on the web." }
     ]
+end function
+
+' Help & about: support, privacy, problem reports, then this Roku.
+function HelpRows() as object
+    rows = [{ header: true, title: "Help" }]
+    features = m.global.features
+    if features <> invalid and ZNum(features.support, 0) = 1 then rows.push({ id: "support", title: "Message your server owner", icon: "support" })
+    rows.push({ id: "appSupport", title: "App Support", icon: "help" })
+    rows.push({ id: "privacy", title: "Privacy Policy", icon: "privacy" })
+    ' Only on servers that collect reports; the server owner can turn it off for everyone.
+    if features <> invalid and ZNum(features.playbackReports, 0) = 1 then
+        rows.push({ header: true, title: "Problem reports" })
+        rows.push({ id: "toggle:sendPlaybackReports", title: "Send playback problem reports to this server", value: OnOff(m.prefs.sendPlaybackReports <> false) })
+        rows.push({ note: "When a title won't start or keeps buffering, the app tells your server owner the title, app version and what went wrong. Nothing leaves your server." })
+    end if
+    rows.append(StorageRows())
+    return rows
 end function
 
 function StorageRows() as object
@@ -235,7 +269,7 @@ function StorageRows() as object
         { header: true, title: "This Roku" },
         { id: "info:version", title: "Zorofin version", value: ZStr(m.global.appVersion) },
         { id: "reset", title: "Reset app preferences", icon: "refresh" },
-        { note: "Resets Display, Playback and Controls on this Roku. Your accounts and your server's settings stay." }
+        { note: "Resets Home & display and Playback on this Roku. Your accounts and your server's settings stay." }
     ]
 end function
 
@@ -255,6 +289,10 @@ end function
 sub onRow(event as object)
     id = event.getData()
     if m.busy or Left(id, 5) = "info:" then return
+    ' Start from what is stored, not this page's copy from when it opened:
+    ' Settings pages stay alive in the stack, and saving a stale copy undid
+    ' Show chapters and the report opt-out (Roku task 227, Nov 24).
+    m.prefs = ZSettings()
     p = m.prefs
     if Left(id, 7) = "toggle:" then
         key = Mid(id, 8)
@@ -280,7 +318,7 @@ sub onRow(event as object)
             chooseLanguage()
         end if
     else if id = "posterScale" then
-        current = PosterKey(p.posterScale)
+        current = PosterKey(ZPosterScale())
         choose("posterScale", "Poster size", [
             { id: "0.85", title: "Compact", checked: current = "0.85" },
             { id: "1", title: "Comfortable", checked: current = "1" },
@@ -314,6 +352,13 @@ sub onRow(event as object)
             m.passwords.push("")
             askPassword("New password")
         end if
+    else if id = "quickConnect" or id = "support" then
+        ' MainScene opens these screens.
+        m.top.action = id
+    else if id = "privacy" then
+        choose("info", "Privacy Policy", [{ id: "ok", title: "OK" }], "Zorofin connects only to the Jellyfin server you choose and has no ads, tracking or analytics. Read the full policy at zorofin.app/privacy on your phone or computer.")
+    else if id = "appSupport" then
+        choose("info", "App Support", [{ id: "ok", title: "OK" }], "Zorofin " + ZStr(m.global.appVersion) + " for Roku, by Vitality Labs LLC. For help, visit zorofin.app/support on your phone or computer. Zorofin is independently developed and is not affiliated with the Jellyfin project.")
     else if id = "reset" then
         choose("reset", "Reset app preferences?", [{ id: "yes", title: "Reset" }, { id: "no", title: "Cancel" }], "Display, Playback and Controls on this Roku go back to their defaults.")
     else if id = "retry" then
@@ -372,10 +417,12 @@ sub onChoice(event as object)
     r = event.getData()
     closeDialog()
     if r = invalid or r.id = invalid then return
+    m.prefs = ZSettings()
     p = m.prefs
     kind = m.choiceKind
     if kind = "posterScale" then
         p.posterScale = r.id.toFloat()
+        p.posterSizeChosen = true
         saveLocal(p)
     else if kind = "quality" then
         p.maxBitrate = r.id.toInt()

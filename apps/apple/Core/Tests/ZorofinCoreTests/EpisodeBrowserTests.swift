@@ -110,6 +110,35 @@ private actor EpisodeFixture: EpisodeLibrary {
         #expect(state.episodes.count == 35 && !state.hasMore)
         #expect(await library.requests == ["show/season-1/0","show/season-1/30"])
     }
+    @Test func seriesTargetsResolvedNextEpisodeInALaterSeasonAndPage() async {
+        let next = episode(35, season: 2)
+        let library = EpisodeFixture(pages: [
+            "season-2/0": .init(items: (1...30).map { episode($0, season: 2) }, totalRecordCount: 35),
+            "season-2/30": .init(items: (31...35).map { episode($0, season: 2) }, totalRecordCount: 35)],
+            recent: episode(9))
+        let state = EpisodeBrowserState(library: library)
+        await state.load(MediaItem(id: "show", name: "Show", type: "Series"), preferredEpisode: next)
+        #expect(state.selectedSeasonID == "season-2" && state.currentEpisodeID == next.id)
+        #expect(state.episodes.count == 35)
+        #expect(await library.requests == ["show/season-2/0", "show/season-2/30"])
+    }
+    @Test func seriesWithoutHistorySkipsEmptySeasons() async {
+        let state = EpisodeBrowserState(library: EpisodeFixture(pages: [
+            "season-2/0": .init(items: [episode(1, season: 2)], totalRecordCount: 1)]))
+        await state.load(MediaItem(id: "show", name: "Show", type: "Series"))
+        #expect(state.selectedSeasonID == "season-2" && state.episodes.count == 1)
+    }
+    @Test func interactionStopsLateAutomaticTargetPaging() async {
+        let library = EpisodeFixture()
+        await library.delay("season-2")
+        let state = EpisodeBrowserState(library: library)
+        let loading = Task { await state.load(episode(35, season: 2)) }
+        await library.waitForDelay(); state.cancelTargeting()
+        await library.release(.init(items: (1...30).map { episode($0, season: 2) }, totalRecordCount: 35))
+        await loading.value
+        #expect(state.targetingCancelled && state.episodes.count == 30 && state.hasMore)
+        #expect(await library.requests == ["show/season-2/0"])
+    }
     @Test func pagingDeduplicatesWithoutRepeatingTheOffset() async {
         let library = EpisodeFixture(pages:["season-1/0":.init(items:(1...30).map { episode($0) },totalRecordCount:32),
                                            "season-1/30":.init(items:[episode(30),episode(31)],totalRecordCount:32)])
@@ -145,11 +174,17 @@ private actor EpisodeFixture: EpisodeLibrary {
         await old.value
         #expect(state.episodes.isEmpty && !state.loadingEpisodes)
     }
-    @Test func returningAfterCancellationResumesTheChosenSeason() async {
-        let library = EpisodeFixture(pages:["season-2/0":.init(items:[episode(1,season:2)],totalRecordCount:1)])
+    @Test func returningAfterCancellationResumesTheChosenSeason() async throws {
+        // Keep the initial season populated so automatic empty-season skipping
+        // cannot preload the season whose request this test intends to delay.
+        let library = EpisodeFixture(pages:[
+            "season-1/0":.init(items:[episode(1)],totalRecordCount:1),
+            "season-2/0":.init(items:[episode(1,season:2)],totalRecordCount:1)])
         let state = EpisodeBrowserState(library:library)
         let show = MediaItem(id:"show",name:"Show",type:"Series")
         await state.load(show)
+        try #require(state.selectedSeasonID == "season-1")
+        #expect(await library.requests == ["show/season-1/0"])
         await library.delay("season-2")
         let old = Task { await state.selectSeason("season-2") }
         await library.waitForDelay(); state.cancel()
@@ -158,6 +193,7 @@ private actor EpisodeFixture: EpisodeLibrary {
         await state.load(show)
         #expect(state.selectedSeasonID == "season-2" && state.episodes.first?.id == "s2e1")
         #expect(!state.loadingEpisodes && state.error == nil)
+        #expect(await library.requests == ["show/season-1/0", "show/season-2/0", "show/season-2/0"])
     }
     @Test func failedPageCanRetryWithoutDroppingTheSeason() async {
         let library = EpisodeFixture(pages:["season-1/0":.init(items:[episode(1)],totalRecordCount:1)])
@@ -217,5 +253,30 @@ private actor EpisodeHTTPFixture: HTTPTransport {
         let misplaced = JellyfinClient(server:try ServerAddress("https://other.example"),identity:client.identity,session:client.session,transport:transport)
         await #expect(throws:ClientError.unsafeURL) { try await misplaced.recentlyPlayedEpisode(seriesID:"show") }
         #expect(await transport.requests.count == 3)
+    }
+}
+
+extension EpisodeBrowserTests {
+    @Test func explicitCurrentActionReturnsAcrossSeasonsAndPages() async {
+        let library = EpisodeFixture(pages: [
+            "season-1/0": .init(items: (1...30).map { episode($0) }, totalRecordCount: 35),
+            "season-1/30": .init(items: (31...35).map { episode($0) }, totalRecordCount: 35),
+            "season-2/0": .init(items: [episode(1, season: 2)], totalRecordCount: 1)])
+        let state = EpisodeBrowserState(library: library)
+        await state.load(episode(32))
+        state.cancelTargeting()
+        await state.selectSeason("season-2")
+        #expect(state.selectedSeasonID == "season-2" && state.currentEpisodeID == "s1e32")
+        await state.returnToCurrentEpisode()
+        #expect(state.selectedSeasonID == "season-1" && !state.targetingCancelled)
+        #expect(state.episodes.contains { $0.id == "s1e32" })
+    }
+    @Test func currentActionWithoutHistoryDoesNotGuessAnEpisode() async {
+        let state = EpisodeBrowserState(library: EpisodeFixture())
+        await state.load(MediaItem(id: "show", name: "Show", type: "Series"))
+        state.cancelTargeting()
+        await state.selectSeason("season-2")
+        await state.returnToCurrentEpisode()
+        #expect(state.currentEpisodeID == nil && state.selectedSeasonID == "season-2")
     }
 }

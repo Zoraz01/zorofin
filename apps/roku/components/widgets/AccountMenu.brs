@@ -2,6 +2,7 @@ sub init()
     m.card = m.top.findNode("card")
     m.list = m.top.findNode("list")
     m.top.findNode("server").font = ZFont(25, "semibold")
+    m.top.findNode("serverLine").font = ZFont(18)
     m.top.findNode("initial").font = ZFont(21, "semibold")
     m.list.observeField("selected", "onSelected")
 end sub
@@ -10,31 +11,40 @@ sub refresh(params = invalid as dynamic)
     width = 460
     m.list.width = width - 32
     m.list.maxHeight = 640
-    m.top.findNode("server").text = ZStr(m.top.serverName, "Accounts")
+    m.top.findNode("server").text = ZStr(m.top.userName, "Accounts")
     m.top.findNode("server").width = width - 92
+    m.top.findNode("serverLine").text = ZStr(m.top.serverName)
+    m.top.findNode("serverLine").width = width - 92
     m.top.findNode("initial").text = UCase(Left(m.top.userName, 1))
     m.top.findNode("avatar").uri = m.top.userImage
     m.top.findNode("topLine").width = width
-    rows = []
+    ' Other saved profiles switch in one press; All opens Who's watching.
+    rows = [{ header: true, title: "Switch profile" }]
     focusKey = ""
     for each a in m.top.accounts
-        current = a.key = m.top.currentKey
-        rows.push({
-            id: "account:" + a.key, title: ZStr(a.userName), subtitle: ZStr(a.serverName, ZStr(a.server)),
-            avatar: ZUserImageUrl(a.server, a.userId, ZStr(a.imageTag), 96), initial: UCase(Left(ZStr(a.userName), 1)),
-            checked: current, current: current
-        })
-        if current then focusKey = "account:" + a.key
+        if a.key <> m.top.currentKey then
+            rows.push({
+                id: "account:" + a.key, title: ZStr(a.userName), subtitle: ZStr(a.serverName, ZStr(a.server)),
+                avatar: ZUserImageUrl(a.server, a.userId, ZStr(a.imageTag), 96), initial: UCase(Left(ZStr(a.userName), 1))
+            })
+            if focusKey = "" then focusKey = "account:" + a.key
+        end if
     end for
-    if rows.count() = 0 then rows.push({ id: "none", title: "No saved accounts", disabled: true })
-    rows.push({ divider: true })
-    rows.push({ id: "servers", title: "Change server", icon: "server" })
-    rows.push({ id: "quickConnect", title: "Quick Connect", icon: "phone" })
-    if m.top.watchTogether then rows.push({ id: "watchTogether", title: "Watch together", icon: "users" })
+    rows.push({ id: "servers", title: "All profiles", icon: "users" })
+    if focusKey = "" then focusKey = "servers"
+    things = []
+    if m.top.pickTogether then things.push({ id: "pickTogether", title: "Pick Together", icon: "users" })
+    if m.top.watchTogether then things.push({ id: "watchTogether", title: "Watch Together", icon: "users" })
+    if m.top.calendar then things.push({ id: "calendar", title: "Calendar", icon: "clock" })
+    if m.top.catchUp then things.push({ id: "catchUp", title: "Catch Up", icon: "film" })
+    if things.count() > 0 then
+        rows.push({ divider: true })
+        rows.append(things)
+    end if
     rows.push({ divider: true })
     rows.push({ id: "settings", title: "Settings", icon: "settings" })
     m.list.rows = rows
-    if focusKey <> "" then m.list.callFunc("focusRow", focusKey)
+    m.list.callFunc("focusRow", focusKey)
     height = 88 + m.list.height + 16
     bg = m.top.findNode("bg")
     edge = m.top.findNode("edge")

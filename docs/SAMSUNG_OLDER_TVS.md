@@ -55,15 +55,7 @@ https://zorofin.app/samsung-tv#older-tvs.
   out for smoothness. Every screen is checked in Chromium 69 with
   `apps/legacy-tv/tool/validate.cjs`.
 
-- 1.5.0 aligns the preview version with Zorofin 1.5 and adds updated
-  backdrops and profile avatars. The widget ID and minimum Tizen API level
-  stay the same for updates. The sideload installer signs the downloaded WGT
-  for the target TV.
-
-The 1.5.1 sideload preview adds the profile strip, instant Settings, chapter
-controls and playback recovery and reporting. Smoke-test signing, install,
-upgrade, remote controls and HLS on a real 2017 to 2020 Samsung TV. Use the
-same author certificate for an in-place upgrade of the installed WGT.
+Next: test on one real 2017 to 2020 Samsung TV and fix what breaks.
 
 ## Store submission note
 

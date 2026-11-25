@@ -6,9 +6,7 @@
   'use strict';
 
   var Z = root.Z = root.Z || {};
-  Z.VERSION = '1.5.1';
-
-  Z.skipIntervals = [5, 10, 15, 30, 60];
+  Z.VERSION = '0.2.0';
 
   var KEYS = Z.KEYS = {
     left: 37, up: 38, right: 39, down: 40, enter: 13, back: 10009, escape: 27, backspace: 8,
@@ -161,13 +159,13 @@
     return 'MediaBrowser ' + fields.map(function (f) { return f[0] + '="' + String(f[1]).replace(/"/g, '') + '"'; }).join(', ');
   };
 
-  Client.prototype.request = function (method, path, params, body, done, timeout) {
+  Client.prototype.request = function (method, path, params, body, done) {
     var xhr = new XMLHttpRequest();
     var finished = false;
     function finish(err, data) { if (!finished) { finished = true; done(err, data); } }
     try {
       xhr.open(method, this.base + path + query(params || {}), true);
-      xhr.timeout = timeout || 20000;
+      xhr.timeout = 20000;
       xhr.setRequestHeader('Authorization', this.authorization());
       xhr.setRequestHeader('X-Emby-Authorization', this.authorization());
       if (body !== undefined) xhr.setRequestHeader('Content-Type', 'application/json');
@@ -191,9 +189,7 @@
   Client.prototype.get = function (path, params, done) { this.request('GET', path, params, undefined, done); };
   Client.prototype.post = function (path, body, done) { this.request('POST', path, null, body || {}, done || function () {}); };
 
-  Client.prototype.publicInfo = function (done, timeout) {
-    this.request('GET', '/System/Info/Public', null, undefined, done, timeout);
-  };
+  Client.prototype.publicInfo = function (done) { this.get('/System/Info/Public', null, done); };
 
   Client.prototype.signIn = function (name, password, done) {
     var self = this;
@@ -301,27 +297,27 @@
     };
   };
 
-  Client.prototype.playbackInfo = function (item, startTicks, done, compatibility) {
+  Client.prototype.playbackInfo = function (item, startTicks, done) {
     var bitrate = 40000000;
     var live = item.Type === 'TvChannel';
     this.request('POST', '/Items/' + item.Id + '/PlaybackInfo', { userId: this.session.userId }, {
       UserId: this.session.userId, StartTimeTicks: startTicks || 0, MaxStreamingBitrate: bitrate,
       // Live channels go through the server's HLS (stream copy when it can),
       // which old TV players handle better than a raw TS feed.
-      DeviceProfile: Z.deviceProfile(bitrate), EnableDirectPlay: !live && !compatibility, EnableDirectStream: !live && !compatibility,
-      EnableTranscoding: true, AllowVideoStreamCopy: !compatibility, AllowAudioStreamCopy: !compatibility, AutoOpenLiveStream: true
+      DeviceProfile: Z.deviceProfile(bitrate), EnableDirectPlay: !live, EnableDirectStream: !live,
+      EnableTranscoding: true, AllowVideoStreamCopy: true, AllowAudioStreamCopy: true, AutoOpenLiveStream: true
     }, done);
   };
 
   // The URL the <video> element should open for a PlaybackInfo media source.
-  Client.prototype.streamUrl = function (item, source, playSessionId, compatibility) {
+  Client.prototype.streamUrl = function (item, source, playSessionId) {
     // Live channels: the server's HLS stream when it offers one, else the raw TS.
     if (source.LiveStreamId && !source.TranscodingUrl) {
       return this.base + '/Videos/' + item.Id + '/stream.ts' + query({
         static: 'true', mediaSourceId: source.Id, liveStreamId: source.LiveStreamId, playSessionId: playSessionId, api_key: this.session.token
       });
     }
-    if (!compatibility && !source.LiveStreamId && (source.SupportsDirectPlay || source.SupportsDirectStream)) {
+    if (!source.LiveStreamId && (source.SupportsDirectPlay || source.SupportsDirectStream)) {
       return this.base + '/Videos/' + item.Id + '/stream' + query({
         static: 'true', mediaSourceId: source.Id, playSessionId: playSessionId, api_key: this.session.token
       });
@@ -354,15 +350,6 @@
       xhr.send(body === undefined ? null : JSON.stringify(body));
     } catch (e) { finish(e); }
     return self;
-  };
-
-  Client.prototype.reportProblem = function (problem) {
-    if (this.problemsRefused || (this.problemCount || 0) >= 30) return;
-    this.problemCount = (this.problemCount || 0) + 1;
-    var self = this;
-    this.extension('POST', '/Zorofin/PlaybackReports', null, problem, function (err) {
-      if (err && (err.status === 404 || err.status === 429)) self.problemsRefused = true;
-    });
   };
 
   // The plugin's Home rows (the same feed the other TV apps use), or null.

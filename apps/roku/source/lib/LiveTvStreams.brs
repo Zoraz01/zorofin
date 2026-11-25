@@ -3,6 +3,34 @@
 ' counts only, never who is watching. The wording matches the Apple TV and
 ' Flutter apps and the web client, so every app says the same thing.
 
+function ZLtsRoute(features as dynamic) as string
+    if not ZIsMap(features) then return ""
+    if ZNum(features.liveTvStreams, 0) = 1 then return "companion"
+    if ZNum(features.liveTVAvailability, 0) = 1 then return "legacy"
+    return ""
+end function
+
+' The older availability adapter has no precise usage count. Preserve its
+' conflict hints without inventing N-of-M from sessions or visible channels.
+function ZLtsParseLegacy(json as dynamic, channelId as string) as dynamic
+    if not ZIsMap(json) then return invalid
+    limit = Int(ZNum(json.limit, 0))
+    state = ZStr(json.state)
+    if limit < 1 or limit > 1000 or not ZContains(["available", "busy", "unknown"], state) then return invalid
+    for each key in ["sameChannel", "differentChannel", "ownStream"]
+        if GetInterface(json[key], "ifBoolean") = invalid then return invalid
+    end for
+    if json.sameChannel and json.differentChannel then return invalid
+    if state <> "busy" and (json.sameChannel or json.differentChannel or json.ownStream) then return invalid
+    message = "Live TV availability could not be checked."
+    if state = "available" then message = "Live TV is available."
+    if state = "busy" then message = "Live TV is in use. A different channel must wait until a stream is free."
+    if json.sameChannel then message = "This channel is already playing. You can join it."
+    if json.ownStream then message = "You can switch channels on this device."
+    return { legacy: true, limit: limit, state: state, message: message, streams: [],
+        blocked: state = "busy" and json.differentChannel and not json.sameChannel and not json.ownStream }
+end function
+
 ' Checks a status response and keeps only the fields the app uses.
 function ZLtsParse(json as dynamic) as dynamic
     if not ZIsMap(json) then return invalid
@@ -56,11 +84,13 @@ function ZLtsPlural(count as integer, word as string) as string
 end function
 
 function ZLtsIsFull(status as object) as boolean
+    if status.legacy = true then return status.state = "busy"
     return status.free <= 0
 end function
 
 ' "1 of 1 Live TV stream in use. Anyone can join a channel that's already playing."
 function ZLtsSummary(status as object) as string
+    if status.legacy = true then return status.message
     head = status.inUse.toStr() + " of " + ZLtsPlural(status.limit, "Live TV stream") + " in use."
     if ZLtsIsFull(status) then return head + " Anyone can join a channel that’s already playing."
     return head + " " + ZLtsPlural(status.free, "stream") + " free for another channel."
@@ -129,6 +159,7 @@ end function
 
 ' The line under a channel's Play button, or "" when there is nothing to say.
 function ZLtsChannelLine(status as object, channelId as string) as string
+    if status.legacy = true then return status.message
     playing = ZLtsStream(status, channelId)
     if playing <> invalid then
         if playing.yours then return "You’re watching this channel."
@@ -146,6 +177,10 @@ end function
 ' Set when starting this channel would need a stream and none is free:
 ' { title, text, hint, join } where join is the one channel to watch instead.
 function ZLtsBlocked(status as object, channelId as string) as dynamic
+    if status.legacy = true then
+        if not status.blocked then return invalid
+        return { title: "Live TV is in use", text: status.message, hint: "Try again when a stream is free.", join: invalid }
+    end if
     request = status.request
     if request <> invalid and ZLtsClean(request.channelId) = ZLtsClean(channelId) then
         if request.canStart then return invalid

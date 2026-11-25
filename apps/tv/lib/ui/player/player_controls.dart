@@ -6,7 +6,7 @@ import '../widgets/focusable.dart';
 
 enum PlayerPhase { preparing, playing, paused, buffering, ended, failed }
 
-enum PlayerPanel { episodes, channels, quality, tracks, information }
+enum PlayerPanel { episodes, channels, quality, tracks, information, chapters }
 
 /// `1:02:03` or `4:05`, as the Apple player's `PlayerTimeline.timeLabel`.
 String timeLabel(Duration d) {
@@ -46,7 +46,20 @@ class PlayerControls extends StatelessWidget {
     this.isLive = false,
     this.behindLive,
     this.onGoLive,
+    this.onMinimize,
+    this.hasChapters = false,
+    this.marks = const [],
+    this.preview,
   });
+
+  /// The file has chapters: shows the Chapters button.
+  final bool hasChapters;
+
+  /// Chapter starts, drawn as small breaks in the timeline.
+  final List<Duration> marks;
+
+  /// What floats over the timeline at a scrub position.
+  final Widget Function(Duration position)? preview;
 
   final String title;
   final String subtitle;
@@ -67,6 +80,7 @@ class PlayerControls extends StatelessWidget {
 
   /// Shown on Live TV when paused or behind live.
   final VoidCallback? onGoLive;
+  final VoidCallback? onMinimize;
   final FocusNode playFocus;
   final VoidCallback onClose;
   final VoidCallback onTogglePlay;
@@ -202,6 +216,14 @@ class PlayerControls extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (onMinimize != null)
+                      PlayerIconButton(
+                        icon: Icons.picture_in_picture_alt_rounded,
+                        label: 'Mini-player',
+                        onFocus: onInteract,
+                        onPressed: onMinimize!,
+                        enabled: _ready,
+                      ),
                     if (isLive)
                       PlayerIconButton(
                         icon: Icons.list_alt_rounded,
@@ -252,7 +274,7 @@ class PlayerControls extends StatelessWidget {
                 child: Row(
                   children: [
                     if (isLive) ...[
-                      const Icon(Icons.circle, size: 12, color: Zoro.jade),
+                      Icon(Icons.circle, size: 12, color: Zoro.jade),
                       const SizedBox(width: 8),
                       Text(
                         phase == PlayerPhase.paused
@@ -296,7 +318,10 @@ class PlayerControls extends StatelessWidget {
                             : const SizedBox(),
                       ),
                     ] else ...[
-                      Text(timeLabel(_shown), style: _timeStyle),
+                      SizedBox(
+                        width: 88,
+                        child: Text(timeLabel(_shown), style: _timeStyle),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: TimelineBar(
@@ -309,17 +334,35 @@ class PlayerControls extends StatelessWidget {
                           onMove: onScrubMove,
                           onCommit: onScrubCommit,
                           onCancel: onScrubCancel,
+                          marks: marks,
+                          preview: scrubPosition == null
+                              ? null
+                              : preview?.call(scrubPosition!),
                         ),
                       ),
                       const SizedBox(width: 16),
-                      Text(
-                        duration == null
-                            ? '--:--'
-                            : '−${timeLabel(duration! - _shown)}',
-                        style: _timeStyle,
+                      SizedBox(
+                        width: 88,
+                        child: Text(
+                          duration == null
+                              ? '--:--'
+                              : '−${timeLabel(duration! - _shown)}',
+                          style: _timeStyle,
+                          textAlign: TextAlign.right,
+                        ),
                       ),
                     ],
                     const SizedBox(width: 32),
+                    if (hasChapters && !isLive) ...[
+                      PlayerIconButton(
+                        icon: Icons.view_carousel_outlined,
+                        label: 'Chapters',
+                        enabled: phase != PlayerPhase.preparing,
+                        onFocus: onInteract,
+                        onPressed: () => onPanel(PlayerPanel.chapters),
+                      ),
+                      const SizedBox(width: 24),
+                    ],
                     PlayerIconButton(
                       icon: Icons.tune_rounded,
                       label: 'Quality',
@@ -446,8 +489,14 @@ class TimelineBar extends StatefulWidget {
     this.enabled = true,
     this.onFocus,
     this.focusNode,
+    this.marks = const [],
+    this.preview,
   });
 
+  final List<Duration> marks;
+
+  /// Shown above the bar at the scrub position while seeking.
+  final Widget? preview;
   final FocusNode? focusNode;
   final Duration position;
   final Duration? duration;
@@ -518,8 +567,10 @@ class _TimelineBarState extends State<TimelineBar> {
             builder: (context, size) {
               final width = size.maxWidth;
               final knob = big ? 16.0 : 10.0;
+              final total = widget.duration?.inMilliseconds ?? 0;
               return Stack(
                 alignment: Alignment.centerLeft,
+                clipBehavior: Clip.none,
                 children: [
                   Container(
                     height: big ? 5 : 3,
@@ -536,6 +587,28 @@ class _TimelineBarState extends State<TimelineBar> {
                       borderRadius: BorderRadius.circular(3),
                     ),
                   ),
+                  // Chapter breaks: thin gaps in the bar.
+                  if (total > 0)
+                    for (final mark in widget.marks)
+                      if (mark > Duration.zero && mark.inMilliseconds < total)
+                        Positioned(
+                          left: width * mark.inMilliseconds / total - 1,
+                          child: Container(
+                            width: 2,
+                            height: big ? 5 : 3,
+                            color: const Color(0xCC000000),
+                          ),
+                        ),
+                  if (widget.preview != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 40,
+                      child: Align(
+                        alignment: Alignment(_fraction * 2 - 1, 1),
+                        child: widget.preview,
+                      ),
+                    ),
                   Positioned(
                     left: (width * _fraction - knob / 2).clamp(0, width - knob),
                     child: Container(

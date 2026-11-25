@@ -9,14 +9,23 @@
     <field id="request" type="assocarray" />
     <field id="response" type="assocarray" />
     <field id="content" type="node" />
+    <field id="cachedHome" type="node" />
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/NotificationReads.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Http.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Quality.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/PlayerExtras.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Items.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/HomeLogic.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/DeviceProfile.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/LiveTvStreams.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveEvents.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/LiveGuide.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/Extras.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/PickTogether.brs" />
+  <script type="text/brightscript" uri="pkg:/components/tasks/HomeSnapshot.brs" />
+  <script type="text/brightscript" uri="pkg:/components/tasks/Requests.brs" />
   <script type="text/brightscript" uri="pkg:/components/tasks/JellyfinTask.brs" />
 </component>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- Who's watching: saved accounts on this Roku, plus Add account. -->
+<!-- Who's watching: the focused profile's last show as the backdrop, a
+     "was watching" card, and rounded-square profiles along the bottom. -->
 <component name="AccountsScreen" extends="Group">
   <interface>
     <field id="accounts" type="array" onChange="build" />
@@ -9,13 +10,27 @@
   <script type="text/brightscript" uri="pkg:/source/lib/Utils.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Theme.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/Jellyfin.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/HomeLogic.brs" />
   <script type="text/brightscript" uri="pkg:/components/screens/AccountsScreen.brs" />
   <children>
-    <Poster uri="pkg:/images/wordmark.png" width="280" height="70" translation="[820,110]" loadDisplayMode="scaleToFit" />
-    <Label id="title" text="Who's watching?" translation="[0,260]" width="1920" horizAlign="center" color="0xF5F7F5FF" />
-    <MarkupGrid id="grid" itemComponentName="AccountItem" numColumns="5" numRows="1" itemSize="[260,340]"
-      itemSpacing="[60,0]" drawFocusFeedback="false" translation="[0,420]" />
-    <Label id="hint" translation="[0,900]" width="1920" horizAlign="center" color="0x8A958DFF"
-      text="Press ✱ on an account to remove it from this Roku." />
+    <Rectangle width="1920" height="1080" color="0x111513FF" />
+    <Poster id="art" width="1920" height="1080" loadDisplayMode="scaleToZoom" />
+    <Poster uri="pkg:/images/scrim_left.png" width="1340" height="1080" />
+    <Poster uri="pkg:/images/scrim_bottom.png" width="1920" height="560" translation="[0,420]" />
+    <Rectangle width="1920" height="120" translation="[0,960]" color="0x111513FF" />
+    <Poster uri="pkg:/images/wordmark.png" width="196" height="48" translation="[96,52]" loadDisplayMode="scaleToFit" />
+    <Label id="title" text="Who's watching?" translation="[96,230]" color="0xF5F7F5FF" />
+    <Group id="card" translation="[96,340]" visible="false">
+      <Rectangle width="208" height="117" color="0x1B211EFF" />
+      <Poster id="thumb" width="208" height="117" loadDisplayMode="scaleToZoom" />
+      <Rectangle id="track" width="208" height="5" translation="[0,112]" color="0xFFFFFF40" />
+      <Rectangle id="bar" width="0" height="5" translation="[0,112]" color="0x72E79BFF" />
+      <Poster uri="pkg:/images/corners24.9.png" width="208" height="117" opacity="0.6" />
+      <Label id="was" translation="[230,24]" width="1200" color="0xBBC5BDFF" />
+      <Label id="line" translation="[230,56]" width="1200" maxLines="1" color="0xF5F7F5FF" />
+    </Group>
+    <MarkupGrid id="grid" itemComponentName="AccountItem" numColumns="6" numRows="1" itemSize="[200,290]"
+      itemSpacing="[44,0]" drawFocusFeedback="false" translation="[96,620]" />
+    <Label id="hint" translation="[96,990]" width="1728" color="0x8A958DFF" />
   </children>
 </component>

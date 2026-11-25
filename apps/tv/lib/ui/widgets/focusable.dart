@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../theme.dart';
@@ -38,6 +39,41 @@ class _FocusableState extends State<Focusable> {
     super.dispose();
   }
 
+  /// Avoid recentering an already visible control on every remote press.
+  /// This also checks outer viewports: a card can be visible in its horizontal
+  /// shelf while that entire shelf is clipped by the vertical Home list.
+  void _revealIfClipped() {
+    final target = context.findRenderObject();
+    if (target == null || !target.attached) return;
+    for (
+      var ancestor = target.parent;
+      ancestor != null;
+      ancestor = ancestor.parent
+    ) {
+      if (ancestor is! RenderAbstractViewport || ancestor is! RenderBox) {
+        continue;
+      }
+      final viewportBox = ancestor as RenderBox;
+      if (!viewportBox.hasSize) continue;
+      final bounds = MatrixUtils.transformRect(
+        target.getTransformTo(ancestor),
+        target.paintBounds,
+      );
+      final visible = viewportBox.paintBounds.inflate(0.5);
+      if (visible.contains(bounds.topLeft) &&
+          visible.contains(bounds.bottomRight)) {
+        continue;
+      }
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.5,
+        duration: Zoro.focusDuration,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+      return;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
@@ -62,12 +98,7 @@ class _FocusableState extends State<Focusable> {
           setState(() => _focused = value);
           if (value) {
             widget.onFocus?.call();
-            Scrollable.ensureVisible(
-              context,
-              alignment: 0.5,
-              duration: Zoro.focusDuration,
-              alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-            );
+            _revealIfClipped();
           }
         },
         child: GestureDetector(

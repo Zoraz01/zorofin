@@ -11,6 +11,7 @@
     <field id="selectedId" type="string" value="home" onChange="paint" />
     <field id="selectedTab" type="string" alwaysNotify="true" />
     <field id="showLive" type="boolean" value="false" onChange="build" />
+    <field id="showRequests" type="boolean" value="false" onChange="build" />
     <field id="showSupport" type="boolean" value="false" onChange="build" />
     <field id="showNotifications" type="boolean" value="false" onChange="build" />
     <field id="unread" type="integer" value="0" onChange="paintBadge" />

@@ -185,9 +185,14 @@ public struct RequestQueue: Decodable, Sendable {
             if text.contains("error") || text.contains("warning") || text.contains("failed") { return "Download needs attention" }
             if text.contains("import") || (progress ?? 0) >= 100 { return "Adding to library" }
             if text.contains("paused") { return "Download paused" }
-            if let progress, progress.isFinite, progress > 0 { return "Downloading · \(Int(min(99, max(0, progress))))%" }
+            if let progress, progress.isFinite, progress > 0 || text.hasPrefix("downloading") { return "Downloading · \(Int(min(99, max(0, progress))))%" }
+            if text.hasPrefix("downloading") { return "Downloading" }
             return "Download queued"
         }
+    }
+    public func download(for item: RequestActivityItem) -> Download? {
+        guard item.requestStatus == 2, item.mediaStatus != "Available", let id = item.tmdbId, let kind = item.kind else { return nil }
+        return items.first { $0.tmdbId == id && $0.source?.lowercased() == (kind == .movie ? "radarr" : "sonarr") }
     }
     // The queue is never shown on its own: join only records the request API permits this viewer to see.
     public func label(for item: RequestActivityItem) -> String? {

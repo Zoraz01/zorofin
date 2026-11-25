@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/episode_status.dart';
 
 import '../../core/catalog.dart';
 import '../../core/errors.dart';
@@ -25,12 +26,14 @@ class DetailScreen extends StatefulWidget {
     required this.item,
     required this.onOpen,
     required this.onPlay,
+    this.revision = 0,
   });
 
   final Catalog catalog;
   final MediaItem item;
   final ValueChanged<MediaItem> onOpen;
   final PlayItem onPlay;
+  final int revision;
 
   @override
   State<DetailScreen> createState() => _DetailScreenState();
@@ -42,6 +45,7 @@ class _DetailScreenState extends State<DetailScreen> {
   List<MediaItem> _similar = const [];
   String? _failure;
   bool _played = false;
+  int _detailRequest = 0;
 
   /// Detail-page track choices (Apple `DetailView` Audio and Subtitles);
   /// null audio and [PlaybackOptions.automatic] follow the account.
@@ -145,18 +149,25 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant DetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.revision != widget.revision) _load();
+  }
+
+  @override
   void dispose() {
     _playFocus.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
+    final request = ++_detailRequest;
     try {
       final full = await _catalog.item(widget.item.id);
       final next = full.isSeries || full.type == 'Season'
           ? await _catalog.nextEpisode(full)
           : null;
-      if (!mounted) return;
+      if (!mounted || request != _detailRequest) return;
       setState(() {
         _item = full;
         _next = next;
@@ -164,10 +175,15 @@ class _DetailScreenState extends State<DetailScreen> {
         _failure = null;
       });
     } on ClientError catch (e) {
-      if (mounted) setState(() => _failure = e.message);
+      if (mounted && request == _detailRequest) {
+        setState(() => _failure = e.message);
+      }
     }
+    if (!mounted || request != _detailRequest) return;
     final similar = await _catalog.similar(widget.item);
-    if (mounted) setState(() => _similar = similar);
+    if (mounted && request == _detailRequest) {
+      setState(() => _similar = similar);
+    }
   }
 
   Future<void> _togglePlayed() async {
@@ -302,8 +318,11 @@ class _DetailScreenState extends State<DetailScreen> {
                 SeasonEpisodeBrowser(
                   key: _browserKey,
                   catalog: _catalog,
+                  revision: widget.revision,
                   context: item,
                   currentEpisodeId: item.isEpisode ? item.id : _next?.id,
+                  preferredEpisode: _next,
+                  onPlay: widget.onPlay,
                   onOpen: widget.onOpen,
                 ),
               ],
@@ -380,7 +399,10 @@ class _DetailScreenState extends State<DetailScreen> {
     final playable = _playable;
     final resume = (playable?.resumeTicks ?? 0) > 0;
     return FocusTraversalGroup(
-      child: Row(
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           SizedBox(
             width: 260,
@@ -399,52 +421,57 @@ class _DetailScreenState extends State<DetailScreen> {
               },
             ),
           ),
-          const SizedBox(width: 24),
-          FavoriteButton(item: item, catalog: _catalog),
-          const SizedBox(width: 16),
-          CircleIconButton(
+          FavoriteButton(item: item, catalog: _catalog, labeled: true),
+          ZoroButton(
             icon: _played
                 ? Icons.check_circle_rounded
                 : Icons.check_circle_outline_rounded,
-            color: _played ? Zoro.jade : Zoro.text,
             label: _played ? 'Mark unwatched' : 'Mark watched',
             onPressed: _togglePlayed,
           ),
           if (resume && playable != null) ...[
-            const SizedBox(width: 16),
-            CircleIconButton(
+            ZoroButton(
               icon: Icons.replay_rounded,
               label: 'Start over',
               onPressed: () => _play(playable, 0),
             ),
           ],
           if (_streams.isNotEmpty) ...[
-            const SizedBox(width: 16),
-            CircleIconButton(
+            ZoroButton(
               icon: Icons.graphic_eq_rounded,
-              color: Zoro.jade,
               label: 'Audio, ${_trackValue('Audio', _audioIndex ?? -999)}',
               onPressed: _chooseAudio,
             ),
-            const SizedBox(width: 16),
-            CircleIconButton(
+            ZoroButton(
               icon: Icons.closed_caption_outlined,
-              color: Zoro.jade,
               label: 'Subtitles, ${_trackValue('Subtitle', _subtitleIndex)}',
               onPressed: _chooseSubtitles,
             ),
           ],
+          // Continue Watching opens episodes here, so the show is one step
+          // away (Apple `detail-view-series`).
+          if (item.isEpisode && item.seriesId != null) ...[
+            ZoroButton(
+              icon: Icons.tv_rounded,
+              label: 'View series',
+              onPressed: () => widget.onOpen(
+                MediaItem(
+                  id: item.seriesId!,
+                  name: item.seriesName ?? 'Series',
+                  type: 'Series',
+                ),
+              ),
+            ),
+          ],
           if (seriesId != null) ...[
-            const SizedBox(width: 16),
-            CircleIconButton(
+            ZoroButton(
               icon: Icons.format_list_bulleted_rounded,
               label: 'Seasons and episodes',
               onPressed: _showEpisodes,
             ),
           ],
           if (_qualityItem.fileQualities.any((q) => q.facts.isNotEmpty)) ...[
-            const SizedBox(width: 16),
-            CircleIconButton(
+            ZoroButton(
               icon: Icons.info_outline_rounded,
               label: 'File details',
               onPressed: _showFileDetails,
@@ -552,7 +579,7 @@ class _Heading extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.circle, size: 10, color: Zoro.jade),
+            Icon(Icons.circle, size: 10, color: Zoro.jade),
             const SizedBox(width: 8),
             Text(
               item.type.toUpperCase(),
@@ -608,17 +635,27 @@ class SeasonEpisodeBrowser extends StatefulWidget {
     required this.context,
     required this.onOpen,
     this.currentEpisodeId,
+    this.preferredEpisode,
+    this.onPlay,
     this.inPlayer = false,
+    this.seasonMenuController,
+    this.revision = 0,
   });
 
   final Catalog catalog;
   final MediaItem context;
   final ValueChanged<MediaItem> onOpen;
   final String? currentEpisodeId;
+  final MediaItem? preferredEpisode;
+  final PlayItem? onPlay;
 
   /// In the player's episode panel: no heading (the panel has one), and the
   /// current episode reads "Currently playing".
   final bool inPlayer;
+
+  /// Lets the player consume platform Back before dismissing its parent panel.
+  final MenuController? seasonMenuController;
+  final int revision;
 
   @override
   State<SeasonEpisodeBrowser> createState() => _SeasonEpisodeBrowserState();
@@ -631,9 +668,15 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
   int? _total;
   bool _hasMore = false;
   bool _loadingMore = false;
+  int _episodeRequest = 0, _scopeRevision = 0, _selectionRevision = 0;
+  int _interaction = 0;
+  MediaItem? get _target =>
+      widget.context.isEpisode ? widget.context : widget.preferredEpisode;
   String? _error;
-  bool _expanded = false;
+  late final _seasonMenu = widget.seasonMenuController ?? MenuController();
   final _row = ScrollController();
+  static const _episodeGap = 16.0, _rowPadding = 4.0;
+  final _seasonFocus = FocusNode(debugLabel: 'player-current-season');
 
   String get _seriesId => widget.context.episodeSeriesId!;
 
@@ -644,69 +687,204 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
   }
 
   @override
+  void didUpdateWidget(covariant SeasonEpisodeBrowser oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.catalog, widget.catalog) ||
+        oldWidget.context.episodeSeriesId != _seriesId) {
+      _scopeRevision++;
+      _selectionRevision++;
+      _episodeRequest++;
+      _seasons = null;
+      _episodes = null;
+      _seasonId = null;
+      _interaction = 0;
+      _loadSeasons();
+    } else if (oldWidget.preferredEpisode == null &&
+        widget.preferredEpisode != null &&
+        _interaction == 0) {
+      _loadSeasons();
+    } else if (oldWidget.revision != widget.revision) {
+      _refreshEpisodes();
+    }
+  }
+
+  // Refresh the loaded range without resetting season, scroll or card focus.
+  Future<void> _refreshEpisodes() async {
+    final seasonId = _seasonId;
+    if (seasonId == null) return;
+    final request = ++_episodeRequest;
+    final count = _episodes?.length ?? episodePageSize;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await widget.catalog.episodePage(
+        _seriesId,
+        seasonId,
+        limit: count > 0 ? count : episodePageSize,
+      );
+      if (!mounted || request != _episodeRequest || seasonId != _seasonId) {
+        return;
+      }
+      setState(() {
+        _episodes = page.items;
+        _total = page.totalRecordCount;
+        _hasMore =
+            page.items.isNotEmpty &&
+            (_total == null
+                ? page.items.length >= count
+                : page.items.length < _total!);
+        _loadingMore = false;
+        _error = null;
+      });
+    } on ClientError catch (e) {
+      if (mounted && request == _episodeRequest) {
+        setState(() {
+          _loadingMore = false;
+          _error = e.message;
+        });
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    _seasonFocus.dispose();
     _row.dispose();
     super.dispose();
   }
 
-  /// Bring the current episode into view, as Apple's `centerCurrent` does.
-  void _showCurrent() {
-    final index =
-        _episodes?.indexWhere((e) => e.id == widget.currentEpisodeId) ?? -1;
-    if (index <= 0) return;
+  /// Center the current card without using a lazy list's estimated end offset.
+  void _showCurrent(int intent, int selection) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_row.hasClients) return;
+      if (!mounted ||
+          !_row.hasClients ||
+          intent != _interaction ||
+          selection != _selectionRevision) {
+        return;
+      }
+      final episodes = _episodes;
+      final index =
+          episodes?.indexWhere((e) => e.id == widget.currentEpisodeId) ?? -1;
+      if (episodes == null || index < 0) return;
       final position = _row.position;
-      _row.jumpTo(
-        (index * 396.0 - 396).clamp(0, position.maxScrollExtent).toDouble(),
+      if (!position.hasViewportDimension) return;
+      final cardWidth = _EpisodeCard.widthFor(widget.inPlayer);
+      final count = episodes.length + (_hasMore ? 1 : 0);
+      final contentWidth =
+          2 * _rowPadding +
+          episodes.length * cardWidth +
+          (_hasMore ? _MoreEpisodes.width : 0) +
+          (count - 1) * _episodeGap;
+      final end = (contentWidth - position.viewportDimension).clamp(
+        0.0,
+        double.infinity,
       );
+      final centered =
+          _rowPadding +
+          index * (cardWidth + _episodeGap) -
+          (position.viewportDimension - cardWidth) / 2;
+      _row.jumpTo(centered.clamp(0.0, end).toDouble());
     });
   }
 
   Future<void> _loadSeasons() async {
+    final scope = ++_scopeRevision, intent = _interaction;
+    ++_episodeRequest;
+    final catalog = widget.catalog, c = widget.context;
     setState(() => _error = null);
     try {
-      final seasons = await widget.catalog.seasons(_seriesId);
-      final c = widget.context;
-      // Open on the page's own season, otherwise the first numbered season.
-      final preferred = c.type == 'Season' ? c.id : c.seasonId;
+      final seasons = await catalog.seasons(_seriesId);
+      if (!mounted || scope != _scopeRevision) {
+        return;
+      }
+      // Series pages carry the resolved resume/up-next episode and its season.
+      final preferred = c.type == 'Season'
+          ? c.id
+          : _target?.seasonId ?? c.seasonId;
       final initial =
           seasons.where((s) => s.id == preferred).firstOrNull ??
           seasons.where((s) => (s.indexNumber ?? 0) > 0).firstOrNull ??
           seasons.firstOrNull;
       if (!mounted) return;
       setState(() => _seasons = seasons);
-      if (initial != null) await _select(initial.id);
+      if (initial != null) {
+        await _select(initial.id, target: intent == _interaction);
+        if (_target == null && c.isSeries) {
+          for (final next in seasons.skip(seasons.indexOf(initial) + 1)) {
+            if (!mounted ||
+                scope != _scopeRevision ||
+                _interaction != 0 ||
+                _error != null ||
+                (_episodes?.isNotEmpty ?? false)) {
+              break;
+            }
+            await _select(next.id);
+          }
+          if (mounted &&
+              scope == _scopeRevision &&
+              _interaction == 0 &&
+              _error == null &&
+              (_episodes?.isEmpty ?? false)) {
+            await _select(initial.id);
+          }
+        }
+      }
     } on ClientError catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted && scope == _scopeRevision) {
+        setState(() => _error = e.message);
+      }
     }
   }
 
-  Future<void> _select(String seasonId) async {
+  Future<void> _select(String seasonId, {bool target = true}) async {
+    final selection = ++_selectionRevision, intent = _interaction;
+    ++_episodeRequest;
+    _seasonMenu.close();
     setState(() {
       _seasonId = seasonId;
+      _loadingMore = false;
       _episodes = null;
       _total = null;
       _hasMore = false;
-      _expanded = false;
       _error = null;
     });
+    if (widget.inPlayer && target) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            selection == _selectionRevision &&
+            intent == _interaction) {
+          _seasonFocus.requestFocus();
+        }
+      });
+    }
     await _loadMore();
-    // Page forward until the current episode is in the row (at most ten
-    // pages), so the row opens on it as Apple does.
+    // Stop targeting as soon as the viewer interacts or changes the selection.
     final current = widget.currentEpisodeId;
-    for (var i = 0; i < 10 && current != null; i++) {
-      if (!mounted || _seasonId != seasonId || !_hasMore) break;
+    for (var i = 0; target && i < 100 && current != null; i++) {
+      if (!mounted ||
+          selection != _selectionRevision ||
+          intent != _interaction ||
+          _seasonId != seasonId ||
+          !_hasMore ||
+          _error != null ||
+          (_target?.seasonId != null && _target!.seasonId != seasonId)) {
+        break;
+      }
       if (_episodes?.any((e) => e.id == current) ?? false) break;
       await _loadMore();
     }
-    if (mounted && _seasonId == seasonId) _showCurrent();
+    if (target &&
+        mounted &&
+        selection == _selectionRevision &&
+        _seasonId == seasonId) {
+      _showCurrent(intent, selection);
+    }
   }
 
   /// The next page of episodes (Apple `EpisodeBrowser.loadMore`).
   Future<void> _loadMore() async {
     final seasonId = _seasonId;
     if (seasonId == null || _loadingMore) return;
+    final request = ++_episodeRequest;
     final have = _episodes ?? const <MediaItem>[];
     setState(() {
       _loadingMore = true;
@@ -718,7 +896,9 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
         seasonId,
         start: have.length,
       );
-      if (!mounted || _seasonId != seasonId) return;
+      if (!mounted || _seasonId != seasonId || request != _episodeRequest) {
+        return;
+      }
       final seen = {for (final e in have) e.id};
       final fresh = page.items.where((e) => seen.add(e.id)).toList();
       final count = have.length + fresh.length;
@@ -733,7 +913,7 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
         _loadingMore = false;
       });
     } on ClientError catch (e) {
-      if (mounted && _seasonId == seasonId) {
+      if (mounted && _seasonId == seasonId && request == _episodeRequest) {
         setState(() {
           _error = e.message;
           _loadingMore = false;
@@ -748,141 +928,193 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    final c = widget.context;
     final seasons = _seasons;
     final selected = seasons?.where((s) => s.id == _seasonId).firstOrNull;
     return FocusTraversalGroup(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!widget.inPlayer)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
+      child: Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (_, event) {
+          _interaction++;
+          return KeyEventResult.ignored;
+        },
+        child: Listener(
+          onPointerDown: (_) => _interaction++,
+          onPointerSignal: (_) => _interaction++,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!widget.inPlayer)
                 Text(
                   'Seasons & episodes',
                   style: Zoro.font(28, weight: FontWeight.w700),
                 ),
-                const Spacer(),
-                if (c.isEpisode && c.seriesId != null)
-                  Focusable(
-                    onPressed: () => widget.onOpen(
-                      MediaItem(
-                        id: c.seriesId!,
-                        name: c.seriesName ?? 'Series',
-                        type: 'Series',
-                      ),
-                    ),
-                    builder: (context, focused) => Container(
-                      constraints: const BoxConstraints(minHeight: Zoro.target),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      alignment: Alignment.center,
-                      decoration: ShapeDecoration(
-                        shape: StadiumBorder(
-                          side: BorderSide(
-                            color: focused ? Colors.white : Colors.transparent,
-                            width: 3,
+              if (!widget.inPlayer) const SizedBox(height: 16),
+              if (seasons == null && _error == null)
+                const EpisodeStatus(
+                  title: 'Loading seasons…',
+                  detail: 'Finding seasons for this series.',
+                  loading: true,
+                )
+              else if (seasons != null && seasons.isNotEmpty) ...[
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    MenuAnchor(
+                      controller: _seasonMenu,
+                      childFocusNode: _seasonFocus,
+                      alignmentOffset: const Offset(0, 10),
+                      consumeOutsideTap: true,
+                      style: MenuStyle(
+                        backgroundColor: const WidgetStatePropertyAll(
+                          Zoro.panel,
+                        ),
+                        maximumSize: const WidgetStatePropertyAll(
+                          Size(380, 360),
+                        ),
+                        padding: const WidgetStatePropertyAll(
+                          EdgeInsets.all(10),
+                        ),
+                        shape: WidgetStatePropertyAll(
+                          RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
                       ),
-                      child: Text(
-                        'View series',
-                        style: Zoro.font(
-                          20,
-                          weight: FontWeight.w600,
-                          color: Zoro.jade,
-                        ),
+                      menuChildren: [
+                        for (final season in seasons)
+                          SizedBox(
+                            width: 340,
+                            child: _SeasonOption(
+                              title: _title(season),
+                              selected: season.id == _seasonId,
+                              autofocus: season.id == _seasonId,
+                              onPressed: () => _select(season.id),
+                            ),
+                          ),
+                      ],
+                      builder: (context, controller, child) => _Pill(
+                        focusNode: _seasonFocus,
+                        autofocus: widget.inPlayer,
+                        label: selected == null
+                            ? 'Choose season'
+                            : _title(selected),
+                        trailing: Icons.keyboard_arrow_down_rounded,
+                        onPressed: () => controller.isOpen
+                            ? controller.close()
+                            : controller.open(),
                       ),
                     ),
-                  ),
-              ],
-            ),
-          if (!widget.inPlayer) const SizedBox(height: 16),
-          if (seasons == null && _error == null)
-            Text('Loading seasons…', style: Zoro.font(20, color: Zoro.muted))
-          else if (seasons != null && seasons.isNotEmpty) ...[
-            _Pill(
-              label: selected == null ? 'Choose season' : _title(selected),
-              trailing: _expanded
-                  ? Icons.keyboard_arrow_up_rounded
-                  : Icons.keyboard_arrow_down_rounded,
-              onPressed: () => setState(() => _expanded = !_expanded),
-            ),
-            if (_expanded) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Zoro.panel,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Wrap(
-                  spacing: 20,
-                  runSpacing: 4,
-                  children: [
-                    for (final season in seasons)
-                      SizedBox(
-                        width: 340,
-                        child: _SeasonOption(
-                          title: _title(season),
-                          selected: season.id == _seasonId,
-                          autofocus: season.id == _seasonId,
-                          onPressed: () => _select(season.id),
-                        ),
+                    if (_target?.seasonId != null)
+                      ZoroButton(
+                        label: 'Return to current episode',
+                        onPressed: () => _select(_target!.seasonId!),
                       ),
                   ],
                 ),
-              ),
-            ],
-            const SizedBox(height: 16),
-          ],
-          if (_error != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_error!, style: Zoro.font(20, color: Zoro.muted)),
-                const SizedBox(height: 12),
-                ZoroButton(
-                  label: 'Try again',
-                  onPressed: _seasonId == null
+                const SizedBox(height: 16),
+              ],
+              if (_error != null)
+                EpisodeStatus(
+                  title: 'Episodes unavailable',
+                  detail: _error,
+                  onRetry: _seasonId == null
                       ? _loadSeasons
                       : (_episodes?.isNotEmpty ?? false)
                       ? _loadMore
                       : () => _select(_seasonId!),
+                  onChooseSeason: (seasons?.length ?? 0) > 1
+                      ? () => _seasonMenu.open()
+                      : null,
                 ),
-              ],
-            )
-          else if (seasons != null && _seasonId != null && _episodes == null)
-            Text('Loading episodes…', style: Zoro.font(20, color: Zoro.muted))
-          else if (_episodes case final episodes? when episodes.isNotEmpty)
-            SizedBox(
-              height: widget.inPlayer ? 290 : 420,
-              child: ListView.separated(
-                controller: _row,
-                scrollDirection: Axis.horizontal,
-                clipBehavior: Clip.none,
-                padding: const EdgeInsets.all(4),
-                itemCount: episodes.length + (_hasMore ? 1 : 0),
-                separatorBuilder: (_, _) => const SizedBox(width: 16),
-                itemBuilder: (context, i) => i == episodes.length
-                    ? _MoreEpisodes(loading: _loadingMore, onPressed: _loadMore)
-                    : _EpisodeCard(
-                        item: episodes[i],
-                        catalog: widget.catalog,
-                        current: episodes[i].id == widget.currentEpisodeId,
-                        inPlayer: widget.inPlayer,
-                        onPressed: () => widget.onOpen(episodes[i]),
+              if (_error == null &&
+                  seasons != null &&
+                  _seasonId != null &&
+                  _episodes == null)
+                EpisodeStatus(
+                  title: 'Loading episodes…',
+                  detail: selected == null
+                      ? 'Your place is saved.'
+                      : '${_title(selected)} · Your place is saved.',
+                  loading: true,
+                )
+              else if (_episodes case final episodes? when episodes.isNotEmpty)
+                SizedBox(
+                  height: widget.inPlayer
+                      ? 290
+                      : (widget.onPlay == null ? 420 : 490),
+                  child: ListView.builder(
+                    controller: _row,
+                    scrollDirection: Axis.horizontal,
+                    clipBehavior: Clip.none,
+                    padding: const EdgeInsets.all(_rowPadding),
+                    itemCount: episodes.length + (_hasMore ? 1 : 0),
+                    // Known extents let the lazy viewport jump beyond its first
+                    // rendered page without estimating from mixed separators.
+                    itemExtentBuilder: (i, _) {
+                      final count = episodes.length + (_hasMore ? 1 : 0);
+                      if (i >= count) return null;
+                      final width = i == episodes.length
+                          ? _MoreEpisodes.width
+                          : _EpisodeCard.widthFor(widget.inPlayer);
+                      return width + (i < count - 1 ? _episodeGap : 0);
+                    },
+                    itemBuilder: (context, i) => Padding(
+                      padding: EdgeInsetsDirectional.only(
+                        end: i < episodes.length + (_hasMore ? 1 : 0) - 1
+                            ? _episodeGap
+                            : 0,
                       ),
-              ),
-            )
-          else if (seasons != null)
-            Text(
-              seasons.isEmpty
-                  ? 'No seasons are available.'
-                  : 'No episodes are available in this season.',
-              style: Zoro.font(20, color: Zoro.muted),
-            ),
-        ],
+                      child: i == episodes.length
+                          ? _MoreEpisodes(
+                              loading: _loadingMore,
+                              onPressed: _loadMore,
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _EpisodeCard(
+                                  item: episodes[i],
+                                  catalog: widget.catalog,
+                                  current:
+                                      episodes[i].id == widget.currentEpisodeId,
+                                  inPlayer: widget.inPlayer,
+                                  onPressed: () => widget.onOpen(episodes[i]),
+                                ),
+                                if (!widget.inPlayer && widget.onPlay != null)
+                                  ZoroButton(
+                                    label: 'Play',
+                                    icon: Icons.play_arrow_rounded,
+                                    onPressed: () => widget.onPlay!(
+                                      episodes[i],
+                                      startTicks: episodes[i].resumeTicks,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                    ),
+                  ),
+                )
+              else if (seasons != null && _error == null)
+                EpisodeStatus(
+                  title: seasons.isEmpty
+                      ? 'No seasons available'
+                      : 'This season has no episodes',
+                  detail: seasons.isEmpty
+                      ? 'No seasons are available to your account yet. Try again later.'
+                      : 'Choose another season, or check again when episodes have been added.',
+                  onRetry: _seasonId == null
+                      ? _loadSeasons
+                      : () => _select(_seasonId!),
+                  onChooseSeason: seasons.length > 1
+                      ? () => _seasonMenu.open()
+                      : null,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -890,6 +1122,7 @@ class _SeasonEpisodeBrowserState extends State<SeasonEpisodeBrowser> {
 
 /// The More episodes card at the end of a paged season row.
 class _MoreEpisodes extends StatelessWidget {
+  static const width = 160.0;
   const _MoreEpisodes({required this.loading, required this.onPressed});
 
   final bool loading;
@@ -901,7 +1134,7 @@ class _MoreEpisodes extends StatelessWidget {
     semanticLabel: 'More episodes',
     builder: (context, focused) => AnimatedContainer(
       duration: Zoro.focusDuration,
-      width: 160,
+      width: width,
       height: 214,
       decoration: BoxDecoration(
         color: focused ? Zoro.text : Zoro.panel,
@@ -935,7 +1168,11 @@ class _Pill extends StatelessWidget {
     required this.label,
     required this.trailing,
     required this.onPressed,
+    this.focusNode,
+    this.autofocus = false,
   });
+  final FocusNode? focusNode;
+  final bool autofocus;
 
   final String label;
   final IconData trailing;
@@ -946,6 +1183,8 @@ class _Pill extends StatelessWidget {
     return Focusable(
       onPressed: onPressed,
       semanticLabel: 'Choose season, $label',
+      focusNode: focusNode,
+      autofocus: autofocus,
       builder: (context, focused) => AnimatedContainer(
         duration: Zoro.focusDuration,
         constraints: const BoxConstraints(minHeight: Zoro.target),
@@ -1034,6 +1273,7 @@ class _SeasonOption extends StatelessWidget {
 /// Episode card (Apple `EpisodeBrowseCard`): 16:9 still, "N. Name", runtime
 /// with current or watched state, and three lines of overview.
 class _EpisodeCard extends StatelessWidget {
+  static double widthFor(bool inPlayer) => inPlayer ? 300 : 380;
   const _EpisodeCard({
     required this.item,
     required this.catalog,
@@ -1056,7 +1296,7 @@ class _EpisodeCard extends StatelessWidget {
       semanticLabel:
           'Episode ${item.indexNumber ?? ''}, ${item.name}${current ? ', current episode' : ''}',
       builder: (context, focused) => SizedBox(
-        width: inPlayer ? 300 : 380,
+        width: widthFor(inPlayer),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1103,7 +1343,7 @@ class _EpisodeCard extends StatelessWidget {
                                 alignment: Alignment.centerLeft,
                                 child: FractionallySizedBox(
                                   widthFactor: item.progress,
-                                  child: const ColoredBox(color: Zoro.jade),
+                                  child: ColoredBox(color: Zoro.jade),
                                 ),
                               ),
                             ),
@@ -1124,20 +1364,33 @@ class _EpisodeCard extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Text(
-                  item.durationLabel,
-                  style: Zoro.font(18, color: Zoro.muted),
-                ),
-                const SizedBox(width: 8),
-                if (current)
+                if (item.durationLabel.isNotEmpty) ...[
                   Text(
-                    inPlayer ? 'Currently playing' : 'Current episode',
-                    style: Zoro.font(18, color: Zoro.jade),
+                    item.durationLabel,
+                    style: Zoro.font(18, color: Zoro.muted),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                if (current)
+                  Flexible(
+                    child: Text(
+                      inPlayer ? 'Currently playing' : 'Current episode',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Zoro.font(18, color: Zoro.jade),
+                    ),
                   )
                 else if (item.userData?.played == true) ...[
                   const Icon(Icons.check_rounded, size: 18, color: Zoro.muted),
                   const SizedBox(width: 4),
-                  Text('Watched', style: Zoro.font(18, color: Zoro.muted)),
+                  Flexible(
+                    child: Text(
+                      'Watched',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Zoro.font(18, color: Zoro.muted),
+                    ),
+                  ),
                 ],
               ],
             ),

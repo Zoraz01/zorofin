@@ -100,14 +100,19 @@ import AVFoundation
     private let active: @MainActor () -> Bool
     private let allowsLiveResourcesWhilePaused: Bool
     private let subtitleAppearance: SubtitleAppearance?
+    private let startSeconds: Double
     public private(set) var item: AVPlayerItem?
 
+    /// `startSeconds` positions a new item before AVPlayer requests any media,
+    /// so a transcoded HLS resume asks the server for the resume segment first
+    /// instead of starting an encode at 0:00 that the resume seek then restarts.
     public init(player: AVPlayer, url: URL, allowsLiveResourcesWhilePaused: Bool,
-                subtitleAppearance: SubtitleAppearance? = nil,
+                subtitleAppearance: SubtitleAppearance? = nil, startSeconds: Double = 0,
                 isActive: @escaping @MainActor () -> Bool) {
         self.player = player; self.url = url; self.active = isActive
         self.allowsLiveResourcesWhilePaused = allowsLiveResourcesWhilePaused
         self.subtitleAppearance = subtitleAppearance
+        self.startSeconds = startSeconds
     }
     public var isActive: Bool { active() && (item == nil || player.currentItem === item) }
     public var isReady: Bool { player.status == .readyToPlay && item?.status == .readyToPlay }
@@ -126,6 +131,12 @@ import AVFoundation
         let next = AVPlayerItem(url: url)
         next.textStyleRules = subtitleAppearance?.textStyleRules()
         next.canUseNetworkResourcesForLiveStreamingWhilePaused = allowsLiveResourcesWhilePaused
+        if startSeconds.isFinite && startSeconds > 0 {
+            // An item accepts a seek before it is ready; it starts loading there.
+            // PlayerPreparation still runs its exact seek once the item is ready.
+            next.seek(to: CMTime(seconds: startSeconds, preferredTimescale: 600),
+                      toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: nil)
+        }
         item = next
         player.replaceCurrentItem(with: next)
     }

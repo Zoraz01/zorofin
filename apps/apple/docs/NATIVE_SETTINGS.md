@@ -73,6 +73,11 @@ Backgrounding or leaving the player cancels it. The previous playback session
 is stopped and cleaned up before the next one starts. No server-requested live
 stream is closed unless it belongs to this player.
 
+Poster ratings default to enabled for new device/server/account preferences in
+1.4 across Apple, Flutter and LG clients. Existing saved values, including false,
+are preserved; changing the default does not overwrite previous preference files.
+The Display → Show ratings control still lets viewers turn the badges off.
+
 Poster preferences apply to grid/shelf cards. With Show ratings enabled, the
 numeric score and star appear in yellow on a dark capsule at the thumbnail's top
 right, for both poster and landscape cards. There is no rating line below the

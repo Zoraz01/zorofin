@@ -3,15 +3,14 @@ import Foundation
 /// Home rows computed on the device from ordinary, viewer-scoped Jellyfin reads.
 /// They work on any Jellyfin server; no Zorofin service or third-party plugin is
 /// involved. Rules follow `support-agent/home-rows.js` and `curated-seasons.js`.
-/// Only rows that need cross-account data (popularity) or Seerr (requests) still
-/// come from the optional server feed. See docs/CLIENT_HOME_ROWS.md.
+/// Legacy v1 merges the optional requests/popularity feed. Supported plugin v2
+/// owns the app rows instead; this computation remains the ordinary-server and
+/// error fallback. See docs/CLIENT_HOME_ROWS.md.
 public enum ClientHomeRows {
     public static let ids: Set<String> = ["new-episodes", "short-movies", "showcase", "curated", "sports"]
     static let shortMovieMinutes = 90
     static let recentDays = 14.0
     static let sportsWindow: TimeInterval = 12 * 3_600
-    /// A followed team's game joins the row this long before it starts.
-    static let sportsSoon: TimeInterval = 3_600
     static let cardLimit = 20
 
     /// Pinned-row order matches the server contract so shuffling stays identical.
@@ -122,20 +121,17 @@ public enum ClientHomeRows {
         }
     }
 
-    /// Games for the viewer's teams that are on now or start within the hour. No teams, no row:
-    /// generic sports channels never fill it.
     static func sports(_ programs: [GuideProgram], channels: [MediaItem], teams: [String], at now: Date) -> [HomeRowCard] {
-        guard !teams.isEmpty else { return [] }
         let byID = Dictionary(channels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var seen: Set<String> = []
         return programs.compactMap { program -> (HomeRowCard, Date)? in
             guard program.isSports == true || (program.genres ?? []).contains(where: { ["sport", "sports"].contains($0.lowercased()) }),
                   notLive.firstMatch(in: program.name, range: NSRange(program.name.startIndex..., in: program.name)) == nil,
                   let start = date(program.startDate), let end = date(program.endDate),
-                  end > now, start <= now.addingTimeInterval(sportsSoon), start > now.addingTimeInterval(-sportsWindow),
+                  end > now, start <= now.addingTimeInterval(sportsWindow), start > now.addingTimeInterval(-sportsWindow),
                   let channelID = program.channelId, let channel = byID[channelID],
                   let id = program.id, !id.isEmpty, seen.insert(id).inserted,
-                  teamMatches(program.name + " " + (program.overview ?? ""), teams: teams) else { return nil }
+                  teams.isEmpty || teamMatches(program.name + " " + (program.overview ?? ""), teams: teams) else { return nil }
             return (HomeRowCard(id: id, item: channel, subtitle: program.name, badges: [start <= now ? "On now" : "Starting soon"],
                 startsAt: program.startDate, endsAt: program.endDate), start)
         }.sorted { $0.1 < $1.1 }.prefix(cardLimit).map(\.0)
@@ -407,7 +403,7 @@ extension JellyfinClient {
             let page = try await request(GuidePage.self, path: ["LiveTv", "Programs"], query: [
                 .init(name: "userId", value: session.viewer.id), .init(name: "isSports", value: "true"),
                 .init(name: "minEndDate", value: now.ISO8601Format()),
-                .init(name: "maxStartDate", value: now.addingTimeInterval(ClientHomeRows.sportsSoon).ISO8601Format()),
+                .init(name: "maxStartDate", value: now.addingTimeInterval(ClientHomeRows.sportsWindow).ISO8601Format()),
                 .init(name: "sortBy", value: "StartDate"), .init(name: "sortOrder", value: "Ascending"),
                 .init(name: "fields", value: "Overview,Genres"), .init(name: "enableImages", value: "false"),
                 .init(name: "startIndex", value: String(start)), .init(name: "limit", value: "500")])
@@ -451,7 +447,7 @@ extension JellyfinClient {
             row("curated", (try? curated.get().title) ?? "Seasonal picks", curated.map { $0.cards },
                 empty: "No matching seasonal or curated titles are available yet."),
             row("sports", "Your teams / starting soon", try await sportsResult,
-                empty: teams.isEmpty ? "Follow your teams to see their games here." : "None of your teams are on now or starting soon.")
+                empty: teams.isEmpty ? "No upcoming sports are listed." : "No broadcasts for your teams are listed in the next 12 hours.")
         ]
     }
 }

@@ -1,8 +1,7 @@
 title=Zorofin
-subtitle=A beautiful client for your Jellyfin server
 major_version=1
-minor_version=0
-build_version=1
+minor_version=5
+build_version=0
 
 mm_icon_focus_hd=pkg:/images/icon_focus_hd.png
 mm_icon_focus_fhd=pkg:/images/icon_focus_fhd.png
@@ -14,4 +13,4 @@ ui_resolutions=fhd
 rsg_version=1.3
 supports_input_launch=1
 uri_resolution_autosub=$$RES$$,SD,HD,FHD
-bs_const=ZOROFIN_REQUESTS=false
+bs_const=ZOROFIN_REQUESTS=true

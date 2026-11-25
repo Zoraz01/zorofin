@@ -7,8 +7,14 @@ enum Theme {
     static let border = Color(hex: 0x39423c)
     static let text = Color(hex: 0xf5f7f5)
     static let muted = Color(hex: 0xbbc5bd)
-    static let jade = Color(hex: 0x72e79b)
-    static let play = Color(hex: 0x1cb956)
+    /// Zorofin green, the accent unless the server sets its own.
+    static let defaultAccent = Color(hex: 0x72e79b)
+    static let defaultPlay = Color(hex: 0x1cb956)
+    /// The accent: buttons, focus, progress and selected items. Views that
+    /// read it redraw when the server's accent changes (Observation).
+    static var jade: Color { ServerAccent.shared.color ?? defaultAccent }
+    /// Primary buttons (Play): the server's accent, which keeps dark text readable.
+    static var play: Color { ServerAccent.shared.color ?? defaultPlay }
     static let avatar = Color(hex: 0x24543e)
     static var isTV: Bool {
         #if os(tvOS)
@@ -21,6 +27,18 @@ enum Theme {
     static var target: CGFloat { isTV ? 60 : 48 }
     static func font(_ size: CGFloat, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body) -> Font {
         .custom("InterVariable", size: size, relativeTo: style).weight(weight)
+    }
+}
+
+/// The accent of the account on screen (nil: Zorofin green), from the
+/// server's looks. Set on the main actor by AppModel only.
+@Observable final class ServerAccent: @unchecked Sendable {
+    static let shared = ServerAccent()
+    private(set) var color: Color?
+    private var value: UInt32?
+    @MainActor func set(_ rgb: UInt32?) {
+        guard rgb != value else { return }
+        value = rgb; color = rgb.map { Color(hex: $0) }
     }
 }
 
@@ -78,6 +96,7 @@ struct SavedAccountAvatar: View {
             if let image = model.isCurrent(account) ? model.profileImage ?? photo : photo {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
+                // The viewer's initial until they set a Jellyfin photo.
                 Text(String(account.viewer.name.prefix(1)).uppercased())
                     .font(Theme.font(size * 0.48, weight: .bold)).foregroundStyle(Theme.text)
             }

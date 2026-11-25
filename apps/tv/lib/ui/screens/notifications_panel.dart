@@ -40,34 +40,36 @@ class _NotificationInboxState extends State<NotificationInbox> {
   @override
   void initState() {
     super.initState();
-    unawaited(_extras.refreshNotifications());
+    // After this frame: a refresh notifies listeners, which can't happen while
+    // the inbox itself is still being built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_extras.refreshNotifications());
+    });
   }
 
   List<RequestAvailabilityNotice> get _newRequests => _extras.requestNotices
       .where(
         (n) =>
-            !_extras.requestReadIds.contains(n.id) ||
-            _sessionRequestIds.contains(n.id),
+            !_extras.isRequestRead(n.id) || _sessionRequestIds.contains(n.id),
       )
       .toList();
 
   List<RequestAvailabilityNotice> get _oldRequests => _extras.requestNotices
       .where(
         (n) =>
-            _extras.requestReadIds.contains(n.id) &&
-            !_sessionRequestIds.contains(n.id),
+            _extras.isRequestRead(n.id) && !_sessionRequestIds.contains(n.id),
       )
       .toList();
 
   List<SupportReply> get _newReplies => _extras.replies
       .where(
         (r) =>
-            !_extras.seenReplyKeys.contains(r.notificationKey) ||
+            !_extras.isReplyRead(r) ||
             _sessionReplyKeys.contains(r.notificationKey),
       )
       .toList();
 
-  List<SupportReply> get _oldReplies => _extras.hiddenReplies
+  List<SupportReply> get _oldReplies => _extras.readReplies
       .where((r) => !_sessionReplyKeys.contains(r.notificationKey))
       .toList();
 
@@ -218,7 +220,7 @@ class _NotificationInboxState extends State<NotificationInbox> {
                             _sessionReplyKeys.add(reply.notificationKey);
                             return _extras.markReplyRead(reply);
                           },
-                          child: _ReplyRow(reply: reply),
+                          child: _replyRow(reply),
                         ),
                       if (history > 0) ...[
                         _Row(
@@ -250,7 +252,7 @@ class _NotificationInboxState extends State<NotificationInbox> {
                         ),
                         if (_showHidden) ...[
                           for (final n in oldRequests) _requestRow(n),
-                          for (final r in oldReplies) _ReplyRow(reply: r),
+                          for (final r in oldReplies) _replyRow(r),
                           if (_extras.hasOlderRequestNotices)
                             Padding(
                               padding: const EdgeInsets.all(8),
@@ -271,6 +273,17 @@ class _NotificationInboxState extends State<NotificationInbox> {
       },
     );
   }
+
+  Widget _replyRow(SupportReply reply) => _ReplyRow(
+    key: ValueKey('reply-row-${reply.notificationKey}'),
+    reply: reply,
+    onSeen: () {
+      if (!_extras.isReplyRead(reply)) {
+        _sessionReplyKeys.add(reply.notificationKey);
+      }
+      return _extras.markReplyRead(reply);
+    },
+  );
 
   Widget _requestRow(RequestAvailabilityNotice notice) {
     final status = _openingId == notice.id
@@ -326,9 +339,10 @@ class _NotificationInboxState extends State<NotificationInbox> {
 }
 
 class _ReplyRow extends StatefulWidget {
-  const _ReplyRow({required this.reply});
+  const _ReplyRow({super.key, required this.reply, required this.onSeen});
 
   final SupportReply reply;
+  final Future<void> Function() onSeen;
 
   @override
   State<_ReplyRow> createState() => _ReplyRowState();
@@ -343,20 +357,25 @@ class _ReplyRowState extends State<_ReplyRow> {
     final media = reply.affectedMedia;
     return _Row(
       label:
-          'Support reply, ${media?.isNotEmpty == true ? media : reply.issueType}. ${reply.message}',
-      onPressed: () => setState(() => _expanded = !_expanded),
+          '${reply.sourceLabel}, ${media?.isNotEmpty == true ? media : reply.issueType}. ${reply.message}',
+      onPressed: () {
+        setState(() => _expanded = !_expanded);
+        unawaited(widget.onSeen());
+      },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.support_agent_rounded,
+              Icon(
+                reply.isAnnouncement
+                    ? Icons.campaign_rounded
+                    : Icons.support_agent_rounded,
                 size: 22,
                 color: Zoro.jade,
               ),
               const SizedBox(width: 8),
-              Text('Support reply', style: Zoro.font(20, color: Zoro.jade)),
+              Text(reply.sourceLabel, style: Zoro.font(20, color: Zoro.jade)),
             ],
           ),
           const SizedBox(height: 6),
@@ -373,7 +392,7 @@ class _ReplyRowState extends State<_ReplyRow> {
             overflow: _expanded ? null : TextOverflow.ellipsis,
             style: Zoro.font(20, color: Zoro.muted),
           ),
-          if (_expanded) ...[
+          if (_expanded && !reply.isAnnouncement) ...[
             const SizedBox(height: 6),
             Text(
               'Reference: ${reply.id}',
@@ -481,11 +500,12 @@ class _SeenAfterDwellState extends State<SeenAfterDwell> {
       return 0;
     }
     final rowTop = box.localToGlobal(Offset.zero).dy;
-    final rowBottom = rowTop + box.size.height;
+    final rowBottom = box.localToGlobal(Offset(0, box.size.height)).dy;
     final top = viewport.localToGlobal(Offset.zero).dy;
-    final bottom = top + viewport.size.height;
+    final bottom = viewport.localToGlobal(Offset(0, viewport.size.height)).dy;
     final shown = (rowBottom.clamp(top, bottom) - rowTop.clamp(top, bottom));
-    return box.size.height == 0 ? 0 : shown / box.size.height;
+    final height = rowBottom - rowTop;
+    return height <= 0 ? 0 : shown / height;
   }
 
   @override

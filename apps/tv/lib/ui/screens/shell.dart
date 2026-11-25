@@ -1,3 +1,5 @@
+import '../../phone/phone_live.dart' show LiveBrowseScreen;
+import 'guide_screen.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,25 +8,28 @@ import '../../app_state.dart';
 import '../../core/catalog.dart';
 import '../../core/models.dart';
 import '../../core/playback.dart';
-import '../../core/public_info.dart';
 import '../../core/server_extras.dart';
 import '../../extras_state.dart';
 import '../../watch_together.dart';
 import '../theme.dart';
+import '../player/in_app_player.dart';
 import '../widgets/focusable.dart';
 import '../widgets/live_tv_notice.dart';
 import '../../core/errors.dart';
 import '../../core/session_store.dart';
 import 'account_popover.dart';
+import 'pick_together_screen.dart';
+import 'calendar_screen.dart';
+import 'catch_up_screen.dart';
 import 'accounts_screen.dart';
 import 'alert_settings.dart';
 import 'detail_screen.dart';
 import 'home_screen.dart';
+import 'collections_screen.dart';
 import 'library_screen.dart';
 import 'notifications_panel.dart';
 import 'player_screen.dart';
 import 'profile_screen.dart';
-import 'public_info_screen.dart';
 import 'requests_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -49,7 +54,7 @@ class TvShell extends StatefulWidget {
 
 class _TvShellState extends State<TvShell> {
   Destination _destination = Destination.home;
-  final List<MediaItem> _path = [];
+  final List<MediaItem?> _path = [];
 
   /// Focus to restore when each opened title is closed, like returning to
   /// the card that opened it on Apple TV.
@@ -73,12 +78,17 @@ class _TvShellState extends State<TvShell> {
 
   /// Watch together for this account; the server owns the group.
   final _together = WatchTogether();
-  bool _playerOpen = false;
+  final _playerHost = GlobalKey<InAppPlayerHostState>();
+  bool get _playerOpen => _playerHost.currentState?.hasPlayer ?? false;
 
   @override
   void initState() {
     super.initState();
     _extras.start();
+    widget.state.recommendations.addListener(_recommendationsChanged);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _recommendationsChanged(),
+    );
     _extras.addListener(_extrasChanged);
     final client = widget.catalog.client;
     if (!widget.catalog.isPreview && client != null) {
@@ -90,6 +100,7 @@ class _TvShellState extends State<TvShell> {
 
   @override
   void dispose() {
+    widget.state.recommendations.removeListener(_recommendationsChanged);
     _together.removeListener(_togetherChanged);
     _together.dispose();
     _extras.removeListener(_extrasChanged);
@@ -97,6 +108,21 @@ class _TvShellState extends State<TvShell> {
     _bell.dispose();
     _header.dispose();
     super.dispose();
+  }
+
+  void _recommendationsChanged() {
+    if (!mounted) return;
+    final item = widget.state.recommendations.takeOpening();
+    if (item != null) unawaited(_openRecommendation(item));
+  }
+
+  Future<void> _openRecommendation(MediaItem item) async {
+    final generation = widget.state.generation;
+    await _playerHost.currentState?.closePlayer();
+    if (!mounted || generation != widget.state.generation) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    _select(Destination.home);
+    _open(item);
   }
 
   /// The inbox closes if the server stops offering notifications.
@@ -141,8 +167,16 @@ class _TvShellState extends State<TvShell> {
     });
   }
 
-  void _push(Widget page) =>
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  Future<void> _push(Widget page) async {
+    await _playerHost.currentState?.closePlayer();
+    if (mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ExtrasScope(extras: _extras, child: page),
+        ),
+      );
+    }
+  }
 
   void _openSupport() => _push(
     SupportScreen(extras: _extras, viewerName: widget.catalog.viewerName),
@@ -155,6 +189,7 @@ class _TvShellState extends State<TvShell> {
         page: SettingsPage.notifications,
         preferences: widget.state.preferences,
         catalog: widget.catalog,
+        grouped: true,
         extraFields:
             _extras.features.notificationSettings &&
                 !_extras.isPreview &&
@@ -165,47 +200,10 @@ class _TvShellState extends State<TvShell> {
     );
   }
 
-  /// Notifications from Profile: the same inbox as a page.
-  void _openNotificationsPage() => _push(
-    _InboxPage(
-      extras: _extras,
-      onOpen: (item) {
-        Navigator.of(context).pop();
-        _open(item);
-      },
-    ),
-  );
-
-  List<ProfileRowData> _utilityRows() => [
-    if (_extras.features.support)
-      ProfileRowData('Support', Icons.support_agent_rounded, _openSupport),
-    if (_extras.features.notificationSettings ||
-        _extras.hasNotifications ||
-        _extras.isPreview)
-      ProfileRowData(
-        'Notification settings',
-        Icons.tune_rounded,
-        _openNotificationSettings,
-      ),
-    if (_extras.hasNotifications)
-      ProfileRowData(
-        'Notifications',
-        Icons.notifications_rounded,
-        _openNotificationsPage,
-      ),
-    ProfileRowData(
-      'Privacy Policy',
-      Icons.back_hand_outlined,
-      () => _push(const PublicInfoScreen(page: PublicDocument.privacy)),
-    ),
-    ProfileRowData(
-      'App Support',
-      Icons.help_outline_rounded,
-      () => _push(const PublicInfoScreen(page: PublicDocument.support)),
-    ),
-  ];
-
   void _select(Destination value) {
+    if (value == Destination.profile) {
+      unawaited(_playerHost.currentState?.closePlayer());
+    }
     setState(() {
       _path.clear();
       _returnFocus.clear();
@@ -213,9 +211,22 @@ class _TvShellState extends State<TvShell> {
     });
   }
 
+  /// A title chosen on Calendar or Catch Up opens over Home, like a
+  /// recommendation.
+  void _openFromPage(MediaItem item) {
+    if (!mounted) return;
+    _select(Destination.home);
+    _open(item);
+  }
+
   void _open(MediaItem item) {
     _returnFocus.add(FocusManager.instance.primaryFocus);
     setState(() => _path.add(item));
+  }
+
+  void _openCollections() {
+    _returnFocus.add(FocusManager.instance.primaryFocus);
+    setState(() => _path.add(null));
   }
 
   /// Back from a destination's content returns to its tab first, as on
@@ -307,17 +318,42 @@ class _TvShellState extends State<TvShell> {
       anchor: anchor,
       serverName: widget.catalog.serverName,
       watchTogether: widget.catalog.isPreview || _together.canJoin,
+      pickTogether:
+          widget.catalog is JellyfinCatalog && _extras.features.pickTogether,
+      extras: _extras.pluginExtras,
     );
     if (!mounted || choice == null) return;
     switch (choice) {
       case SwitchAccount(:final account):
         await _switchTo(account);
+      case AccountMenuPage.calendar:
+        _push(CalendarScreen(catalog: widget.catalog, onOpen: _openFromPage));
+      case AccountMenuPage.catchUp:
+        final skips = _extras.catchUpSkips;
+        if (skips != null) {
+          _push(CatchUpScreen(catalog: widget.catalog, skips: skips));
+        }
       case AccountMenuPage.settings:
         _select(Destination.profile);
       case AccountMenuPage.servers:
         await _openAccounts();
       case AccountMenuPage.quickConnect:
         _push(QuickConnectScreen(state: widget.state));
+      case AccountMenuPage.pickTogether:
+        final catalog = widget.catalog;
+        if (catalog is JellyfinCatalog) {
+          _push(
+            PickTogetherScreen(
+              catalog: catalog,
+              display: true,
+              onOpen: (item) {
+                Navigator.of(context).maybePop();
+                _openFromPage(item);
+              },
+              onPlay: (item) => _play(item),
+            ),
+          );
+        }
       case AccountMenuPage.watchTogether:
         _push(
           WatchTogetherScreen(
@@ -328,11 +364,7 @@ class _TvShellState extends State<TvShell> {
     }
   }
 
-  Future<void> _openAccounts() => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => AccountsScreen(state: widget.state),
-    ),
-  );
+  Future<void> _openAccounts() => _push(AccountsScreen(state: widget.state));
 
   /// Switches straight from the menu; an expired account signs in again on
   /// Who's watching, as on Apple TV.
@@ -446,27 +478,24 @@ class _TvShellState extends State<TvShell> {
     int? subtitleIndex,
     bool? burnSubtitles,
   }) async {
-    _playerOpen = true;
-    try {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PlayerScreen(
-            catalog: catalog,
-            item: item,
-            startTicks: startTicks,
-            audioIndex: audioIndex,
-            subtitleIndex: subtitleIndex ?? PlaybackOptions.automatic,
-            burnSubtitles: burnSubtitles ?? false,
-            liveCapacityCheck: _extras.features.liveTVAvailability,
-            liveStreamsCheck: _extras.features.liveTvStreams,
-            group: _together.isJoined ? _together : null,
-          ),
-        ),
-      );
-    } finally {
-      _playerOpen = false;
+    await _playerHost.currentState!.open(
+      (presentation) => PlayerScreen(
+        presentation: presentation,
+        catalog: catalog,
+        item: item,
+        startTicks: startTicks,
+        audioIndex: audioIndex,
+        subtitleIndex: subtitleIndex ?? PlaybackOptions.automatic,
+        burnSubtitles: burnSubtitles ?? false,
+        liveCapacityCheck: _extras.features.liveTVAvailability,
+        liveStreamsCheck: _extras.features.liveTvStreams,
+        group: _together.isJoined ? _together : null,
+      ),
+    );
+    if (mounted) {
+      setState(() => _revision++);
+      unawaited(widget.state.recommendations.refresh());
     }
-    if (mounted) setState(() => _revision++);
   }
 
   Widget _root() => switch (_destination) {
@@ -476,6 +505,7 @@ class _TvShellState extends State<TvShell> {
       onOpen: _open,
       onPlay: _play,
       onAllChannels: () => _select(Destination.live),
+      onBrowseCollections: _openCollections,
       extras: _extras,
       revision: _revision,
     ),
@@ -491,12 +521,18 @@ class _TvShellState extends State<TvShell> {
       kind: LibraryKind.shows,
       onOpen: _open,
     ),
-    Destination.live => LibraryScreen(
+    Destination.live => LiveBrowseScreen(
       key: const ValueKey('live'),
       catalog: widget.catalog,
-      kind: LibraryKind.live,
-      onOpen: _open,
-      onPlay: (item) => _play(item),
+      extras: _extras,
+      onOpen: (channel) => _play(channel),
+      onPlay: (channel) => _play(channel),
+      tvGuideBuilder: (active) => GuideScreen(
+        catalog: widget.catalog,
+        onPlay: _play,
+        active: active,
+        embedded: true,
+      ),
     ),
     Destination.requests => RequestsScreen(
       key: _requests,
@@ -515,223 +551,197 @@ class _TvShellState extends State<TvShell> {
       key: const ValueKey('profile'),
       state: widget.state,
       catalog: widget.catalog,
-      moduleRows: [
-        if (widget.catalog.isPreview || _together.canJoin)
-          ProfileRowData(
-            'Watch together',
-            Icons.groups_rounded,
-            () => _push(
-              WatchTogetherScreen(
-                group: _together,
-                preview: widget.catalog.isPreview,
-              ),
-            ),
-            after: SettingsPage.account,
-            subtitle: _together.group?.groupName,
-          ),
-        ProfileRowData(
-          'Your teams',
-          Icons.sports_basketball_rounded,
-          () => _push(TeamsScreen(catalog: widget.catalog, extras: _extras)),
-          after: SettingsPage.display,
-        ),
-      ],
-      utilityRows: _utilityRows(),
+      onTeams: () =>
+          _push(TeamsScreen(catalog: widget.catalog, extras: _extras)),
+      onNotifications: _openNotificationSettings,
+      onSupport: _extras.features.support ? _openSupport : null,
       accountApprovals: _extras.features.accountApprovals,
     ),
   };
 
   @override
   Widget build(BuildContext context) {
-    return Actions(
-      actions: {
-        BackIntent: ConditionalBackAction(
-          canHandle: () =>
-              _showNotifications ||
-              _path.isNotEmpty ||
-              _offTab ||
-              _contentFocused,
-          onBack: _showNotifications
-              ? _closeNotifications
-              : _path.isNotEmpty
-              ? _back
-              : _offTab
-              ? _goHome
-              : _focusTab,
-        ),
-      },
-      child: ExtrasScope(
-        extras: _extras,
-        child: ListenableBuilder(
-          listenable: _extras,
-          builder: (context, _) => Scaffold(
-            body: Stack(
-              children: [
-                ExcludeFocus(
-                  excluding: _showNotifications,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (widget.catalog.isPreview)
-                        Container(
-                          color: Zoro.panel,
-                          padding: const EdgeInsets.symmetric(vertical: 5),
-                          alignment: Alignment.center,
-                          child: Text(
-                            'APP PREVIEW · FICTIONAL LIBRARY',
-                            style: Zoro.font(
-                              14,
-                              weight: FontWeight.w600,
-                              color: Zoro.jade,
-                            ).copyWith(letterSpacing: 1.3),
+    // The player the host shows sits beside the shell's content, so the
+    // scope has to wrap the host for the player to see the server's features.
+    return ExtrasScope(extras: _extras, child: _host(context));
+  }
+
+  Widget _host(BuildContext context) {
+    return InAppPlayerHost(
+      key: _playerHost,
+      child: Actions(
+        actions: {
+          BackIntent: ConditionalBackAction(
+            canHandle: () =>
+                _showNotifications ||
+                _path.isNotEmpty ||
+                _offTab ||
+                _contentFocused,
+            onBack: _showNotifications
+                ? _closeNotifications
+                : _path.isNotEmpty
+                ? _back
+                : _offTab
+                ? _goHome
+                : _focusTab,
+          ),
+        },
+        child: ExtrasScope(
+          extras: _extras,
+          child: ListenableBuilder(
+            listenable: _extras,
+            builder: (context, _) => Scaffold(
+              body: Stack(
+                children: [
+                  ExcludeFocus(
+                    excluding: _showNotifications,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (widget.catalog.isPreview)
+                          Container(
+                            color: Zoro.panel,
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            alignment: Alignment.center,
+                            child: Text(
+                              'APP PREVIEW · FICTIONAL LIBRARY',
+                              style: Zoro.font(
+                                14,
+                                weight: FontWeight.w600,
+                                color: Zoro.jade,
+                              ).copyWith(letterSpacing: 1.3),
+                            ),
+                          ),
+                        Focus(
+                          focusNode: _header,
+                          child: _Header(
+                            destination: _destination,
+                            viewerName: widget.catalog.viewerName,
+                            photo: widget.catalog.viewerPhoto(width: 96),
+                            headers: widget.catalog.imageHeaders,
+                            onSelect: _select,
+                            onAccountMenu: _accountMenu,
+                            avatarKey: _avatar,
+                            showRequests: _showsRequests,
+                            onSupport: _extras.features.support
+                                ? _openSupport
+                                : null,
+                            onNotifications: _extras.hasNotifications
+                                ? _openNotifications
+                                : null,
+                            unread:
+                                widget.state.preferences.value.showUnreadBadge
+                                ? _extras.unreadCount
+                                : 0,
+                            bell: _bell,
                           ),
                         ),
-                      Focus(
-                        focusNode: _header,
-                        child: _Header(
-                          destination: _destination,
-                          viewerName: widget.catalog.viewerName,
-                          photo: widget.catalog.viewerPhoto(width: 96),
-                          headers: widget.catalog.imageHeaders,
-                          onSelect: _select,
-                          onAccountMenu: _accountMenu,
-                          avatarKey: _avatar,
-                          showRequests: _showsRequests,
-                          onSupport: _extras.features.support
-                              ? _openSupport
-                              : null,
-                          onNotifications: _extras.hasNotifications
-                              ? _openNotifications
-                              : null,
-                          unread: widget.state.preferences.value.showUnreadBadge
-                              ? _extras.unreadCount
-                              : 0,
-                          bell: _bell,
-                        ),
-                      ),
-                      Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            _layer(
-                              0,
-                              KeyedSubtree(
-                                key: ValueKey(_destination),
-                                child: _root(),
-                              ),
-                            ),
-                            for (final (i, item) in _path.indexed)
+                        Expanded(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
                               _layer(
-                                i + 1,
-                                _FadeIn(
-                                  key: ValueKey('detail-$i-${item.id}'),
-                                  child: DetailScreen(
-                                    catalog: widget.catalog,
-                                    item: item,
-                                    onOpen: _open,
-                                    onPlay: _play,
-                                  ),
+                                0,
+                                KeyedSubtree(
+                                  key: ValueKey(_destination),
+                                  child: _root(),
                                 ),
                               ),
-                          ],
+                              for (final (i, item) in _path.indexed)
+                                _layer(
+                                  i + 1,
+                                  _FadeIn(
+                                    key: ValueKey(
+                                      'detail-$i-${item?.id ?? 'collections'}',
+                                    ),
+                                    child: item == null || item.type == 'BoxSet'
+                                        ? CollectionsScreen(
+                                            catalog: widget.catalog,
+                                            collection: item,
+                                            onOpen: _open,
+                                            onBack: _back,
+                                          )
+                                        : DetailScreen(
+                                            revision: _revision,
+                                            catalog: widget.catalog,
+                                            item: item,
+                                            onOpen: _open,
+                                            onPlay: _play,
+                                          ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                if (_checkingLive)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: Zoro.gutter,
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(24),
-                        decoration: BoxDecoration(
-                          color: Zoro.panel,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 3,
-                                color: Zoro.jade,
+                  if (_checkingLive)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: Zoro.gutter,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Zoro.panel,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                  color: Zoro.jade,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 16),
-                            Text(
-                              'Checking Live TV availability…',
-                              style: Zoro.font(22),
-                            ),
-                          ],
+                              const SizedBox(width: 16),
+                              Text(
+                                'Checking Live TV availability…',
+                                style: Zoro.font(22),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                if (_showNotifications) ...[
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: _closeNotifications,
-                      child: const ColoredBox(color: Color(0x2E000000)),
-                    ),
-                  ),
-                  Positioned(
-                    top: (widget.catalog.isPreview ? 28 : 0) + 106,
-                    right: Zoro.gutter,
-                    width: 560,
-                    height: 650,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: NotificationInbox(
-                        extras: _extras,
-                        onClose: _closeNotifications,
-                        onOpen: (item) {
-                          _closeNotifications();
-                          _open(item);
-                        },
+                  if (_showNotifications) ...[
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: _closeNotifications,
+                        child: const ColoredBox(color: Color(0x2E000000)),
                       ),
                     ),
-                  ),
+                    Positioned(
+                      top: (widget.catalog.isPreview ? 28 : 0) + 106,
+                      right: Zoro.gutter,
+                      width: 560,
+                      height: 650,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: NotificationInbox(
+                          extras: _extras,
+                          onClose: _closeNotifications,
+                          onOpen: (item) {
+                            _closeNotifications();
+                            _open(item);
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
-}
-
-/// Notifications opened from Profile.
-class _InboxPage extends StatelessWidget {
-  const _InboxPage({required this.extras, required this.onOpen});
-
-  final ExtrasState extras;
-  final ValueChanged<MediaItem> onOpen;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        child: SizedBox(
-          width: 900,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: NotificationInbox(
-              extras: extras,
-              onClose: () => Navigator.of(context).maybePop(),
-              onOpen: onOpen,
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
 }
 
 /// Apple-style push: the opened title fades and rises in slightly.

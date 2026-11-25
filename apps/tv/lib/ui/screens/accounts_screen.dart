@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../../app_state.dart';
 import '../../core/errors.dart';
+import '../../core/profile_spotlight.dart';
 import '../../core/session_store.dart';
 import '../theme.dart';
 import '../widgets/focusable.dart';
+import '../widgets/profile_backdrop.dart';
 import 'connect_screen.dart';
 import 'settings_screen.dart';
 import 'shell.dart';
@@ -28,6 +30,8 @@ class _AccountsScreenState extends State<AccountsScreen> {
   bool _managing = false;
   String? _busyId;
   String? _error;
+  String? _focusedId;
+  late final ProfileSpotlights _spotlights = ProfileSpotlights(_state);
 
   AppState get _state => widget.state;
   SavedConnections get _connections => _state.connections;
@@ -37,19 +41,38 @@ class _AccountsScreenState extends State<AccountsScreen> {
   void initState() {
     super.initState();
     _state.addListener(_changed);
+    _spotlights.addListener(_spotlightsChanged);
+    _spotlights.load();
   }
 
   @override
   void dispose() {
     _state.removeListener(_changed);
+    _spotlights.removeListener(_spotlightsChanged);
+    _spotlights.dispose();
     super.dispose();
   }
 
   void _changed() {
     if (!mounted) return;
     if (_connections.accounts.isEmpty) _managing = false;
+    _spotlights.load();
     setState(() {});
   }
+
+  void _spotlightsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Uri? _photo(SavedAccount account) => account.viewer.primaryImageTag == null
+      ? null
+      : _state
+            .clientFor(account.server)
+            .userImage(account.viewer.id, tag: account.viewer.primaryImageTag);
+
+  Map<String, String> _headers(SavedAccount account) => account.session == null
+      ? const {}
+      : _state.clientFor(account.server).withSession(account.session!).authHeaders;
 
   void _close() {
     if (_signedIn && Navigator.of(context).canPop()) {
@@ -175,6 +198,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
     final accounts = _connections.accounts;
     final preferred =
         accounts.where(_state.isCurrent).firstOrNull ?? accounts.firstOrNull;
+    if (!_managing && accounts.isNotEmpty) {
+      return _backdropLayout(accounts, preferred!);
+    }
     return Scaffold(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -292,6 +318,153 @@ class _AccountsScreenState extends State<AccountsScreen> {
       ),
     );
   }
+  /// Who's watching with the focused profile's show as the backdrop.
+  Widget _backdropLayout(List<SavedAccount> accounts, SavedAccount preferred) {
+    final shown =
+        accounts.where((a) => a.id == _focusedId).firstOrNull ?? preferred;
+    final spot = _spotlights[shown.id];
+    return Scaffold(
+      backgroundColor: Zoro.background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          ProfileBackdrop(
+            tv: true,
+            artKey: '${shown.id}-${spot?.backdrop?.cacheKey ?? 'none'}',
+            image: _spotlights.imageFor(shown, spot?.backdrop, width: 1920),
+            fallbackAsset: sceneAvatarAsset(shown.viewer.id),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(96, 52, 96, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FocusTraversalGroup(
+                  child: Row(
+                    children: [
+                      Image.asset(
+                        'assets/images/wordmark.png',
+                        height: 48,
+                        excludeFromSemantics: true,
+                      ),
+                      const Spacer(),
+                      _UtilityButton(
+                        label: 'Manage accounts',
+                        onPressed: () => setState(() {
+                          _managing = true;
+                          _error = null;
+                        }),
+                      ),
+                      const SizedBox(width: 36),
+                      _UtilityButton(
+                        label: 'Add server',
+                        onPressed: () => _signIn(),
+                      ),
+                      if (!_signedIn) ...[
+                        const SizedBox(width: 36),
+                        _UtilityButton(
+                          label: 'Explore the app preview',
+                          onPressed: _state.openPreview,
+                        ),
+                      ],
+                      if (_signedIn) ...[
+                        const SizedBox(width: 36),
+                        _UtilityButton(label: 'Done', onPressed: _close),
+                      ],
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Who’s watching?',
+                  style: Zoro.font(64, weight: FontWeight.w700),
+                ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      _error!,
+                      style: Zoro.font(22, color: const Color(0xFFFFB74D)),
+                    ),
+                  ),
+                const SizedBox(height: 28),
+                SizedBox(
+                  height: 117,
+                  child: AnimatedSwitcher(
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 300),
+                    child: spot == null
+                        ? const SizedBox.shrink()
+                        : Align(
+                            key: ValueKey(shown.id),
+                            alignment: Alignment.centerLeft,
+                            child: ProfileSpotlightCard(
+                              name: shown.viewer.name,
+                              spotlight: spot,
+                              tv: true,
+                              thumbnail: _spotlights.imageFor(
+                                shown,
+                                spot.thumbnail,
+                                width: 480,
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+                const Spacer(),
+                SizedBox(
+                  height: 300,
+                  child: FocusTraversalGroup(
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      clipBehavior: Clip.none,
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      children: [
+                        for (final account in accounts)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 30),
+                            child: Focusable(
+                              autofocus: account == preferred,
+                              onFocus: () =>
+                                  setState(() => _focusedId = account.id),
+                              onPressed: () => _choose(account),
+                              semanticLabel:
+                                  '${account.viewer.name}, ${account.server.url}${_busyId == account.id ? ', Connecting' : _state.isCurrent(account) ? ', Current account' : account.session == null ? ', Sign in again' : ''}',
+                              builder: (context, focused) => ProfileTile(
+                                account: account,
+                                size: 176,
+                                tv: true,
+                                ringed: focused,
+                                busy: _busyId == account.id,
+                                current: _signedIn && _state.isCurrent(account),
+                                photo: _photo(account),
+                                headers: _headers(account),
+                              ),
+                            ),
+                          ),
+                        if (_connections.servers.isNotEmpty)
+                          Focusable(
+                            onPressed: _addAccount,
+                            semanticLabel: 'Add account',
+                            builder: (context, focused) => AddProfileTile(
+                              size: 176,
+                              tv: true,
+                              ringed: focused,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 56),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// One focus target per account; only the avatar shows the focus ring.
@@ -369,7 +542,7 @@ class _AccountRow extends StatelessWidget {
                       child: Container(
                         width: 32,
                         height: 32,
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           color: Zoro.jade,
                           shape: BoxShape.circle,
                         ),
@@ -576,17 +749,18 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
     return SettingsScaffold(
       title: 'Quick Connect',
       actions: [
-        ZoroButton(
-          label: 'Done',
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
+        if (!CompactSettings.of(context))
+          ZoroButton(
+            label: 'Done',
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
       ],
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           child: Text(
             'Sign in another device',
-            style: Zoro.font(28, weight: FontWeight.w700),
+            style: settingsFont(context, 28, weight: FontWeight.w700),
           ),
         ),
         SettingsFootnote(
@@ -640,11 +814,12 @@ class WebHandoffScreen extends StatelessWidget {
     return SettingsScaffold(
       title: title,
       actions: [
-        ZoroButton(
-          label: 'Done',
-          autofocus: true,
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
+        if (!CompactSettings.of(context))
+          ZoroButton(
+            label: 'Done',
+            autofocus: true,
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
       ],
       children: [
         if (url == null)
@@ -656,7 +831,7 @@ class WebHandoffScreen extends StatelessWidget {
             padding: const EdgeInsets.all(8),
             child: Text(
               'Manage your server',
-              style: Zoro.font(26, weight: FontWeight.w600),
+              style: settingsFont(context, 26, weight: FontWeight.w600),
             ),
           ),
           SettingsFootnote(
@@ -665,7 +840,10 @@ class WebHandoffScreen extends StatelessWidget {
           const SettingsFootnote('Open this page on your phone or computer:'),
           Padding(
             padding: const EdgeInsets.all(8),
-            child: SelectableText(url.toString(), style: Zoro.font(26)),
+            child: SelectableText(
+              url.toString(),
+              style: settingsFont(context, 26),
+            ),
           ),
         ],
       ],

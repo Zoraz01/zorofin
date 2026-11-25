@@ -285,3 +285,12 @@ function ZTypeStyle(size as integer, weight = "regular" as string) as object
     if size <= 24 then return { size: 22, weight: "regular" }
     return { size: 27, weight: "regular" }
 end function
+
+' Enforced server size, then this account's explicit choice, then the
+' unlocked server default. Removing looks restores the personal size.
+function ZEffectivePosterScale(forced as float, serverDefault as float, personal as float, chosen as boolean) as float
+    if forced > 0 then return forced
+    if chosen then return personal
+    if serverDefault > 0 then return serverDefault
+    return 1.0
+end function

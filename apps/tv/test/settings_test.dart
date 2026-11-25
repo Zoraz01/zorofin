@@ -24,6 +24,7 @@ Session _session(String server, String viewer, {String token = 'tok'}) =>
     );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('device preferences are kept per server and viewer', () async {
     SharedPreferences.setMockInitialValues({});
     final prefs = Preferences(await SharedPreferences.getInstance());

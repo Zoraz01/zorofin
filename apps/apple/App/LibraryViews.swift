@@ -31,19 +31,29 @@ struct Shelf: Identifiable {
     var loadedRevision = -1
     var loadedRefresh = -1
     var visibleID: String?
+    var rowsContract: HomeRowsContract?
     var rowsLoadedAt = Date.distantPast
     var rowsRevision = -1
     var rowsRefresh = -1
     var shelfLoadID = UUID()
     var rowLoadID = UUID()
+    var liveLoading = false
+    var liveError: String?
     var liveSnapshot: LiveTVSnapshot?
     var liveEvents: [LiveEvent] = []
+    var hasLiveScoresFeed = false
     var liveArtwork: LiveArtworkManifest?
     var liveRevision = -1
     var liveLoadID = UUID()
+    /// Live now order, favorite teams, the game cap and scores from the companion.
+    @ObservationIgnored let liveScores = LiveScoresCache()
 }
 
 @MainActor @Observable final class CatalogLibraryState {
+    var options = LibraryBrowseOptions()
+    var genres: [String] = []
+    var genresRevision = -1
+    var genresFailed = false
     var items: [MediaItem] = []
     var cursor: LibraryPageCursor = LibraryPageCursor()
     var loading: Bool = false
@@ -59,6 +69,10 @@ struct Shelf: Identifiable {
 }
 
 @MainActor @Observable final class SearchLibraryState {
+    var kind = ""
+    var loadedKind = ""
+    var offset = 0
+    var hasMore = false
     var query: String = ""
     var results: [MediaItem] = []
     var searching: Bool = false
@@ -107,6 +121,10 @@ struct HomeView: View {
     private var failure: String? { get { state.failure } nonmutating set { state.failure = newValue } }
     private var refresh: Int { get { state.refresh } nonmutating set { state.refresh = newValue } }
     @State private var homeUtility: HomeUtility?
+    #if os(tvOS)
+    @State private var previews = TrailerPreviewEngine()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #endif
     private var homeFeed: HomeFeed? { get { state.homeFeed } nonmutating set { state.homeFeed = newValue } }
     private var homeError: String? { get { state.homeError } nonmutating set { state.homeError = newValue } }
     private var loadingRows: Bool { get { state.loadingRows } nonmutating set { state.loadingRows = newValue } }
@@ -152,6 +170,8 @@ struct HomeView: View {
                                detail: failure, icon: "wifi.exclamationmark", retry: { refresh += 1 })
                 }
                 ForEach(shelves.filter { $0.id == 0 && !$0.items.isEmpty }) { shelf in
+                    // Continue Watching opens the episode page (Resume, the series and its
+                    // episodes) instead of starting playback, as Apple TV's own apps do.
                     MediaShelf(title: shelf.title, items: shelf.items, landscape: shelf.landscape).id("shelf-\(shelf.id)")
                 }
                 if let ready = homeFeed?.rows.first(where: { $0.id == "requests-ready" }) {
@@ -161,6 +181,7 @@ struct HomeView: View {
                     LiveEventsShelf(snapshot: snapshot, events: state.liveEvents,
                         allChannels: { select(.live) }, open: open).id("sports-live-events")
                 }
+                CollectionsHomeShelf(refresh: refresh).id("collections-\(model.generation)")
                 homeRowsStatus
                 ForEach(mixedRows) { row in
                     Group {
@@ -168,9 +189,21 @@ struct HomeView: View {
                         case .personal(let personal):
                             CustomHomeShelf(row: personal, retry: { refresh += 1 })
                         case .library(let shelf):
+                            #if os(tvOS)
+                            if !shelf.landscape && previewable(shelf.items) {
+                                PreviewShelf(id: row.id, title: shelf.title, items: shelf.items)
+                            } else { MediaShelf(title: shelf.title, items: shelf.items, landscape: shelf.landscape) }
+                            #else
                             MediaShelf(title: shelf.title, items: shelf.items, landscape: shelf.landscape)
+                            #endif
                         case .generated(let generated):
+                            #if os(tvOS)
+                            if previewable(generated.items) {
+                                PreviewShelf(id: row.id, title: generated.title, items: generated.items)
+                            } else { MediaShelf(title: generated.title, items: generated.items) }
+                            #else
                             MediaShelf(title: generated.title, items: generated.items)
+                            #endif
                         }
                     }.id(row.id).accessibilityIdentifier(row.id)
                 }
@@ -186,15 +219,24 @@ struct HomeView: View {
         }.background(Theme.background)
             .scrollPosition(id: Binding(get: { state.visibleID }, set: { state.visibleID = $0 }))
             .task(id: "\(refresh)-\(model.libraryRevision)") { await load(); await prepareMix() }
-            .task(id: "\(refresh)-\(model.homeRevision)-\(model.features.homeRows)") {
+            .task(id: "\(refresh)-\(model.homeRevision)-\(model.features.homeRowsContract?.rawValue ?? 0)") {
                 await loadRows(); await prepareMix()
+                #if DEBUG
+                // Simulator checks: --home-scroll-row N scrolls Home to the Nth mixed row.
+                let arguments = ProcessInfo.processInfo.arguments
+                if let flag = arguments.firstIndex(of: "--home-scroll-row"), flag + 1 < arguments.count,
+                   let index = Int(arguments[flag + 1]), mixedRows.indices.contains(index) {
+                    try? await Task.sleep(for: .seconds(2)); state.visibleID = mixedRows[index].id
+                }
+                #endif
                 while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(300)) } catch { return }
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
                     if scenePhase == .active { await loadRows() }
                 }
             }
-            .task(id: "live-\(model.libraryRevision)-\(model.features.liveArtwork)-\(scenePhase == .active)") {
+            .task(id: "live-\(model.libraryRevision)-\(model.features.liveArtwork)-\(model.features.sportsEvents)-\(scenePhase == .active)") {
                 guard scenePhase == .active else { return }
+                state.liveRevision = -1
                 while !Task.isCancelled {
                     await loadLiveEvents()
                     do { try await Task.sleep(for: .seconds(60)) } catch { return }
@@ -208,7 +250,27 @@ struct HomeView: View {
             .sheet(item: $homeUtility) { utility in
                 HomeUtilityView(utility: utility).id(model.generation)
             }
+            #if os(tvOS)
+            .environment(\.trailerPreview, previews)
+            .task(id: "\(model.generation)-\(model.preferences.autoplayPreviews != false)-\(reduceMotion)-\(model.preferences.reduceMotion)") {
+                // Reduce Motion (system or app) acts as autoplay off.
+                previews.configure(client: model.client, autoplay: model.preferences.autoplayPreviews != false && !reduceMotion && !model.preferences.reduceMotion)
+            }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { previews.stopAll(endVisit: true) } }
+            .onChange(of: model.generation) { _, _ in previews.stopAll(endVisit: true) }
+            .onDisappear { previews.stopAll(endVisit: true) }
+            #endif
     }
+
+    #if os(tvOS)
+    /// Rows of movies and shows preview; mixed rows of episodes or channels keep today's behavior.
+    private func previewable(_ items: [MediaItem]) -> Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--no-trailer-previews") { return false }
+        #endif
+        return !items.isEmpty && items.allSatisfy { $0.type == "Movie" || $0.type == "Series" }
+    }
+    #endif
 
     private var categoryShortcuts: some View {
         HStack(spacing: 10) {
@@ -234,63 +296,7 @@ struct HomeView: View {
             }.buttonStyle(ArtworkButtonStyle()).accessibilityLabel("Search").accessibilityIdentifier("home-search")
         }.font(.system(size: 20))
     }
-    private func loadLiveEvents() async {
-        if model.isDemo {
-            if state.liveSnapshot == nil {
-                let formatter = ISO8601DateFormatter()
-                let channels = ["Live: NFL Football", "Live: NBA Basketball", "Live: Premier League Soccer"].enumerated().map { index, title in
-                    var channel = MediaItem(id: "preview-live-\(index)", name: "Preview Sports \(index + 1)", type: "TvChannel")
-                    channel.channelNumber = String(index + 1)
-                    channel.currentProgram = LiveProgram(name: title,
-                        startDate: formatter.string(from: .now.addingTimeInterval(-900)),
-                        endDate: formatter.string(from: .now.addingTimeInterval(3600)), isLive: true)
-                    return channel
-                }
-                state.liveSnapshot = LiveTVSnapshot(channels: channels)
-                state.liveEvents = LiveEvent.select(channels, at: .now)
-            }
-            return
-        }
-        guard let client = model.client else { return }
-        if !model.features.liveArtwork, state.liveArtwork != nil {
-            state.liveArtwork = nil; state.liveRevision = -1
-        }
-        if let snapshot = state.liveSnapshot, state.liveRevision == model.libraryRevision,
-           (!model.features.liveArtwork || state.liveArtwork != nil),
-           Date().timeIntervalSince(snapshot.fetchedAt) < 60 { return }
-        let generation = model.generation, revision = model.libraryRevision, loadID = UUID()
-        state.liveLoadID = loadID
-        if state.liveSnapshot == nil {
-            let cached = await client.cachedLiveTVSnapshot()
-            guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-            if let cached { await publishLive(cached, artwork: state.liveArtwork, generation: generation, loadID: loadID) }
-        }
-        do {
-            let wantsArtwork = model.features.liveArtwork
-            async let artwork: LiveArtworkManifest? = wantsArtwork ? (try? await client.liveArtworkManifest()) : nil
-            let snapshot = try await client.liveTVSnapshot()
-            guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-            await publishLive(snapshot, artwork: state.liveArtwork, generation: generation, loadID: loadID)
-            guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-            state.liveRevision = revision
-            // Event cards can render before the optional artwork index arrives.
-            let manifest = await artwork
-            guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-            if let manifest {
-                state.liveArtwork = manifest
-                await publishLive(snapshot, artwork: manifest, generation: generation, loadID: loadID)
-            }
-        } catch {
-            guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-            if error as? ClientError == .unauthorized || error as? ClientError == .forbidden { state.liveSnapshot = nil }
-            // A transient outage can retain still-current listings for at most two minutes.
-        }
-    }
-    private func publishLive(_ snapshot: LiveTVSnapshot, artwork: LiveArtworkManifest?, generation: UUID, loadID: UUID) async {
-        let events = await snapshot.featuredEvents(artwork: artwork)
-        guard !Task.isCancelled, generation == model.generation, state.liveLoadID == loadID else { return }
-        state.liveSnapshot = snapshot; state.liveEvents = events
-    }
+    private func loadLiveEvents() async { await state.refreshLiveEvents(model: model) }
     @ViewBuilder private var homeRowsStatus: some View {
         if loadingRows && homeFeed == nil { ProgressView().padding(.horizontal, Theme.gutter) }
         if homeError != nil {
@@ -305,16 +311,18 @@ struct HomeView: View {
         state.banner.update(recent + discovered + continued, featured: state.featuredItems)
     }
     private func appendRowOrder() {
-        guard state.mixPrepared, !discoveryLoading else { return }
+        guard state.mixPrepared else { return }
         state.rowOrder.append(browseRows.map(\.candidate))
     }
     private func prepareMix() async {
         guard !state.mixPrepared,
-              state.loadedRevision >= 0 || failure != nil,
-              model.isDemo || model.client == nil || state.rowsRevision >= 0 || homeError != nil else { return }
+              state.loadedRevision >= 0 || failure != nil || !shelves.isEmpty,
+              model.isDemo || model.client == nil || state.rowsRevision >= 0 || homeError != nil || homeFeed != nil else { return }
         state.mixPrepared = true
-        // Prime just one bounded discovery batch after the priority data finishes.
-        // The pinned rows are already visible while the lower mix is prepared.
+        // Show the server and library rows as soon as they're here. One bounded
+        // discovery batch is added below them when it arrives, instead of
+        // holding every row back until discovery finishes.
+        appendRowOrder()
         await loadDiscovery()
         appendRowOrder()
     }
@@ -360,57 +368,71 @@ struct HomeView: View {
         }
         #endif
         guard !model.isDemo, let client = model.client else { homeFeed = nil; homeError = nil; return }
-        let generation = model.generation, usesServer = model.features.homeRows
-        guard state.rowsRevision != model.homeRevision || state.rowsRefresh != refresh ||
-              Date().timeIntervalSince(state.rowsLoadedAt) >= 300 else { return }
+        let generation = model.generation, contract = model.features.homeRowsContract
+        let changed = state.rowsContract != contract
+        // A switch between two known contracts retires the old one's cache. The
+        // first load after launch is not a switch and may show the stored rows.
+        let switching = changed && state.rowsContract != nil
+        if changed {
+            state.rowsContract = contract; state.rowLoadID = UUID()
+            homeFeed = nil; homeError = nil; state.rowsLoadedAt = .distantPast
+        }
+        let lifetime: TimeInterval = homeError != nil ? 30 : contract == .plugin ? 60 : 300
+        guard changed || state.rowsRevision != model.homeRevision || state.rowsRefresh != refresh ||
+              Date().timeIntervalSince(state.rowsLoadedAt) >= lifetime else { return }
         let loadID = UUID(), revision = model.homeRevision, requestedRefresh = refresh
+        // The viewer changed their rows or teams, or pulled to refresh: ask the
+        // server to rebuild instead of reusing its last-minute copy.
+        let fresh = (state.rowsRevision >= 0 && state.rowsRevision != revision) ||
+            (state.rowsRefresh >= 0 && state.rowsRefresh != requestedRefresh)
         state.rowLoadID = loadID
+        func current() -> Bool {
+            !Task.isCancelled && generation == model.generation && state.rowLoadID == loadID &&
+                contract == model.features.homeRowsContract && revision == model.homeRevision && requestedRefresh == refresh
+        }
         loadingRows = true; homeError = nil
-        defer { if generation == model.generation && state.rowLoadID == loadID { loadingRows = false } }
-        if homeFeed == nil {
-            // Cache-only hydration: neither read below can start a network request.
+        defer { if current() { loadingRows = false } }
+        if switching {
+            // Retire the prior contract's cached/in-flight legacy result before
+            // allowing a switch back. Plugin responses are never persisted.
+            if let url = try? client.server.endpoint(HomeRowsContract.legacy.path) {
+                await client.responseCache?.remove(url.absoluteString, policy: .home)
+            }
+            guard current() else { return }
+        }
+        if homeFeed == nil && !switching {
+            // Show the last rows straight away; the network answer replaces them.
             let reader = client.readingCache()
-            var server: HomeFeed?
-            if usesServer { server = try? await reader.homeFeed() }
-            let rows = (try? await reader.clientHomeRows(teams: state.homeTeams)) ?? []
-            guard !Task.isCancelled, generation == model.generation, state.rowLoadID == loadID else { return }
-            if server != nil || rows.contains(where: { !$0.cards.isEmpty }) {
-                let cached = ClientHomeRows.feed(client: rows, server: server, teams: state.homeTeams)
-                homeFeed = cached
-                let enriched = try? await reader.enrichHomeFeed(cached)
-                guard !Task.isCancelled, generation == model.generation, state.rowLoadID == loadID else { return }
-                homeFeed = enriched ?? cached
+            if contract == .plugin {
+                if let stored = try? await reader.homeFeed(contract: .plugin) {
+                    guard current() else { return }
+                    homeFeed = stored
+                }
+            } else {
+                var server: HomeFeed?
+                if contract == .legacy { server = try? await reader.homeFeed() }
+                let rows = (try? await reader.clientHomeRows(teams: state.homeTeams)) ?? []
+                guard current() else { return }
+                if server != nil || rows.contains(where: { !$0.cards.isEmpty }) {
+                    homeFeed = ClientHomeRows.feed(client: rows, server: server, teams: state.homeTeams)
+                }
             }
         }
         do {
-            // Requests and Popular still need the optional server feed; every other
-            // row is computed here from the viewer's own Jellyfin reads.
-            async let serverResult = Self.serverFeed(client, enabled: usesServer)
-            let teams = (try? await client.homeTeams(serverFallback: usesServer)) ?? state.homeTeams
-            let rows = try await client.clientHomeRows(teams: teams)
-            let server = await serverResult
-            guard !Task.isCancelled, generation == model.generation, state.rowLoadID == loadID else { return }
-            if case .failure(let error)? = server {
-                if error as? ClientError == .unauthorized { throw error }
-                homeError = error.localizedDescription
-            }
-            let feed = ClientHomeRows.feed(client: rows, server: try? server?.get(), teams: teams)
-            state.homeTeams = teams
-            homeFeed = feed
+            let loaded = try await client.loadHomeRows(contract: contract, fallbackTeams: state.homeTeams, fresh: fresh)
+            guard current() else { return }
+            state.homeTeams = loaded.feed.preferences.teams
+            homeFeed = loaded.feed; homeError = loaded.serverError
             appendRowOrder()
             state.rowsLoadedAt = .now; state.rowsRevision = revision; state.rowsRefresh = requestedRefresh
-            // Show the row immediately, then fill badges without changing its order.
-            let enriched = try await client.enrichHomeFeed(feed)
-            guard !Task.isCancelled, generation == model.generation, state.rowLoadID == loadID else { return }
+            let enriched = try await client.enrichHomeFeed(loaded.feed)
+            guard current() else { return }
             homeFeed = enriched
         } catch {
-            guard !Task.isCancelled, generation == model.generation, state.rowLoadID == loadID else { return }
-            homeError = error.localizedDescription
+            guard current() else { return }
+            homeFeed = nil; homeError = error.localizedDescription
+            state.rowsLoadedAt = .now
         }
-    }
-    nonisolated private static func serverFeed(_ client: JellyfinClient, enabled: Bool) async -> Result<HomeFeed, any Error>? {
-        guard enabled else { return nil }
-        do { return .success(try await client.automaticHomeFeed()) } catch { return .failure(error) }
     }
     private func load() async {
         guard state.loadedRevision != model.libraryRevision || state.loadedRefresh != refresh ||
@@ -567,12 +589,14 @@ struct MediaCard: View {
     var landscape = false
     var flexible = false
     var availableFormats: [String] = []
+    /// Replaces the year/episode line, for a row's one context label ("85 min").
+    var label: String? = nil
     private var qualityBadges: [String] {
         guard model.preferences.showQualityBadges != false else { return [] }
         let badges = item.quality().thumbnailBadges
         return badges.isEmpty ? availableFormats.map { $0 == "Dolby Vision" ? "DV" : $0 } : badges
     }
-    private var width: CGFloat { (Theme.isTV ? (landscape ? 360 : 212) : (landscape ? window.landscapeCardWidth : window.posterWidth)) * model.preferences.posterScale }
+    private var width: CGFloat { (Theme.isTV ? (landscape ? 360 : 212) : (landscape ? window.landscapeCardWidth : window.posterWidth)) * model.posterScale }
     private var ratingText: String? {
         guard model.preferences.showRatings, let rating = item.communityRating else { return nil }
         return String(format: "%.1f", rating)
@@ -614,7 +638,7 @@ struct MediaCard: View {
                 }
             if model.preferences.showTitles {
                 Text(item.displayTitle).font(Theme.font(Theme.isTV ? 22 : 15, weight: .semibold)).lineLimit(1)
-                Text(item.isEpisode ? item.episodeLabel : item.productionYear.map(String.init) ?? (item.isLive ? "Live TV" : ""))
+                Text(label ?? (item.isEpisode ? item.episodeLabel : item.productionYear.map(String.init) ?? (item.isLive ? "Live TV" : "")))
                     .font(Theme.font(Theme.isTV ? 17 : 12)).foregroundStyle(Theme.muted).lineLimit(1)
             }
         }.frame(width: flexible ? nil : width).foregroundStyle(Theme.text)
@@ -628,12 +652,14 @@ struct FavoriteButton: View {
     @Environment(AppModel.self) private var model
     let item: MediaItem
     var compact = false
+    var labeled = false
     @State private var favorite: Bool?
     @State private var busy = false
     private var value: Bool { favorite ?? item.userData?.isFavorite ?? false }
     var body: some View {
         Group {
-            if compact { action.buttonStyle(DetailIconStyle()) }
+            if labeled { action.buttonStyle(ZoroButtonStyle()) }
+            else if compact { action.buttonStyle(DetailIconStyle()) }
             else { action.buttonStyle(ArtworkButtonStyle()).background(.white.opacity(0.08), in: Circle()) }
         }.disabled(busy).accessibilityLabel(value ? "Remove from favorites" : "Add to favorites")
             .accessibilityValue(value ? "Favorited" : "Not favorited")
@@ -658,7 +684,9 @@ struct FavoriteButton: View {
                 } catch { if generation == model.generation { model.message = error.localizedDescription } }
             }
         } label: {
-            if compact {
+            if labeled {
+                Label(value ? "Favorited" : "Favorite", systemImage: value ? "heart.fill" : "heart").frame(maxWidth: .infinity)
+            } else if compact {
                 Image(systemName: value ? "heart.fill" : "heart").foregroundStyle(value ? Theme.jade : Theme.text)
             }
             else {
@@ -728,16 +756,10 @@ struct CatalogView: View {
                     if !Theme.isTV {
                         Button(action: back) { Image(systemName: "chevron.left").frame(width: Theme.target, height: Theme.target) }
                             .buttonStyle(.plain).accessibilityLabel("Back to Home")
+                        Text(title).font(Theme.font(30, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
                     }
-                    if !Theme.isTV { Text(title).font(Theme.font(30, weight: .bold)) }
                     Spacer()
-                    if kind != "TvChannel" {
-                        Button(favorites ? "All titles" : "Favorites") {
-                            favorites.toggle(); items = []; cursor = LibraryPageCursor()
-                            state.visibleID = nil; refresh += 1
-                        }
-                            .buttonStyle(ZoroButtonStyle())
-                    }
+                    if kind != "TvChannel" { controls }
                 }
                 #if os(tvOS)
                 if kind == "TvChannel" { TVLiveTVAvailabilityNotice() }
@@ -748,40 +770,97 @@ struct CatalogView: View {
                         automatic: automatic, revision: "\(refresh)-\(cursor.offset)") { await load(reset: false) }
                 }
                 if !loading && error == nil && items.isEmpty {
-                    StatusView(title: "No titles here yet", detail: favorites ? "Add favorites from a title's details." : "Titles available to your account will appear here.")
+                    StatusView(title: state.options.hasFilters ? "No matching titles" : "No titles here yet",
+                               detail: state.options.hasFilters ? "Try a different filter, or clear the filters." : favorites ? "Add favorites from a title's details." : "Titles available to your account will appear here.")
                 }
             }.padding(.horizontal, Theme.gutter).padding(.top, 20).padding(.bottom, 24)
         }.scrollPosition(id: Binding(get: { state.visibleID }, set: { state.visibleID = $0 }))
             .task(id: "\(refresh)-\(model.libraryRevision)") { await load(reset: true) }
+            .task(id: "genres-\(model.generation)-\(model.libraryRevision)-\(kind)") { await loadGenres() }
             #if os(iOS)
             .refreshable { await model.client?.responseCache?.invalidateMetadata(); refresh += 1 }
             #endif
     }
+    /// Symbols, not words: sort, filter and favorites sit beside the title.
+    private var controls: some View {
+        HStack(spacing: Theme.isTV ? 16 : 8) {
+            Menu {
+                Picker("Sort by", selection: Binding(get: { state.options.sort }, set: { state.options.sort = $0; resetQuery() })) {
+                    ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+                }
+            } label: { Image(systemName: "arrow.up.arrow.down") }
+                .buttonStyle(DetailIconStyle()).accessibilityLabel("Sort").accessibilityValue(state.options.sort.title)
+                .accessibilityIdentifier("library-sort")
+            Menu {
+                Picker("Genre", selection: Binding(get: { state.options.genre }, set: { state.options.genre = $0; resetQuery() })) {
+                    Text("All genres").tag("")
+                    ForEach(Array(Set(state.genres + (state.options.genre.isEmpty ? [] : [state.options.genre]))).sorted(), id: \.self) { Text($0).tag($0) }
+                }.pickerStyle(.menu)
+                Toggle("Unwatched only", isOn: Binding(get: { state.options.unwatched }, set: { state.options.unwatched = $0; resetQuery() }))
+                if state.genresFailed { Button("Retry genres") { Task { await loadGenres(force: true) } } }
+                if state.options.hasFilters {
+                    Button("Clear filters", role: .destructive) { state.options.genre = ""; state.options.unwatched = false; resetQuery() }
+                }
+            } label: {
+                Image(systemName: state.options.hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(state.options.hasFilters ? Theme.jade : Theme.text)
+            }.buttonStyle(DetailIconStyle()).accessibilityLabel("Filter")
+                .accessibilityValue([state.options.genre.isEmpty ? "All genres" : state.options.genre, state.options.unwatched ? "Unwatched only" : nil].compactMap { $0 }.joined(separator: ", "))
+                .accessibilityIdentifier("library-filter")
+            Button { favorites.toggle(); resetQuery() } label: {
+                Image(systemName: favorites ? "heart.fill" : "heart").foregroundStyle(favorites ? Theme.jade : Theme.text)
+            }.buttonStyle(DetailIconStyle()).accessibilityLabel("Favorites only")
+                .accessibilityAddTraits(favorites ? .isSelected : []).accessibilityIdentifier("library-favorites")
+        }
+    }
+    private func resetQuery() {
+        state.loadID = UUID(); items = []; cursor = LibraryPageCursor(); state.visibleID = nil
+        error = nil; refresh += 1
+    }
+    private func loadGenres(force: Bool = false) async {
+        guard kind != "TvChannel", force || state.genresRevision != model.libraryRevision else { return }
+        let generation = model.generation, revision = model.libraryRevision
+        do {
+            let genres: [String]
+            if model.isDemo { genres = Array(Set((PreviewLibrary.movies + PreviewLibrary.shows).flatMap { $0.genres ?? [] })).sorted() }
+            else if let client = model.client { genres = try await client.libraryGenres(type: kind) }
+            else { return }
+            guard !Task.isCancelled, generation == model.generation, revision == model.libraryRevision else { return }
+            state.genres = genres; state.genresRevision = revision; state.genresFailed = false
+        } catch {
+            guard !Task.isCancelled, generation == model.generation else { return }
+            state.genresFailed = true
+        }
+    }
     private func load(reset: Bool) async {
         if reset && state.loadedRefresh == refresh && state.loadedRevision == model.libraryRevision {
-            // Keep deep browsing intact; pull to refresh explicitly starts a new catalogue.
             if cursor.offset > 30 || Date().timeIntervalSince(state.loadedAt) < (kind == "TvChannel" ? 60 : 300) { return }
         }
         guard reset || (!loading && cursor.hasMore) else { return }
-        let generation = model.generation, revision = refresh, libraryRevision = model.libraryRevision
+        let generation = model.generation, revision = refresh, libraryRevision = model.libraryRevision, options = state.options
         let loadID = UUID(); state.loadID = loadID
         loading = true; error = nil
         let offset = reset ? 0 : cursor.offset
         defer { if generation == model.generation && state.loadID == loadID { loading = false } }
         if model.isDemo {
             items = kind == "Series" ? PreviewLibrary.shows : kind == "TvChannel" ? [] : PreviewLibrary.movies
-            if favorites { items = [] }; return
+            if favorites { items = [] }
+            if options.unwatched { items = items.filter { $0.userData?.played != true } }
+            if !options.genre.isEmpty { items = items.filter { $0.genres?.contains(options.genre) == true } }
+            if options.sort == .title { items.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+            if options.sort == .year { items.sort { ($0.productionYear ?? 0) > ($1.productionYear ?? 0) } }
+            return
         }
         guard let client = model.client else { return }
         if reset && items.isEmpty {
             let cached = kind == "TvChannel" ? try? await client.readingCache().channels() :
-                try? await client.readingCache().items(type: kind, favorites: favorites)
+                try? await client.readingCache().items(type: kind, favorites: favorites, options: options)
             if let cached, !Task.isCancelled, generation == model.generation, revision == refresh, state.loadID == loadID { items = cached.items }
         }
         do {
             let page = kind == "TvChannel" ? try await client.channels(start: offset) :
-                try await client.items(type: kind, start: offset, favorites: favorites)
-            guard !Task.isCancelled, generation == model.generation, revision == refresh, state.loadID == loadID else { return }
+                try await client.items(type: kind, start: offset, favorites: favorites, options: options)
+            guard !Task.isCancelled, generation == model.generation, revision == refresh, libraryRevision == model.libraryRevision, state.loadID == loadID else { return }
             if reset { items = []; cursor = LibraryPageCursor(); automatic = true }
             cursor.accept(page, limit: 30)
             state.loadedAt = .now; state.loadedRevision = libraryRevision; state.loadedRefresh = refresh
@@ -801,7 +880,7 @@ struct MediaGrid: View {
     let wide: Bool
     var landscape = false
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: (Theme.isTV ? 210 : wide ? 180 : 140) * model.preferences.posterScale), spacing: Theme.isTV ? 28 : 16)], alignment: .leading, spacing: 28) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: (Theme.isTV ? 210 : wide ? 180 : 140) * model.posterScale), spacing: Theme.isTV ? 28 : 16)], alignment: .leading, spacing: 28) {
             ForEach(items) { item in
                 NavigationLink(value: item) { MediaCard(item: item, landscape: landscape, flexible: true) }
                     .buttonStyle(ArtworkButtonStyle()).accessibilityIdentifier("item-\(item.id)")
@@ -819,7 +898,7 @@ struct SearchView: View {
     @State private var searchRetry = 0
     private var query: String { state.query }
     private var text: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var matchingResults: [MediaItem] { state.loadedQuery == text ? state.results : [] }
+    private var matchingResults: [MediaItem] { state.loadedQuery == text && state.loadedKind == state.kind ? state.results : [] }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -837,25 +916,24 @@ struct SearchView: View {
                 // Immediate presentation switch, independent of network completion.
                 if text.isEmpty { recommendations }
                 else {
+                    resultTypeControl
                     if state.searching { ProgressView("Searching…").frame(maxWidth: .infinity).padding(24) }
                     if !matchingResults.isEmpty {
-                        MediaGrid(items: matchingResults, wide: wide).accessibilityIdentifier("search-results")
+                        resultRows
                     } else if !state.searching && state.loadedQuery == text && state.error == nil {
                         StatusView(title: "No matching titles", detail: "Try another title or spelling.", icon: "magnifyingglass")
                     }
                     if let error = state.error {
                         Text(error).foregroundStyle(.orange)
-                        Button("Retry search") { searchRetry += 1 }.buttonStyle(ZoroButtonStyle())
+                        Button("Retry search") { Task { await search(more: !matchingResults.isEmpty && state.hasMore) } }.buttonStyle(ZoroButtonStyle())
                     }
                     if model.extensionEnabled {
                         Button("Can't find it? Open Requests", action: openRequests).buttonStyle(ZoroButtonStyle())
-                        Text("Showing up to 30 library matches. Refine your search to narrow the results.")
-                            .font(Theme.font(13)).foregroundStyle(Theme.muted)
                     }
                 }
             }.padding(Theme.gutter).padding(.bottom, 24)
         }
-        .task(id: "search-\(model.libraryRevision)-\(searchRetry)-\(query)") { await search() }
+        .task(id: "search-\(model.libraryRevision)-\(searchRetry)-\(state.kind)-\(query)") { await search() }
         .task(id: "recommendations-\(text.isEmpty)-\(model.libraryRevision)-\(recommendationRetry)") {
             if text.isEmpty { await loadRecommendations() }
         }
@@ -881,36 +959,84 @@ struct SearchView: View {
         state.query = value
         state.searchLoadID = UUID()
         state.error = nil
-        state.searching = !text.isEmpty && state.loadedQuery != text
+        state.searching = !text.isEmpty && (state.loadedQuery != text || state.loadedKind != state.kind)
     }
-    private func search() async {
-        let requested = text, generation = model.generation, revision = model.libraryRevision
-        let loadID = UUID(); state.searchLoadID = loadID
-        state.error = nil
+    private func search(more: Bool = false) async {
+        let requested = text, generation = model.generation, revision = model.libraryRevision, kind = state.kind
         guard !requested.isEmpty else { state.searching = false; return }
-        if requested == state.loadedQuery && state.loadedRevision == revision && Date().timeIntervalSince(state.loadedAt) < 300 {
+        if more {
+            guard !state.searching, state.hasMore, state.loadedQuery == requested, state.loadedKind == kind else { return }
+        } else if requested == state.loadedQuery && kind == state.loadedKind && state.loadedRevision == revision && Date().timeIntervalSince(state.loadedAt) < 300 {
             state.searching = false; return
         }
-        state.searching = true
-        defer {
-            if generation == model.generation && state.searchLoadID == loadID { state.searching = false }
-        }
+        let loadID = UUID(); state.searchLoadID = loadID
+        let offset = more ? state.offset : 0
+        state.error = nil; state.searching = true
+        defer { if generation == model.generation && state.searchLoadID == loadID { state.searching = false } }
         do {
-            try await Task.sleep(for: .milliseconds(300))
-            let items: [MediaItem]
-            if model.isDemo { items = (PreviewLibrary.movies + PreviewLibrary.shows).filter { $0.name.localizedCaseInsensitiveContains(requested) } }
-            else if let client = model.client { items = try await client.items(search: requested).items }
-            else { throw ClientError.missingSession }
+            if !more { try await Task.sleep(for: .milliseconds(300)) }
+            let page: ItemPage
+            if model.isDemo {
+                let values = (PreviewLibrary.movies + PreviewLibrary.shows).filter {
+                    $0.name.localizedCaseInsensitiveContains(requested) && (kind.isEmpty || $0.type == kind)
+                }
+                page = ItemPage(items: Array(values.dropFirst(offset).prefix(30)), totalRecordCount: values.count)
+            } else if let client = model.client {
+                page = try await client.items(type: kind.isEmpty ? nil : kind, search: requested, start: offset)
+            } else { throw ClientError.missingSession }
             guard !Task.isCancelled, generation == model.generation, revision == model.libraryRevision,
-                  state.searchLoadID == loadID, requested == text else { return }
-            state.results = items
-            state.loadedQuery = requested; state.loadedAt = .now; state.loadedRevision = revision
+                  state.searchLoadID == loadID, requested == text, kind == state.kind else { return }
+            var seen = Set((more ? state.results : []).map(\.id))
+            let additions = page.items.filter { seen.insert($0.id).inserted }
+            state.results = (more ? state.results : []) + additions
+            state.offset = offset + page.items.count
+            state.hasMore = !additions.isEmpty && (page.totalRecordCount.map { state.offset < $0 } ?? (page.items.count == 30))
+            state.loadedQuery = requested; state.loadedKind = kind; state.loadedAt = .now; state.loadedRevision = revision
         } catch is CancellationError { }
         catch {
             guard !Task.isCancelled, generation == model.generation, revision == model.libraryRevision,
-                  state.searchLoadID == loadID, requested == text else { return }
+                  state.searchLoadID == loadID, requested == text, kind == state.kind else { return }
+            if error as? ClientError == .unauthorized || error as? ClientError == .forbidden { state.results = []; state.hasMore = false }
             state.error = error.localizedDescription
         }
+    }
+    @ViewBuilder private var resultTypeControl: some View {
+        #if os(iOS)
+        resultTypePicker.pickerStyle(.segmented)
+        #else
+        Menu { resultTypePicker } label: {
+            Label(state.kind == "Movie" ? "Movies" : state.kind == "Series" ? "Shows" : "All results", systemImage: "line.3.horizontal.decrease")
+        }.buttonStyle(ZoroButtonStyle())
+        #endif
+    }
+    private var resultTypePicker: some View {
+        Picker("Result type", selection: Binding(get: { state.kind }, set: {
+            state.kind = $0; state.searchLoadID = UUID(); state.error = nil
+        })) {
+            Text("All").tag(""); Text("Movies").tag("Movie"); Text("Shows").tag("Series")
+        }.accessibilityIdentifier("search-result-type")
+    }
+    private var resultRows: some View {
+        LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(matchingResults) { item in
+                NavigationLink(value: item) {
+                    HStack(spacing: 14) {
+                        MediaArtwork(item: item, landscape: true, width: 360).aspectRatio(16 / 9, contentMode: .fit)
+                            .frame(width: Theme.isTV ? 200 : 108).clipShape(RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.displayTitle).font(Theme.font(Theme.isTV ? 24 : 16, weight: .semibold)).multilineTextAlignment(.leading)
+                            Text([item.productionYear.map(String.init), item.isSeries ? "Show" : "Movie"].compactMap { $0 }.joined(separator: " · "))
+                                .font(Theme.font(Theme.isTV ? 20 : 13)).foregroundStyle(Theme.muted)
+                        }
+                        Spacer(minLength: 0)
+                    }.frame(maxWidth: .infinity, minHeight: Theme.target, alignment: .leading)
+                }.buttonStyle(ArtworkButtonStyle()).accessibilityIdentifier("search-item-" + item.id)
+            }
+            if state.hasMore {
+                Button(state.searching ? "Loading more results…" : "More results") { Task { await search(more: true) } }
+                    .buttonStyle(ZoroButtonStyle()).disabled(state.searching).accessibilityIdentifier("search-more")
+            }
+        }.accessibilityIdentifier("search-results")
     }
     private func loadRecommendations() async {
         let generation = model.generation, revision = model.libraryRevision
@@ -953,45 +1079,116 @@ struct SearchView: View {
     }
 }
 
+/// Server Home rows use the same two card shapes as every other row: wide cards
+/// for live and episodes, posters for movies and shows (trailer previews on
+/// Apple TV). Each card gets at most one context line.
 struct CustomHomeShelf: View {
     let row: HomeRow
     var title: String? = nil
     let retry: () -> Void
+    private var wide: Bool { row.id == "sports" || row.cards.contains { $0.item.isEpisode || $0.item.isLive } }
+
+    static func label(_ card: HomeRowCard, rowID: String, at now: Date) -> String? {
+        if let start = HomeRowCard.date(card.startsAt) {
+            let when = start <= now ? "On now" : "Starts " + start.formatted(date: .omitted, time: .shortened)
+            return card.subtitle.isEmpty ? when : card.subtitle + " · " + when
+        }
+        if rowID == "short-movies", !card.subtitle.isEmpty { return card.subtitle }
+        return card.contextBadges.first
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
             let cards = row.cards.filter { !$0.isExpired(at: timeline.date) }
             if !cards.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
-                    SectionTitle(title: title ?? row.title).padding(.horizontal, Theme.gutter)
-                    ScrollView(.horizontal) {
-                        LazyHStack(alignment: .top, spacing: Theme.isTV ? 28 : 14) {
-                            ForEach(cards) { card in
-                                NavigationLink(value: card.item) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        MediaCard(item: card.item, landscape: row.id == "sports" || card.item.isEpisode, availableFormats: card.qualityBadges)
-                                        if !card.contextBadges.isEmpty {
-                                            Text(card.startsAt == nil ? card.contextBadges.joined(separator: " · ") : ((HomeRowCard.date(card.startsAt) ?? .distantFuture) <= timeline.date ? "On now" : "Starting soon")).font(Theme.font(Theme.isTV ? 19 : 13, weight: .semibold))
-                                                .foregroundStyle(Theme.jade).fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        if ["short-movies", "sports"].contains(row.id), !card.subtitle.isEmpty {
-                                            Text(card.subtitle).font(Theme.font(Theme.isTV ? 19 : 13)).foregroundStyle(Theme.muted)
-                                                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        if let start = HomeRowCard.date(card.startsAt) {
-                                            HStack(spacing: 4) {
-                                                Text(start <= timeline.date ? "Started" : "Starts")
-                                                Text(start, style: .time)
-                                            }.font(Theme.font(Theme.isTV ? 19 : 13)).foregroundStyle(Theme.muted)
-                                        }
-                                    }.frame(width: Theme.isTV ? ((row.id == "sports" || card.item.isEpisode) ? 360 : 212) : ((row.id == "sports" || card.item.isEpisode) ? 270 : 148), alignment: .leading)
-                                        .accessibilityElement(children: .combine)
-                                }.buttonStyle(ArtworkButtonStyle())
-                            }
-                        }.padding(.horizontal, Theme.gutter).padding(.vertical, Theme.isTV ? 18 : 3)
-                    }.scrollIndicators(.hidden).scrollClipDisabled()
-                }.accessibilityIdentifier("home-row-\(row.id)")
+                let labels = Dictionary(cards.compactMap { card in Self.label(card, rowID: row.id, at: timeline.date).map { (card.item.id, $0) } },
+                                        uniquingKeysWith: { first, _ in first })
+                #if os(tvOS)
+                if !wide && cards.allSatisfy({ $0.item.type == "Movie" || $0.item.type == "Series" }) {
+                    PreviewShelf(id: "home-row-" + row.id, title: title ?? row.title, items: cards.map(\.item), labels: labels)
+                        .accessibilityIdentifier("home-row-\(row.id)")
+                } else { shelf(cards, labels: labels) }
+                #else
+                shelf(cards, labels: labels)
+                #endif
             }
         }
+    }
+
+    private func shelf(_ cards: [HomeRowCard], labels: [String: String]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionTitle(title: title ?? row.title).padding(.horizontal, Theme.gutter)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: Theme.isTV ? 28 : 14) {
+                    ForEach(cards) { card in
+                        NavigationLink(value: card.item) {
+                            if row.id == "sports", let game = card.game {
+                                HomeGameCard(card: card, game: game, fallbackLabel: labels[card.item.id])
+                            } else {
+                                MediaCard(item: card.item, landscape: wide, availableFormats: card.qualityBadges, label: labels[card.item.id])
+                            }
+                        }.buttonStyle(ArtworkButtonStyle())
+                            .accessibilityIdentifier("item-\(card.item.id)")
+                    }
+                }.padding(.horizontal, Theme.gutter).padding(.vertical, Theme.isTV ? 18 : 3)
+            }.scrollIndicators(.hidden).scrollClipDisabled()
+        }.accessibilityIdentifier("home-row-\(row.id)")
+    }
+}
+
+private struct HomeGameCard: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.adaptiveWindow) private var window
+    let card: HomeRowCard
+    let game: HomeRowCard.Game
+    let fallbackLabel: String?
+    private struct Key: Hashable { let generation: UUID; let game: HomeRowCard.Game }
+    @State private var loaded: Key?
+    @State private var images: [UIImage] = []
+    private var key: Key { Key(generation: model.generation, game: game) }
+    var body: some View {
+        Group {
+            if loaded == key, images.count == 2 {
+                let start = HomeRowCard.date(card.startsAt)
+                let soon = start.map { $0 > .now } ?? card.badges.contains("Starting soon")
+                let status = soon ? "Starting soon" : "On now"
+                VStack(alignment: .leading, spacing: 6) {
+                    Color.clear.aspectRatio(16 / 9, contentMode: .fit).overlay {
+                        GeometryReader { g in
+                            ZStack {
+                                RadialGradient(colors: [Color(hex: 0x2a3530), Color(hex: 0x151b18)],
+                                    center: .center, startRadius: 0, endRadius: g.size.width / 2)
+                                HStack(spacing: g.size.width * 0.035) {
+                                    crest(images[0], size: g.size)
+                                    Text("VS").font(Theme.font(Theme.isTV ? 18 : 12, weight: .bold)).tracking(2).foregroundStyle(.white.opacity(0.7))
+                                    crest(images[1], size: g.size)
+                                }
+                            }
+                        }
+                    }.clipShape(RoundedRectangle(cornerRadius: 12))
+                    if model.preferences.showTitles {
+                        Text(game.title).font(Theme.font(Theme.isTV ? 22 : 15, weight: .semibold)).lineLimit(2)
+                        Text(card.item.name).font(Theme.font(Theme.isTV ? 17 : 12)).foregroundStyle(Theme.muted).lineLimit(1)
+                        Text(soon ? [status, start.map { "Starts " + $0.formatted(date: .omitted, time: .shortened) }].compactMap { $0 }.joined(separator: " · ") : status)
+                            .font(Theme.font(Theme.isTV ? 17 : 12)).foregroundStyle(Theme.jade)
+                    }
+                }.frame(width: (Theme.isTV ? 360 : window.landscapeCardWidth) * model.posterScale)
+                 .accessibilityElement(children: .ignore).accessibilityLabel([game.title, card.item.name, status].joined(separator: ", "))
+            } else { MediaCard(item: card.item, landscape: true, availableFormats: card.qualityBadges, label: fallbackLabel) }
+        }.task(id: key) {
+            let loading = key
+            guard let client = model.client else { return }
+            let cache = model.imageCache
+            async let first = cache.homeCrest(client: client, path: game.paths[0])
+            async let second = cache.homeCrest(client: client, path: game.paths[1])
+            if let pair = try? await (first, second), let a = pair.0, let b = pair.1, !Task.isCancelled {
+                images = [a,b]; loaded = loading
+            }
+        }
+    }
+    private func crest(_ image: UIImage, size: CGSize) -> some View {
+        Image(uiImage: image).resizable().scaledToFit().frame(width: size.width * 0.28, height: size.height * 0.56)
+            .shadow(color: .black.opacity(0.45), radius: 4, y: 2)
     }
 }
 
@@ -999,6 +1196,8 @@ struct YourTeamsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var teams = ""
+    @State private var teamSearch = ""
+    @State private var teamLeague = ""
     @State private var loaded = false
     @State private var saving = false
     @State private var error: String?
@@ -1013,7 +1212,7 @@ struct YourTeamsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("See your teams on Home").font(Theme.font(Theme.isTV ? 32 : 26, weight: .bold))
-                    Text("Home shows a game when one of your teams is on now or about to start. Everything else on Home is selected automatically.")
+                    Text("Home shows your teams when a game is on now or starts within an hour. Leave your list blank to use the server’s favorite teams.")
                         .foregroundStyle(Theme.muted)
                     if !loaded && error == nil { ProgressView("Loading your teams…") }
                     if let error {
@@ -1021,13 +1220,7 @@ struct YourTeamsView: View {
                         if !loaded { Button("Try again") { retry += 1 }.buttonStyle(ZoroButtonStyle()) }
                     }
                     if loaded {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Your teams").font(.headline)
-                            TextField("New York Knicks, New York Yankees", text: $teams)
-                                .padding(14).frame(minHeight: Theme.target).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-                                .accessibilityLabel("Favorite team names, separated by commas")
-                            Text("Use full team names as they appear in the guide, separated by commas. Up to 12 teams. Leave blank to use the server’s favorite teams, if it has any.").font(.callout).foregroundStyle(Theme.muted)
-                        }
+                        teamPicker
                         if !edited.isValid { Text("Use up to 12 team names, each between 3 and 64 characters.").foregroundStyle(Theme.muted) }
                         Button(saving ? "Saving…" : "Save teams") { Task { await save() } }
                             .buttonStyle(ZoroButtonStyle(primary: true)).disabled(saving || !edited.isValid)
@@ -1039,13 +1232,75 @@ struct YourTeamsView: View {
         }.tint(Theme.jade).preferredColorScheme(.dark).interactiveDismissDisabled(saving)
             .task(id: retry) { await load() }
     }
+    private var teamPicker: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !edited.teams.isEmpty {
+                DetailWrapLayout(spacing: 10) {
+                    ForEach(edited.teams, id: \.self) { name in
+                        Button { teams = edited.teams.filter { $0 != name }.joined(separator: ", ") } label: {
+                            Label(name, systemImage: "xmark").fixedSize(horizontal: false, vertical: true)
+                        }.buttonStyle(ZoroButtonStyle()).accessibilityLabel("Remove " + name)
+                    }
+                }
+            }
+            TextField("Find or add a team", text: $teamSearch)
+                .padding(14).frame(minHeight: Theme.target).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("team-search").onSubmit { addTeam(teamSearch) }
+            Menu {
+                Picker("Sport or league", selection: $teamLeague) {
+                    Text("All sports").tag("")
+                    ForEach(Array(Set(TeamSuggestion.all.map(\.league))).sorted(), id: \.self) { Text($0).tag($0) }
+                }
+            } label: { Label(teamLeague.isEmpty ? "All sports" : teamLeague, systemImage: "line.3.horizontal.decrease") }
+                .buttonStyle(ZoroButtonStyle())
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Theme.isTV ? 260 : 148), spacing: 12)], spacing: 12) {
+                ForEach(TeamSuggestion.all.filter {
+                    (teamLeague.isEmpty || $0.league == teamLeague) && (teamSearch.isEmpty || $0.name.localizedCaseInsensitiveContains(teamSearch))
+                }) { suggestion in
+                    let selected = edited.teams.contains { $0.caseInsensitiveCompare(suggestion.name) == .orderedSame }
+                    Button {
+                        if selected { teams = edited.teams.filter { $0.caseInsensitiveCompare(suggestion.name) != .orderedSame }.joined(separator: ", ") }
+                        else { addTeam(suggestion.name, clearSearch: false) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(suggestion.name).multilineTextAlignment(.leading)
+                                Text(suggestion.league).font(Theme.font(Theme.isTV ? 18 : 12)).foregroundStyle(Theme.muted)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: selected ? "checkmark.circle.fill" : "plus.circle").foregroundStyle(Theme.jade)
+                        }
+                    }.buttonStyle(DetailControlStyle()).accessibilityAddTraits(selected ? .isSelected : [])
+                        .disabled(!selected && edited.teams.count >= 12)
+                }
+            }
+            if !teamSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("Add “\(teamSearch.trimmingCharacters(in: .whitespacesAndNewlines))”") { addTeam(teamSearch) }
+                    .buttonStyle(ZoroButtonStyle()).disabled(!canAddTeam(teamSearch))
+            }
+            Text("\(edited.teams.count) of 12 teams selected. Suggestions are quick choices; you can add teams from any sport using the names in your guide.")
+                .font(Theme.font(Theme.isTV ? 19 : 13)).foregroundStyle(Theme.muted)
+        }
+    }
+    private func canAddTeam(_ raw: String) -> Bool {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (3...64).contains(name.count) && !name.contains(",") && edited.teams.count < 12 &&
+            !edited.teams.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+    private func addTeam(_ raw: String, clearSearch: Bool = true) {
+        guard canAddTeam(raw) else { return }
+        teams = (edited.teams + [raw.trimmingCharacters(in: .whitespacesAndNewlines)]).joined(separator: ", ")
+        if clearSearch { teamSearch = "" }
+    }
     private func load() async {
         error = nil
         if model.isDemo { loaded = true; return }
         guard let client = model.client else { return }
         let generation = model.generation
         do {
-            let value = try await client.homeTeams(serverFallback: model.features.homeRows)
+            await model.checkFeatures()
+            guard !Task.isCancelled, generation == model.generation else { return }
+            let value = try await client.homeTeams(serverFallback: model.features.homeRowsContract == .legacy)
             guard !Task.isCancelled, generation == model.generation else { return }
             teams = value.joined(separator: ", "); loaded = true
         } catch {
@@ -1060,9 +1315,12 @@ struct YourTeamsView: View {
         saving = true; error = nil
         defer { if generation == model.generation { saving = false } }
         do {
+            await model.checkFeatures()
+            guard !Task.isCancelled, generation == model.generation else { return }
             try await client.saveHomeTeams(edited.teams)
+            guard !Task.isCancelled, generation == model.generation else { return }
             // Keep the older server feed and the web Home in step when present.
-            if model.features.homeRows { _ = try? await client.saveHomePreferences(edited) }
+            if model.features.homeRowsContract == .legacy { _ = try? await client.saveHomePreferences(edited) }
             guard !Task.isCancelled, generation == model.generation else { return }
             model.homeLibrary.homeTeams = edited.teams
             model.homeRevision += 1; dismiss()
@@ -1078,6 +1336,7 @@ private struct LiveEventsShelf: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: LiveTVSnapshot
     let events: [LiveEvent]
+    var title = "Sports & live events"
     let allChannels: () -> Void
     let open: (MediaItem) -> Void
     var body: some View {
@@ -1107,7 +1366,7 @@ private struct LiveEventsShelf: View {
                                     open(event.channel)
                                 } label: { LiveEventCard(event: event, now: timeline.date) }
                                 .buttonStyle(ArtworkButtonStyle())
-                                .accessibilityLabel("\(event.title), live on \(event.channel.name), \(event.start.formatted(date: .omitted, time: .shortened)) to \(event.end.formatted(date: .omitted, time: .shortened)). Open channel.")
+                                .accessibilityLabel("\(event.title)\(event.score.map { ", " + $0.text } ?? "")\(event.favoriteTeam ? ", favorite team" : ""), live on \(event.channel.name), \(event.start.formatted(date: .omitted, time: .shortened)) to \(event.end.formatted(date: .omitted, time: .shortened)). Open channel.")
                                 .accessibilityIdentifier("live-event-\(event.id)")
                             }
                         }.padding(.horizontal, Theme.gutter).padding(.vertical, Theme.isTV ? 18 : 3)
@@ -1117,7 +1376,7 @@ private struct LiveEventsShelf: View {
         }
     }
     private var heading: some View {
-        Button(action: allChannels) { SectionTitle(title: "Sports & live events") }
+        Button(action: allChannels) { SectionTitle(title: title) }
             .buttonStyle(ArtworkButtonStyle()).frame(minHeight: Theme.target)
     }
     private var channelsLink: some View {
@@ -1131,17 +1390,22 @@ private struct LiveEventCard: View {
     let event: LiveEvent
     let now: Date
     private var width: CGFloat { Theme.isTV ? 360 : 270 }
+    private var scale: CGFloat { Theme.isTV ? 1 : 0.67 }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LiveEventArtworkView(event: event)
+            art
                 .frame(width: width, height: width * 9 / 16)
-                .overlay(alignment: .topLeading) {
-                    Label("LIVE", systemImage: "circle.fill")
-                        .font(Theme.font(Theme.isTV ? 14 : 11, weight: .bold))
-                        .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(.black.opacity(0.75), in: Capsule()).padding(10)
+                .overlay(alignment: .topTrailing) {
+                    if event.favoriteTeam {
+                        Image(systemName: "star.fill").font(.system(size: Theme.isTV ? 18 : 13))
+                            .foregroundStyle(Color(hex: 0xffd60a))
+                            .frame(minWidth: Theme.isTV ? 32 : 26, minHeight: Theme.isTV ? 30 : 24)
+                            .background(.black.opacity(0.75), in: Capsule()).padding(10)
+                    }
                 }.clipShape(RoundedRectangle(cornerRadius: 12))
-            Text(event.title).font(Theme.font(Theme.isTV ? 23 : 16, weight: .semibold)).lineLimit(2)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+            // Scored and unscored cards share one text layout so every card in the row is the same size.
+            Text(event.scoreStatus ?? event.title).font(Theme.font(Theme.isTV ? 23 : 16, weight: .semibold)).lineLimit(1)
             Text(event.channel.name + (event.channel.channelNumber.map { " · Ch " + $0 } ?? ""))
                 .font(Theme.font(Theme.isTV ? 18 : 13)).foregroundStyle(Theme.muted).lineLimit(1)
             HStack(spacing: 4) { Text(event.start, style: .time); Text("–"); Text(event.end, style: .time) }
@@ -1152,6 +1416,68 @@ private struct LiveEventCard: View {
             }.frame(height: 3).accessibilityHidden(true)
         }.frame(width: width, alignment: .leading).foregroundStyle(Theme.text)
             .accessibilityElement(children: .ignore)
+    }
+
+    /// One LIVE badge for every card, scored or not.
+    private var liveBadge: some View {
+        // The web's pill: dark capsule with a red dot (PR #199).
+        HStack(spacing: Theme.isTV ? 7 : 5) {
+            Circle().fill(Color(hex: 0xff453a)).frame(width: Theme.isTV ? 9 : 7, height: Theme.isTV ? 9 : 7)
+            Text("LIVE").font(Theme.font(Theme.isTV ? 15 : 11, weight: .bold)).tracking(0.6)
+        }.foregroundStyle(.white)
+            .padding(.horizontal, Theme.isTV ? 12 : 9).padding(.vertical, Theme.isTV ? 6 : 5)
+            .background(.black.opacity(0.75), in: Capsule())
+            .padding(10)
+    }
+
+    @ViewBuilder private var art: some View {
+        if let score = event.score {
+            // The matchup art stays underneath; the fade and scores sit over it.
+            LiveEventArtworkView(event: event)
+                .overlay { LiveScoreArt(score: score, scale: scale) }
+                .overlay(alignment: .topLeading) { if !score.isFinal { liveBadge } }
+        } else {
+            LiveEventArtworkView(event: event)
+                .overlay(alignment: .topLeading) { liveBadge }
+        }
+    }
+}
+
+/// Over a scored game's matchup art, like the Zorofin site's "Live now" row
+/// (owner approved Nov 9): a team-tinted gradient with both teams and their
+/// scores at the bottom. Same as the TV apps' `LiveScoreArt`.
+private struct LiveScoreArt: View {
+    let score: LiveScore
+    let scale: CGFloat
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            // Bottom-to-top fade so the scores read over any art (same as web).
+            LinearGradient(stops: [.init(color: .black.opacity(0.92), location: 0),
+                                   .init(color: .black.opacity(0.65), location: 0.36),
+                                   .init(color: .clear, location: 0.68)],
+                           startPoint: .bottom, endPoint: .top)
+            VStack(spacing: 2 * scale) {
+                row(score.awayName.isEmpty ? score.away : score.awayName, score.awayScore,
+                    trailing: score.isFinal && score.homeLeads)
+                row(score.homeName.isEmpty ? score.home : score.homeName, score.homeScore,
+                    trailing: score.isFinal && score.awayLeads)
+            }.padding(.horizontal, 18 * scale).padding(.bottom, 14 * scale)
+        }.accessibilityHidden(true)
+    }
+    /// `trailing`: the losing side of a final reads muted (same as web).
+    private func row(_ name: String, _ points: String, trailing: Bool) -> some View {
+        HStack(spacing: 10 * scale) {
+            Text(name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text(points).monospacedDigit()
+        }.font(Theme.font(24 * scale, weight: .bold)).foregroundStyle(trailing ? Theme.muted : .white)
+    }
+
+    /// The team-tinted 135° card, only for games without matchup art.
+    static func tinted(_ score: LiveScore) -> LinearGradient {
+        LinearGradient(stops: [.init(color: Color(hex: UInt32(score.tint)), location: 0),
+                               .init(color: Color(hex: 0x102421), location: 0.6),
+                               .init(color: .black, location: 1)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
 
@@ -1177,16 +1503,27 @@ private struct LiveEventArtworkView: View {
                     // Event posters can contain names/scores: preserve the complete art.
                     Image(uiImage: photo).resizable().scaledToFit()
                 } else if loadedKey == key, crests.count == 2 {
-                    LinearGradient(colors: [Color(hex: 0x213f36), Color(hex: 0x0e201a)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing)
-                    HStack(spacing: 0) {
+                    // Scored cards: crests sit higher so the score lines don't cover them.
+                    let crestHeight = geometry.size.height * (event.score == nil ? 0.72 : 0.46)
+                    if let score = event.score {
+                        LiveScoreArt.tinted(score)
+                    } else {
+                        LinearGradient(colors: [Color(hex: 0x213f36), Color(hex: 0x0e201a)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                    }
+                    HStack(alignment: event.score == nil ? .center : .top, spacing: 0) {
                         Image(uiImage: crests[0]).resizable().scaledToFit()
-                            .frame(width: geometry.size.width * 0.34, height: geometry.size.height * 0.72)
+                            .frame(width: geometry.size.width * 0.34, height: crestHeight)
                         Text("VS").font(Theme.font(Theme.isTV ? 18 : 14, weight: .bold))
                             .foregroundStyle(Color(hex: 0xbce2c8)).frame(maxWidth: .infinity)
+                            .frame(height: crestHeight)
                         Image(uiImage: crests[1]).resizable().scaledToFit()
-                            .frame(width: geometry.size.width * 0.34, height: geometry.size.height * 0.72)
-                    }.padding(.horizontal, 14).padding(.top, 16)
+                            .frame(width: geometry.size.width * 0.34, height: crestHeight)
+                    }.padding(.horizontal, 14).padding(.top, event.score == nil ? 16 : 12)
+                        .frame(maxHeight: .infinity, alignment: event.score == nil ? .center : .top)
+                } else if let score = event.score {
+                    // No generic sport drawing on scored cards: the team tint stands in.
+                    LiveScoreArt.tinted(score)
                 } else {
                     // Bundled exports of the web's illustrations: instant/offline,
                     // including ordinary Jellyfin servers with no artwork extension.
@@ -1213,6 +1550,10 @@ private struct LiveEventArtworkView: View {
                         if let loaded = try? await cache.image(key: cacheKey, client: client, itemID: image.itemID,
                             kind: image.kind, tag: image.tag, width: 720) {
                             guard !Task.isCancelled else { return }
+                            // Guide images that aren't a 16:9 picture are usually a
+                            // channel logo or a presenter headshot: use crests or the
+                            // sport illustration instead, as the web does.
+                            guard LiveEventArtwork.isWidePicture(width: loaded.size.width, height: loaded.size.height) else { continue }
                             photo = loaded; loadedKey = loadingKey; return
                         }
                     case .crests(let paths):
@@ -1227,5 +1568,387 @@ private struct LiveEventArtworkView: View {
                 }
             }
             .onDisappear { photo = nil; crests = []; loadedKey = nil }
+    }
+}
+
+@MainActor extension HomeLibraryState {
+    func refreshLiveEvents(model: AppModel) async {
+        if model.isDemo {
+            if self.liveSnapshot == nil {
+                let formatter = ISO8601DateFormatter()
+                let channels = ["Live: NFL Football", "Live: NBA Basketball", "Live: Premier League Soccer"].enumerated().map { index, title in
+                    var channel = MediaItem(id: "preview-live-\(index)", name: "Preview Sports \(index + 1)", type: "TvChannel")
+                    channel.channelNumber = String(index + 1)
+                    channel.currentProgram = LiveProgram(name: title,
+                        startDate: formatter.string(from: .now.addingTimeInterval(-900)),
+                        endDate: formatter.string(from: .now.addingTimeInterval(3600)), isLive: true)
+                    return channel
+                }
+                self.liveSnapshot = LiveTVSnapshot(channels: channels)
+                var events = LiveEvent.select(channels, at: .now)
+                // One scored card beside unscored ones, so the preview shows both formats.
+                if events.count > 1 {
+                    events[1].score = LiveScore(away: "AWY", awayScore: "54", home: "HME", homeScore: "61", detail: "3rd · 4:12",
+                                                isFinal: false, awayName: "Away Club", homeName: "Home Club", awayColor: nil, homeColor: nil)
+                }
+                self.liveEvents = events
+            }
+            return
+        }
+        guard let client = model.client else { return }
+        if !model.features.liveArtwork, self.liveArtwork != nil {
+            self.liveArtwork = nil; self.liveRevision = -1
+        }
+        if let snapshot = self.liveSnapshot, self.liveRevision == model.libraryRevision,
+           (!model.features.liveArtwork || self.liveArtwork != nil),
+           Date().timeIntervalSince(snapshot.fetchedAt) < 60 { return }
+        let generation = model.generation, revision = model.libraryRevision, loadID = UUID()
+        liveLoading = true; liveError = nil
+        defer { if generation == model.generation && liveLoadID == loadID { liveLoading = false } }
+        self.liveLoadID = loadID
+        if self.liveSnapshot == nil {
+            let cached = await client.cachedLiveTVSnapshot()
+            guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+            if let cached { await publishLive(cached, artwork: self.liveArtwork, client: client, generation: generation, loadID: loadID, model: model) }
+        }
+        do {
+            let wantsArtwork = model.features.liveArtwork
+            async let artwork: LiveArtworkManifest? = wantsArtwork ? (try? await client.liveArtworkManifest()) : nil
+            let snapshot = try await client.liveTVSnapshot()
+            guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+            await publishLive(snapshot, artwork: self.liveArtwork, client: client, generation: generation, loadID: loadID, model: model)
+            guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+            self.liveRevision = revision
+            // The guide-only row shows first; the companion's feed (when there is
+            // one) then sets its order, favorite stars and scores.
+            if model.features.sportsEvents {
+                let before = await self.liveScores.feed(for: client)
+                let feed = await self.liveScores.load(client)
+                guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+                if feed != before {
+                    await publishLive(snapshot, artwork: self.liveArtwork, client: client, generation: generation, loadID: loadID, model: model)
+                    guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+                }
+            }
+            // Event cards can render before the optional artwork index arrives.
+            let manifest = await artwork
+            guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+            if let manifest {
+                self.liveArtwork = manifest
+                await publishLive(snapshot, artwork: manifest, client: client, generation: generation, loadID: loadID, model: model)
+            }
+        } catch {
+            guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+            if error as? ClientError == .unauthorized || error as? ClientError == .forbidden { self.liveSnapshot = nil }
+            liveError = "Live programs could not be refreshed."
+            // A transient outage can retain still-current listings for at most two minutes.
+        }
+    }
+    private func publishLive(_ snapshot: LiveTVSnapshot, artwork: LiveArtworkManifest?, client: JellyfinClient,
+                             generation: UUID, loadID: UUID, model: AppModel) async {
+        let feed = model.features.sportsEvents ? await self.liveScores.feed(for: client) : nil
+        let events = await LiveScores.events(in: snapshot, feed: feed, artwork: artwork)
+        guard !Task.isCancelled, generation == model.generation, self.liveLoadID == loadID else { return }
+        self.liveSnapshot = snapshot; self.liveEvents = events; self.hasLiveScoresFeed = feed != nil
+    }
+}
+
+
+/// Programs and Guide share an entry on touch and remote devices.
+struct LiveTVBrowseView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+    let back: () -> Void
+    let open: (MediaItem) -> Void
+    let play: (MediaItem, PlaybackOptions) -> Void
+    @State private var guide = false
+    #if os(tvOS)
+    @FocusState private var focusedGuide: Bool?
+    #endif
+    @State private var refresh = 0
+    private var state: HomeLibraryState { model.homeLibrary }
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                if !Theme.isTV {
+                    Button(action: back) { Image(systemName: "chevron.left").frame(width: 44, height: 48) }
+                        .buttonStyle(.plain).accessibilityLabel("Back to Home")
+                }
+                Text("Live TV").font(Theme.font(Theme.isTV ? 36 : 28, weight: .bold))
+                Spacer()
+            }.padding(.horizontal, Theme.gutter)
+            #if os(tvOS)
+            HStack(spacing: 16) {
+                Button("Programs") { guide = false }.buttonStyle(ZoroButtonStyle(primary: !guide))
+                    .focused($focusedGuide, equals: false)
+                    .accessibilityAddTraits(guide ? [] : .isSelected)
+                Button("Guide") { guide = true }.buttonStyle(ZoroButtonStyle(primary: guide))
+                    .focused($focusedGuide, equals: true)
+                    .accessibilityAddTraits(guide ? .isSelected : [])
+                Spacer()
+            }.padding(.horizontal, Theme.gutter).accessibilityIdentifier("live-tv-mode")
+            #else
+            Picker("Live TV", selection: $guide) {
+                Text("Programs").tag(false)
+                Text("Guide").tag(true)
+            }.pickerStyle(.segmented).frame(minHeight: 44).padding(.horizontal, Theme.gutter)
+                .accessibilityIdentifier("live-tv-mode")
+            #endif
+            if guide { LiveGuideView(back: { guide = false }, play: play, embedded: true) }
+            else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        LiveTVStreamsStrip { play($0, .init(subtitleIndex: -2)) }.padding(.horizontal, Theme.gutter)
+                        if state.liveLoading { ProgressView(model.features.sportsEvents || model.features.liveArtwork ? "Loading sports and programs…" : "Loading live programs…").frame(maxWidth: .infinity) }
+                        if let error = state.liveError {
+                            StatusView(title: "Live programs unavailable", detail: error, retry: { refresh += 1 })
+                        }
+                        if let snapshot = state.liveSnapshot {
+                            LiveEventsShelf(snapshot: snapshot, events: state.liveEvents,
+                                allChannels: { guide = true }, open: open)
+                            TimelineView(.periodic(from: .now, by: 5)) { timeline in
+                                let channels = snapshot.isFresh(at: timeline.date) ? snapshot.channels : []
+                                let current = channels.filter { LiveProgramListing.isCurrent($0, at: timeline.date) }
+                                let sports = channels.filter { LiveProgramListing.isSports($0) }
+                                if !state.liveEvents.contains(where: { $0.isCurrent(at: timeline.date) }) {
+                                    if !state.hasLiveScoresFeed && !sports.isEmpty {
+                                        LiveProgramShelf(title: "Sports & live events", channels: sports, now: timeline.date, guide: { guide = true }) { channel in
+                                            guard snapshot.isFresh(at: .now) else { return }; open(channel)
+                                        }
+                                    } else if !state.liveLoading && state.liveError == nil {
+                                        StatusView(title: "No sports listed right now", detail: "Open Guide to browse channels and upcoming programs.")
+                                    }
+                                }
+                                // Owner rule (Nov 24): no "On now" row in any app; the Guide has every channel.
+
+                            }
+                        } else if !state.liveLoading && state.liveError == nil {
+                            StatusView(title: "No live programs right now", detail: "Open Guide to browse all channels and upcoming programs.")
+                        }
+                        Button("All channels · Guide") { guide = true }.buttonStyle(ZoroButtonStyle()).padding(.horizontal, Theme.gutter)
+                    }.padding(.vertical, 12).padding(.bottom, 100)
+                }.refreshable { state.liveRevision = -1; refresh += 1 }
+            }
+        }.background(Theme.background).accessibilityIdentifier("live-tv-browse")
+        #if os(tvOS)
+        .onChange(of: guide) { _, selected in focusedGuide = selected }
+        .onExitCommand(perform: guide ? { guide = false } : nil)
+        #endif
+        .task(id: "\(model.generation)-\(model.libraryRevision)-\(model.features.liveArtwork)-\(model.features.sportsEvents)-\(scenePhase == .active)-\(guide)-\(refresh)") {
+            guard scenePhase == .active && !guide else { return }
+            state.liveRevision = -1
+            while !Task.isCancelled {
+                await state.refreshLiveEvents(model: model)
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            }
+        }
+    }
+}
+
+/// Landscape programme rails: artwork and metadata have one clear hierarchy.
+private struct LiveProgramShelf: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.adaptiveWindow) private var window
+    let title: String
+    let channels: [MediaItem]
+    let now: Date
+    let guide: () -> Void
+    let open: (MediaItem) -> Void
+    private var width: CGFloat { (Theme.isTV ? 360 : min(360, window.landscapeCardWidth)) * model.posterScale }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: guide) { HStack { SectionTitle(title: title); Image(systemName: "chevron.right").font(Theme.font(14)); Spacer() } }
+                .buttonStyle(ArtworkButtonStyle()).frame(minHeight: 44).padding(.horizontal, Theme.gutter)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: Theme.isTV ? 28 : 14) {
+                    ForEach(channels) { channel in
+                        Button { open(channel) } label: { MobileProgramCard(channel: channel, now: now).frame(width: width) }
+                            .buttonStyle(ArtworkButtonStyle())
+                            .accessibilityLabel("\(channel.currentProgram?.name ?? channel.name), \(channel.name). Open channel.")
+                    }
+                }.padding(.horizontal, Theme.gutter).padding(.vertical, Theme.isTV ? 18 : 4)
+            }.scrollIndicators(.hidden).scrollClipDisabled()
+        }
+    }
+}
+private struct MobileProgramCard: View {
+    let channel: MediaItem
+    let now: Date
+    private var program: LiveProgram? { channel.currentProgram }
+    private var title: String {
+        let name = program?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? channel.name : name
+    }
+    private var channelLine: String {
+        let same = title.caseInsensitiveCompare(channel.name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        return (same ? "Channel" : channel.name) + (channel.channelNumber.map { " · Ch " + $0 } ?? "")
+    }
+    private var progress: Double {
+        guard let p = program, let start = HomeRowCard.date(p.startDate), let end = HomeRowCard.date(p.endDate), end > start else { return 0 }
+        return min(1, max(0, now.timeIntervalSince(start) / end.timeIntervalSince(start)))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            MobileProgramArtwork(channel: channel).aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .topLeading) {
+                    if LiveProgramListing.isLive(channel, at: now) {
+                        HStack(spacing: 5) { Circle().fill(.red).frame(width: 6, height: 6); Text("LIVE").font(Theme.font(12, weight: .bold)) }
+                            .padding(.horizontal, 9).padding(.vertical, 6).background(.black.opacity(0.8), in: Capsule()).padding(9)
+                    }
+                }
+            Text(title).font(Theme.font(Theme.isTV ? 23 : 17, weight: .semibold)).lineLimit(2)
+            Text(channelLine)
+                .font(Theme.font(Theme.isTV ? 18 : 14)).foregroundStyle(Theme.muted).lineLimit(1)
+            if let p = program, let start = HomeRowCard.date(p.startDate), let end = HomeRowCard.date(p.endDate) {
+                Text(start.formatted(date: .abbreviated, time: .shortened) + " – " + end.formatted(date: Calendar.current.isDate(start, inSameDayAs: end) ? .omitted : .abbreviated, time: .shortened))
+                    .font(Theme.font(13)).foregroundStyle(Theme.muted).lineLimit(2)
+                GeometryReader { geometry in
+                    Capsule().fill(Theme.border)
+                    Capsule().fill(Theme.jade).frame(width: geometry.size.width * progress)
+                }.frame(height: 3).accessibilityHidden(true)
+            }
+        }.foregroundStyle(Theme.text)
+    }
+}
+private struct MobileProgramArtwork: View {
+    @Environment(AppModel.self) private var model
+    let channel: MediaItem
+    @State private var image: UIImage?
+    @State private var programmeArt = false
+    @State private var loadedKey = ""
+    private var sources: [LiveProgramArtSource] { LiveProgramListing.artwork(channel) }
+    private var key: String { "\(model.generation)-\(channel.id)-" + sources.map { "\($0.itemID):\($0.kind):\($0.tag)" }.joined(separator: "|") }
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(colors: [Theme.panel, Theme.background], startPoint: .topLeading, endPoint: .bottomTrailing)
+                if let image, loadedKey == key {
+                    if programmeArt { Image(uiImage: image).resizable().scaledToFill() }
+                    else { Image(uiImage: image).resizable().scaledToFit().padding(20) }
+                } else { Image(systemName: "tv").font(.system(size: 40)).foregroundStyle(Theme.muted) }
+            }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+        }.accessibilityHidden(true)
+        .task(id: key) {
+            let loadingKey = key, generation = model.generation, candidates = sources
+            image = nil; loadedKey = ""
+            guard let client = model.client else { return }
+            for source in candidates {
+                if let value = try? await model.imageCache.image(key: "\(generation)-program-card-\(source.itemID)-\(source.kind)-\(source.tag)", client: client, itemID: source.itemID, kind: source.kind, tag: source.tag, width: 720) {
+                    guard !Task.isCancelled, model.generation == generation else { return }
+                    // A programme picture that isn't a wide still is a presenter headshot or a
+                    // station logo: use the channel's own art instead, as web, Roku and LG do.
+                    if source.isProgram, value.size.height > 0, !(1.6...1.95).contains(value.size.width / value.size.height) { continue }
+                    image = value; programmeArt = source.isProgram; loadedKey = loadingKey; return
+                }
+                if Task.isCancelled { return }
+            }
+        }
+    }
+}
+
+
+/// A navigation value, never a synthetic server item or a new top-menu tab.
+struct CollectionsDestination: Hashable {}
+
+struct CollectionsHomeShelf: View {
+    @Environment(AppModel.self) private var model
+    let refresh: Int
+    @State private var items: [MediaItem] = []
+    @State private var failure: String?
+    @State private var retry = 0
+    var body: some View {
+        Group {
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        SectionTitle(title: "Collections")
+                        Spacer(minLength: 12)
+                        NavigationLink("Browse all", value: CollectionsDestination())
+                            .buttonStyle(ZoroButtonStyle())
+                    }.padding(.horizontal, Theme.gutter)
+                    ScrollView(.horizontal) {
+                        LazyHStack(alignment: .top, spacing: Theme.isTV ? 28 : 14) {
+                            ForEach(items) { item in
+                                NavigationLink(value: item) { MediaCard(item: item) }
+                                    .buttonStyle(ArtworkButtonStyle())
+                                    .accessibilityIdentifier("collection-\(item.id)")
+                            }
+                        }.padding(.horizontal, Theme.gutter).padding(.vertical, Theme.isTV ? 18 : 3)
+                    }.scrollIndicators(.hidden).scrollClipDisabled()
+                }
+            } else if let failure {
+                StatusView(title: "Collections unavailable", detail: failure, retry: { retry += 1 })
+            }
+        }.task(id: "\(refresh)-\(model.libraryRevision)-\(retry)") {
+            guard let client = model.client, !model.isDemo else { return }
+            let generation = model.generation
+            do {
+                let page = try await client.collectionPage()
+                guard !Task.isCancelled, generation == model.generation else { return }
+                var seen = Set<String>()
+                items = Array(page.items.filter { $0.type == "BoxSet" && seen.insert($0.id).inserted }.prefix(20))
+                failure = nil
+            } catch {
+                guard !Task.isCancelled, generation == model.generation else { return }
+                failure = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct CollectionsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    var collection: MediaItem? = nil
+    let wide: Bool
+    @State private var items: [MediaItem] = []
+    @State private var cursor = LibraryPageCursor()
+    @State private var loading = false
+    @State private var failure: String?
+    @State private var visibleID: String?
+    @State private var loaded = false
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 24) {
+                HStack {
+                    if Theme.isTV { Button("Back") { dismiss() }.buttonStyle(ZoroButtonStyle()) }
+                    Text(collection?.name ?? "Collections")
+                        .font(Theme.font(Theme.isTV ? 40 : 28, weight: .bold))
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 0)
+                }
+                if !items.isEmpty { MediaGrid(items: items, wide: wide) }
+                if loading { ProgressView("Loading collections…") }
+                if let failure {
+                    StatusView(title: "Couldn’t load collections", detail: failure, retry: { Task { await load() } })
+                } else if !loading && loaded && items.isEmpty {
+                    StatusView(title: collection == nil ? "No collections here yet" : "This collection is empty",
+                               detail: "Titles shared with your account will appear here.")
+                } else if !loading && cursor.hasMore && loaded {
+                    Button("More titles") { Task { await load() } }.buttonStyle(ZoroButtonStyle())
+                }
+            }.scrollTargetLayout().padding(.horizontal, Theme.gutter).padding(.top, 20).padding(.bottom, 24)
+        }.background(Theme.background)
+            .scrollPosition(id: $visibleID)
+            .task { if !loaded { await load() } }
+    }
+    private func load() async {
+        guard !loading, cursor.hasMore, let client = model.client else { return }
+        let generation = model.generation
+        loading = true; failure = nil
+        defer { if generation == model.generation { loading = false } }
+        do {
+            let page = try await client.collectionPage(parentID: collection?.id, start: cursor.offset)
+            guard !Task.isCancelled, generation == model.generation else { return }
+            var seen = Set(items.map(\.id))
+            let additions = page.items.filter { seen.insert($0.id).inserted }
+            cursor.accept(page, limit: 48)
+            if additions.isEmpty { cursor.accept(.init(items: []), limit: 48) }
+            items += additions; loaded = true
+        } catch {
+            guard !Task.isCancelled, generation == model.generation else { return }
+            failure = error.localizedDescription
+        }
     }
 }

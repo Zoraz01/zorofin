@@ -61,23 +61,19 @@ private func day(_ text: String) -> Date { ISO8601DateFormatter().date(from: tex
             .init(id: id, channelId: channel, name: name, overview: nil, startDate: start, endDate: end, isSports: sports, genres: nil)
         }
         let programs = [
-            program("later", "Boston Celtics at New York Knicks", start: "2026-10-27T18:45:00Z", end: "2026-10-27T21:00:00Z"),
-            program("tonight", "New York Knicks at Miami Heat", start: "2026-10-27T23:00:00Z", end: "2026-10-28T01:00:00Z"),
-            program("generic", "TNT Sports 1", start: "2026-10-27T17:00:00Z", end: "2026-10-27T19:00:00Z"),
+            program("later", "Boston Celtics at New York Knicks", start: "2026-10-27T23:00:00Z", end: "2026-10-28T01:00:00Z"),
             program("now", "NBA: Knicks vs. Heat", start: "2026-10-27T17:00:00Z", end: "2026-10-27T19:00:00Z"),
             program("studio", "NBA Studio Live", start: "2026-10-27T17:00:00Z", end: "2026-10-27T19:00:00Z"),
             program("ended", "New York Knicks Classic", start: "2026-10-27T10:00:00Z", end: "2026-10-27T12:00:00Z"),
             program("far", "New York Knicks at Boston Celtics", start: "2026-10-28T09:00:00Z", end: "2026-10-28T11:00:00Z"),
             program("orphan", "New York Knicks", start: "2026-10-27T17:00:00Z", end: "2026-10-27T19:00:00Z", channel: "gone"),
             program("drama", "New York Knicks", start: "2026-10-27T17:00:00Z", end: "2026-10-27T19:00:00Z", sports: false)]
-        // No teams, no row: generic sports channels never fill it.
-        #expect(ClientHomeRows.sports(programs, channels: [channel], teams: [], at: rowsNow).isEmpty)
-        let mine = ClientHomeRows.sports(programs, channels: [channel], teams: ["New York Knicks", "Miami Heat"], at: rowsNow)
-        #expect(mine.map(\.id) == ["later"], "on now or within the hour only")
-        #expect(mine.map(\.badges) == [["Starting soon"]])
-        let heat = ClientHomeRows.sports(programs, channels: [channel], teams: ["Heat"], at: rowsNow)
-        #expect(heat.map(\.id) == ["now"] && heat[0].badges == ["On now"])
-        #expect(heat[0].item.id == "ch" && heat[0].subtitle == "NBA: Knicks vs. Heat")
+        let all = ClientHomeRows.sports(programs, channels: [channel], teams: [], at: rowsNow)
+        #expect(all.map(\.id) == ["now", "later"])
+        #expect(all.map(\.badges) == [["On now"], ["Starting soon"]])
+        #expect(all[0].item.id == "ch" && all[0].subtitle == "NBA: Knicks vs. Heat")
+        let mine = ClientHomeRows.sports(programs, channels: [channel], teams: ["New York Knicks"], at: rowsNow)
+        #expect(mine.map(\.id) == ["later"])
         #expect(!ClientHomeRows.teamMatches("Sunnyvale FC", teams: ["Sunny"]))
         #expect(ClientHomeRows.teamMatches("Real Madrid vs. Barça", teams: ["barça"]))
     }
@@ -164,7 +160,7 @@ private func query(_ request: URLRequest, _ name: String) -> String? {
             let path = request.url!.path
             if path.hasSuffix("/LiveTv/Channels") { return (200, #"{"Items":[{"Id":"ch","Name":"Sports","Type":"TvChannel"}],"TotalRecordCount":1}"#) }
             if path.hasSuffix("/LiveTv/Programs") {
-                return (200, #"{"Items":[{"Id":"p1","ChannelId":"ch","Name":"Live: Boston Bruins at Washington Capitals","IsSports":true,"StartDate":"2026-10-27T17:30:00.0000000Z","EndDate":"2026-10-27T20:00:00.0000000Z"}]}"#)
+                return (200, #"{"Items":[{"Id":"p1","ChannelId":"ch","Name":"Live: Hockey","IsSports":true,"StartDate":"2026-10-27T17:30:00.0000000Z","EndDate":"2026-10-27T20:00:00.0000000Z"}]}"#)
             }
             switch query(request, "includeItemTypes") {
             case "Movie" where query(request, "parentId") == nil:
@@ -175,7 +171,7 @@ private func query(_ request: URLRequest, _ name: String) -> String? {
             default: return (404, "{}")
             }
         }
-        let rows = try await routedClient(transport).clientHomeRows(teams: ["Washington Capitals"], at: rowsNow, timeZone: eastern)
+        let rows = try await routedClient(transport).clientHomeRows(teams: [], at: rowsNow, timeZone: eastern)
         #expect(rows.map(\.id) == ["new-episodes", "short-movies", "showcase", "curated", "sports"])
         #expect(rows.allSatisfy { $0.state == "ready" })
         #expect(rows[0].cards.map(\.id) == ["e1"])

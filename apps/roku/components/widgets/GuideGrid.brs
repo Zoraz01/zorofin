@@ -4,6 +4,7 @@
 ' channels stays in the same part of the schedule.
 
 sub init()
+    m.top.findNode("nowLine").color = ZAccent("A6")
     m.top.focusable = true
     m.theme = ZTheme()
     m.schedule = 1480

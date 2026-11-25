@@ -1,5 +1,11 @@
 # Client-side Home rows
 
+Current selection: enabled `homeRows` v2 uses the server's seven app rows
+authoritatively; these device rules remain the ordinary/disabled/unsupported
+server fallback and the legacy v1 merge. See the shared
+app Home-row contract and
+validation handoff.
+
 Status: built for the first update after 1.0. Not part of the 1.0 release.
 
 The iOS, iPadOS and Apple TV apps now compute five of the seven personalized
@@ -13,7 +19,7 @@ no Zorofin support service and no third-party plugin.
 | Watch in 90 minutes | Device: shared movie catalogue scan | Jellyfin only |
 | 4K / HDR showcase | Device: video stream width and VideoRangeType | Jellyfin only |
 | Seasonal / curated picks | Device: same calendar and matching rules as the server | Jellyfin only |
-| Your teams / starting soon | Device: Live TV guide, followed teams' games on now or starting within the hour (no teams, no row) | Jellyfin Live TV |
+| Your teams / starting soon | Device: Live TV guide, sports programmes in the next 12 hours | Jellyfin Live TV |
 | My requests (requests-ready) | Optional Zorofin server feed | Seerr |
 | Popular this week | Optional Zorofin server feed | Playback statistics |
 
@@ -24,7 +30,7 @@ weighted shuffle and card layout are unchanged.
 
 ## How Home combines the two sources
 
-`ClientHomeRows.feed(client:server:teams:)` merges the rows in the server
+For legacy v1 only, `ClientHomeRows.feed(client:server:teams:)` merges rows in the server
 contract's order:
 
 - A client-computed row always wins, including an honest empty row.
@@ -44,9 +50,9 @@ They follow the account to every device on any server. Saving is a
 read-modify-write that keeps every other display preference intact.
 
 Migration from the server feed is automatic and one-time. If the Jellyfin key
-has never been written and the server advertises `homeRows`, the app reads the
+has never been written and the server advertises `homeRows` v1, the app reads the
 legacy `/support/home/preferences` teams and copies them into Jellyfin. When the
-server advertises `homeRows`, Save also updates the legacy preferences
+server advertises `homeRows` v1, Save also updates the legacy preferences
 (best-effort) so the companion web Home stays in step.
 
 Profile → Your teams is now shown on every server, not only Zorofin servers.

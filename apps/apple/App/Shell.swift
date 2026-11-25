@@ -32,7 +32,7 @@ struct ZorofinShell: View {
     @Namespace private var navigationSelection
     @State private var destination = Destination.home
     @State private var dockHeight: CGFloat = 66
-    @State private var path: [MediaItem] = []
+    @State private var path = NavigationPath()
     @State private var player: PlaybackPresentation?
     @State private var pendingPlayback: PlaybackPresentation?
     @State private var reviewOpportunity = 0
@@ -81,8 +81,18 @@ struct ZorofinShell: View {
                     .ignoresSafeArea(.container, edges: .horizontal)
                     #endif
                     .animation(reducedMotion ? nil : NavigationMotion.screen, value: destination)
+                    .navigationDestination(for: CollectionsDestination.self) { _ in
+                        CollectionsView(wide: wide).id(model.generation)
+                            .modifier(HideNavigationBar())
+                    }
                     .navigationDestination(for: MediaItem.self) { item in
-                        DetailView(item: item, wide: wide, play: play)
+                        Group {
+                            if item.type == "BoxSet" {
+                                CollectionsView(collection: item, wide: wide).id(model.generation)
+                            } else {
+                                DetailView(item: item, wide: wide, play: play)
+                            }
+                        }
                             #if os(tvOS)
                             .ignoresSafeArea(.container, edges: .horizontal)
                             #endif
@@ -277,6 +287,35 @@ struct ZorofinShell: View {
             player = PlaybackPresentation(item: request.item, options: request.options)
             model.watchTogether.playbackRequest = nil
         }
+        .onChange(of: model.pendingBrowseDownloads) { _, requested in
+            guard requested else { return }
+            model.pendingBrowseDownloads = false
+            #if os(iOS)
+            showOfflineDownloads = false
+            #endif
+            select(.movies)
+        }
+        .onChange(of: model.pendingPlay?.id) { _, _ in
+            // Pick Together closes first, then plays through the ordinary player
+            // (a series picks its episode the usual way; a joined group plays in sync).
+            guard let item = model.pendingPlay else { return }
+            model.pendingPlay = nil
+            showProfileMenu = false
+            #if os(tvOS)
+            profileDestination = nil
+            #endif
+            pendingPlayback = PlaybackPresentation(item: item, options: .init(startTicks: item.resumeTicks))
+        }
+        .onChange(of: model.pendingOpen?.id) { _, _ in
+            // Calendar and Catch Up close first, then open the title from Home.
+            guard let item = model.pendingOpen else { return }
+            model.pendingOpen = nil
+            showProfileMenu = false
+            #if os(tvOS)
+            profileDestination = nil
+            #endif
+            select(.home); path = NavigationPath([item])
+        }
         .onChange(of: model.extensionEnabled) { _, enabled in
             if !enabled && destination == .requests { select(.home) }
         }
@@ -293,14 +332,15 @@ struct ZorofinShell: View {
         case .home: HomeView(wide: wide, select: select, open: { path.append($0) }, play: play)
         case .movies: CatalogView(title: "Movies", kind: "Movie", wide: wide, back: { select(.home) })
         case .shows: CatalogView(title: "TV Shows", kind: "Series", wide: wide, back: { select(.home) })
-        case .live: LiveGuideView(back: { select(.home) }, play: play)
+        case .live:
+            LiveTVBrowseView(back: { select(.home) }, open: { path.append($0) }, play: play).id(model.generation)
         case .search: SearchView(wide: wide, openRequests: { select(.requests) })
         case .requests: RequestsView(wide: wide, open: { path.append($0) })
         case .profile: ProfileView()
         }
     }
     private func select(_ value: Destination) {
-        path = []
+        path = NavigationPath()
         #if os(tvOS)
         if value != .profile { settingsReturnDestination = nil }
         #endif
@@ -344,7 +384,7 @@ struct ZorofinShell: View {
             let item = try await client.item(link.itemID, fresh: true)
             guard !Task.isCancelled, expected == model.generation, model.pendingTopShelfLink == link else { return }
             showProfileMenu = false; showServers = false; utility = nil; showNotifications = false
-            select(.home); path = [item]
+            select(.home); path = NavigationPath([item])
             if link.action == .play && (item.type == "Movie" || item.isEpisode) {
                 play(item, .init(startTicks: item.resumeTicks, subtitleIndex: -2))
             }
@@ -535,7 +575,14 @@ private struct TVProfilePopover: View {
     @State private var switchingAccount: UUID?
     @State private var switchTask: Task<Void, Never>?
     @State private var error: String?
-    @FocusState private var focusedAccount: UUID?
+    @FocusState private var focus: MenuFocus?
+    private enum MenuFocus: Hashable { case account(UUID), all, settings }
+    /// Saved profiles other than the one in use, for one-press switching.
+    private var otherAccounts: [SavedAccount] { model.connections.accounts.filter { !model.isCurrent($0) } }
+    private var hasActivities: Bool {
+        (model.features.pickTogether && !model.isDemo) || model.isDemo || model.watchTogether.canJoin
+            || model.pluginExtras.calendar || model.pluginExtras.catchUp
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -547,34 +594,60 @@ private struct TVProfilePopover: View {
                 Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture(perform: close)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 12) {
-                        ProfileAvatar(size: 40)
-                        Text(model.serverName.isEmpty ? "Accounts" : model.serverName)
-                            .font(Theme.font(25, weight: .semibold)).lineLimit(1)
+                    // The same order on every TV app (docs/design/TV_PROFILE_MENU.md):
+                    // who you are, switch profile, things to do, Settings last.
+                    HStack(spacing: 14) {
+                        ProfileAvatar(size: 56)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(model.viewerName).font(Theme.font(25, weight: .semibold)).lineLimit(1)
+                            if !model.serverName.isEmpty {
+                                Text(model.serverName).font(Theme.font(18)).foregroundStyle(Theme.muted).lineLimit(1)
+                            }
+                        }
                         Spacer(minLength: 0)
                         Button(action: close) {
                             Image(systemName: "xmark").frame(width: 48, height: 48)
                         }.buttonStyle(FlatOptionStyle()).accessibilityLabel("Close account menu")
                     }.padding(.horizontal, 20).padding(.vertical, 12).focusSection()
-                    Divider().overlay(Theme.border)
-                    ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("SWITCH PROFILE").font(Theme.font(16, weight: .semibold)).tracking(1.2)
+                            .foregroundStyle(Theme.muted).accessibilityAddTraits(.isHeader)
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: 14) {
+                                ForEach(otherAccounts) { account in profileTile(account) }
+                                Button { open(.servers) } label: {
+                                    VStack(spacing: 8) {
+                                        Image(systemName: "ellipsis").font(.system(size: 26, weight: .semibold))
+                                            .frame(width: 72, height: 72)
+                                            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.border, lineWidth: 2))
+                                        Text("All").font(Theme.font(18)).foregroundStyle(Theme.muted)
+                                    }.frame(width: 92).padding(.vertical, 6)
+                                }.buttonStyle(FlatOptionStyle()).disabled(switchingAccount != nil)
+                                    .focused($focus, equals: .all)
+                                    .accessibilityIdentifier("account-menu-servers")
+                                    .accessibilityLabel("All profiles")
+                            }.padding(.horizontal, 4)
+                        }.scrollClipDisabled()
+                        if let error { Text(error).font(Theme.font(19)).foregroundStyle(.orange) }
+                    }.padding(.horizontal, 20).padding(.bottom, 14).focusSection()
+                    if hasActivities {
+                        Divider().overlay(Theme.border)
                         VStack(spacing: 4) {
-                            if let error { Text(error).font(Theme.font(19)).foregroundStyle(.orange).padding(12) }
-                            ForEach(model.connections.accounts) { account in accountRow(account) }
-                            if model.connections.accounts.isEmpty {
-                                Text("No saved accounts").font(Theme.font(20)).foregroundStyle(Theme.muted).padding(12)
+                            if model.features.pickTogether && !model.isDemo {
+                                row(model.pickTogether.session?.display == true ? "Back to Pick Together" : "Pick Together",
+                                    "rectangle.stack", .pickTogether)
                             }
-                            Divider().overlay(Theme.border).padding(.vertical, 8)
-                            row("Change server", "server.rack", .servers)
-                            row("Quick Connect", "iphone.gen3.radiowaves.left.and.right", .quickConnect)
                             if model.isDemo || model.watchTogether.canJoin {
-                                row("Watch together", "person.2.wave.2", .watchTogether)
+                                row("Watch Together", "person.2.wave.2", .watchTogether)
                             }
-                        }.padding(16)
-                    }.frame(maxHeight: min(520, max(120, geometry.size.height - top - 190))).focusSection()
+                            if model.pluginExtras.calendar { row("Calendar", "calendar", .calendar) }
+                            if model.pluginExtras.catchUp { row("Catch Up", "list.bullet", .catchUp) }
+                        }.padding(16).focusSection()
+                    }
                     Divider().overlay(Theme.border)
                     Button(action: settings) { menuLabel("Settings", "gearshape") }
                         .buttonStyle(FlatOptionStyle()).padding(16).disabled(switchingAccount != nil)
+                        .focused($focus, equals: .settings)
                         .accessibilityIdentifier("account-menu-settings")
                 }.frame(width: width).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
                     .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.16), lineWidth: 1))
@@ -588,8 +661,7 @@ private struct TVProfilePopover: View {
             .onDisappear { switchTask?.cancel() }
             .task(id: model.generation) {
                 await Task.yield()
-                focusedAccount = model.connections.accounts.first(where: { model.isCurrent($0) })?.id
-                    ?? model.connections.accounts.first?.id
+                focus = otherAccounts.first.map { .account($0.id) } ?? .all
                 guard let client = model.client else { return }
                 let generation = model.generation
                 guard let viewer = try? await client.currentViewer(), !Task.isCancelled,
@@ -597,26 +669,20 @@ private struct TVProfilePopover: View {
                 model.watchTogether.access = viewer.policy?.syncPlayAccess
             }
     }
-    private func accountRow(_ account: SavedAccount) -> some View {
-        let current = model.isCurrent(account)
-        return Button { choose(account) } label: {
-            HStack(spacing: 14) {
-                SavedAccountAvatar(account: account, size: 44)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(account.viewer.name).font(Theme.font(22, weight: current ? .semibold : .regular))
-                    Text(account.session == nil ? "Sign in again" : account.serverName)
-                        .font(Theme.font(17)).foregroundStyle(Theme.muted).lineLimit(1)
+    private func profileTile(_ account: SavedAccount) -> some View {
+        Button { choose(account) } label: {
+            VStack(spacing: 8) {
+                ZStack {
+                    SavedAccountAvatar(account: account, size: 72)
+                    if switchingAccount == account.id { ProgressView() }
                 }
-                Spacer(minLength: 0)
-                if switchingAccount == account.id { ProgressView() }
-                else if current { Image(systemName: "checkmark").foregroundStyle(Theme.jade) }
-            }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                Text(account.viewer.name).font(Theme.font(18)).foregroundStyle(Theme.muted).lineLimit(1)
+            }.frame(width: 92).padding(.vertical, 6)
         }.buttonStyle(FlatOptionStyle()).disabled(switchingAccount != nil)
-            .focused($focusedAccount, equals: account.id)
+            .focused($focus, equals: .account(account.id))
             .accessibilityIdentifier("account-menu-saved-" + account.id.uuidString)
             .accessibilityLabel(account.viewer.name + ", " + account.serverName)
-            .accessibilityValue(current ? "Current account" : account.session == nil ? "Sign in again" : "")
-            .accessibilityAddTraits(current ? .isSelected : [])
+            .accessibilityValue(account.session == nil ? "Sign in again" : "")
     }
     private func choose(_ account: SavedAccount) {
         guard switchingAccount == nil else { return }
@@ -642,6 +708,70 @@ private struct TVProfilePopover: View {
         Button { open(destination) } label: { menuLabel(title, icon) }
             .buttonStyle(FlatOptionStyle()).disabled(switchingAccount != nil)
             .accessibilityIdentifier("account-menu-" + destination.id)
+    }
+}
+#endif
+
+#if !os(tvOS)
+/// Switch profile on the phone Profile tab: the other saved profiles, one
+/// tap each, then All for Who's watching (add, remove, sign in again).
+private struct PhoneProfileSwitcher: View {
+    @Environment(AppModel.self) private var model
+    let manage: () -> Void
+    @State private var switching: UUID?
+    @State private var error: String?
+    private var others: [SavedAccount] { model.connections.accounts.filter { !model.isCurrent($0) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SWITCH PROFILE").font(Theme.font(12, weight: .semibold)).tracking(1)
+                .foregroundStyle(Theme.muted).padding(.horizontal, 6).accessibilityAddTraits(.isHeader)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(others) { account in
+                        Button { choose(account) } label: {
+                            tile(account.viewer.name) {
+                                ZStack {
+                                    SavedAccountAvatar(account: account, size: 52)
+                                    if switching == account.id { ProgressView() }
+                                }
+                            }
+                        }.buttonStyle(.plain).disabled(switching != nil)
+                            .accessibilityLabel(account.viewer.name + ", " + account.serverName)
+                            .accessibilityValue(account.session == nil ? "Sign in again" : "")
+                            .accessibilityIdentifier("profile-switch-" + account.id.uuidString)
+                    }
+                    Button(action: manage) {
+                        tile("All") {
+                            Image(systemName: "ellipsis").font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(Theme.muted).frame(width: 52, height: 52)
+                                .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.border, lineWidth: 2))
+                        }
+                    }.buttonStyle(.plain).disabled(switching != nil)
+                        .accessibilityLabel("All profiles").accessibilityIdentifier("profile-servers")
+                }.padding(.horizontal, 6)
+            }
+            if let error { Text(error).font(Theme.font(14)).foregroundStyle(.orange).padding(.horizontal, 6) }
+        }
+    }
+
+    private func tile<Avatar: View>(_ name: String, @ViewBuilder avatar: () -> Avatar) -> some View {
+        VStack(spacing: 6) {
+            avatar()
+            Text(name).font(Theme.font(13)).foregroundStyle(Theme.muted).lineLimit(1)
+        }.frame(width: 64).contentShape(Rectangle())
+    }
+
+    private func choose(_ account: SavedAccount) {
+        guard switching == nil else { return }
+        guard account.session != nil else { manage(); return }
+        error = nil; switching = account.id
+        Task { @MainActor in
+            defer { switching = nil }
+            do { try await model.switchAccount(account.id) }
+            catch ClientError.unauthorized { manage() }
+            catch { self.error = error.localizedDescription }
+        }
     }
 }
 #endif
@@ -679,16 +809,34 @@ struct HideNavigationBar: ViewModifier {
     }
 }
 
+#if os(iOS)
+/// The pages hide the system navigation bar, and UIKit switches the edge swipe
+/// off with it. This keeps swipe-from-the-left going back wherever there is a
+/// page to go back to, except where a page hid Back on purpose (unsaved changes).
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1 && topViewController?.navigationItem.hidesBackButton != true
+    }
+}
+#endif
+
 private enum ProfileDestination: Identifiable {
-    case dashboard, admin(AdministrationPage), settings(NativeSettingsPage), legal(PublicDocument), quickConnect, watchTogether, support, notifications, teams, servers
+    case dashboard, admin(AdministrationPage), settings(NativeSettingsPage), legal(PublicDocument), quickConnect, watchTogether, pickTogether, support, notifications, teams, servers, calendar, catchUp
     var id: String {
         switch self {
         case .dashboard: "dashboard"
         case .admin(let page): "admin-" + page.rawValue
         case .servers: "servers"
         case .teams: "teams"
+        case .calendar: "calendar"
+        case .catchUp: "catch-up"
         case .quickConnect: "quick-connect"
         case .watchTogether: "watch-together"
+        case .pickTogether: "pick-together"
         case .settings(let page): "settings-" + page.id
         case .legal(let page): "legal-" + page.id
         case .support: "support"
@@ -707,8 +855,19 @@ private struct ProfileDestinationContent: View {
             case .dashboard: DashboardDestination()
             case .admin(let page): AdministrationDestination(page: page)
             case .teams: YourTeamsView()
+            case .calendar: CalendarView()
+            case .catchUp: CatchUpView()
             case .quickConnect: ProfileQuickConnectView()
             case .watchTogether: WatchTogetherView()
+            case .pickTogether:
+                #if os(tvOS)
+                PickTogetherTVView()
+                #else
+                NavigationStack {
+                    ScrollView { PickTogetherPhoneView().padding(Theme.gutter) }
+                        .background(Theme.background).navigationTitle("Pick Together")
+                }
+                #endif
             case .settings(let page): NativeSettingsView(page: page)
             case .legal(let page): PublicInformationView(page: page)
             case .support: HomeUtilityView(utility: .support)
@@ -748,57 +907,38 @@ struct ProfileView: View {
                     }
                 }.padding(.horizontal, 6)
 
-                VStack(spacing: wide ? 8 : 0) {
-                    row("Change account", icon: "person.2", destination: .servers)
-                    row("Account", icon: "person.fill", destination: .settings(.account))
-                    row("Quick Connect", icon: "iphone.gen3.radiowaves.left.and.right", destination: .quickConnect)
-                    if model.isDemo || model.watchTogether.canJoin {
-                        row("Watch together", icon: "person.2", destination: .watchTogether,
-                            subtitle: model.watchTogether.group?.groupName,
-                            action: {
-                                #if os(tvOS)
-                                destination = .watchTogether
-                                #else
-                                showWatchTogether = true
-                                #endif
-                            })
-                            .accessibilityIdentifier("profile-watch-together")
-                    }
-                    row("Display", icon: "display", destination: .settings(.display))
-                    row("Your teams", icon: "sportscourt", destination: .teams)
-                    row("Playback", icon: "play.circle.fill", destination: .settings(.playback))
-                    row("Subtitles", icon: "captions.bubble.fill", destination: .settings(.subtitles))
-                    row("Controls", icon: "gamecontroller", destination: .settings(.controls))
+                #if os(tvOS)
+                tvRows
+                #else
+                // Phones have no avatar menu, so this tab holds it: Switch
+                // profile, what you do on this phone, then the same six
+                // Settings pages as every TV (docs/design/TV_PROFILE_MENU.md).
+                PhoneProfileSwitcher(manage: { destination = .servers })
+                section("On this phone") {
                     #if os(iOS)
                     row("Downloads", icon: "arrow.down.circle", destination: .settings(.storage),
                         subtitle: downloadsSummary, action: { showDownloads = true })
                         .accessibilityIdentifier("profile-downloads")
                     #endif
-                    row("Storage & app", icon: "internaldrive", destination: .settings(.storage))
+                    if model.features.pickTogether && !model.isDemo {
+                        row("Pick Together", icon: "rectangle.stack", destination: .pickTogether)
+                    }
+                    if model.isDemo || model.watchTogether.canJoin {
+                        row("Watch Together", icon: "person.2", destination: .watchTogether,
+                            subtitle: model.watchTogether.group?.groupName,
+                            action: { showWatchTogether = true })
+                            .accessibilityIdentifier("profile-watch-together")
+                    }
+                    if model.pluginExtras.calendar { row("Calendar", icon: "calendar", destination: .calendar) }
+                    if model.pluginExtras.catchUp { row("Catch Up", icon: "list.bullet", destination: .catchUp) }
                 }
+                section("Settings") { settingsRows }
 
                 if administrator {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Administration").font(Theme.font(Theme.isTV ? 28 : 20, weight: .bold, relativeTo: .headline))
-                            .padding(.horizontal, 6).accessibilityAddTraits(.isHeader)
-                        VStack(spacing: wide ? 8 : 0) { dashboardRow; adminRow(.metadata) }
+                    section("Administration") {
+                        dashboardRow; adminRow(.metadata)
+                        if model.features.accountApprovals { adminRow(.accountApprovals) }
                     }
-                }
-
-                VStack(spacing: wide ? 8 : 0) {
-                    if administrator && model.features.accountApprovals { adminRow(.accountApprovals, utility: true) }
-                    if model.features.support { row("Support", icon: "support", destination: .support, utility: true) }
-                    if model.features.notificationSettings || model.hasNotifications || model.isDemo {
-                        row("Notification settings", icon: "slider.horizontal.3", destination: .settings(.notifications), utility: true)
-                    }
-                    if model.hasNotifications { row("Notifications", icon: "bell.fill", destination: .notifications, utility: true) }
-                    row("Privacy Policy", icon: "hand.raised", destination: .legal(.privacy), utility: true)
-                    row("App Support", icon: "questionmark.circle", destination: .legal(.support), utility: true)
-                    row("Rate Zorofin", icon: "star", destination: .legal(.support), utility: true, action: {
-                        openURL(AppRating.url) { opened in
-                            if !opened { model.message = "The App Store could not open. Please try again later." }
-                        }
-                    }).accessibilityIdentifier("profile-rate-app")
                 }
 
                 Button {
@@ -808,6 +948,7 @@ struct ProfileView: View {
                     Label(model.isDemo ? "Leave preview" : "Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(ZoroButtonStyle()).disabled(signingOut).accessibilityIdentifier("profile-sign-out")
+                #endif
             }.frame(maxWidth: Theme.isTV ? 920 : 720, alignment: .leading)
                 .padding(.horizontal, Theme.isTV ? Theme.gutter : 28)
                 .frame(maxWidth: .infinity, alignment: Theme.isTV ? .leading : .center)
@@ -859,6 +1000,45 @@ struct ProfileView: View {
         ProfileDestinationContent(selected: selected)
     }
 
+    #if os(tvOS)
+    /// Apple TV Settings: one grouped list, the same on every TV app
+    /// (docs/design/TV_PROFILE_MENU.md). Switching profiles, Pick Together,
+    /// Watch Together, Calendar and Catch Up live in the avatar menu instead.
+    @ViewBuilder private var tvRows: some View {
+        VStack(spacing: 8) { settingsRows }
+        if administrator {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Administration").font(Theme.font(28, weight: .bold)).padding(.horizontal, 6).accessibilityAddTraits(.isHeader)
+                row("Manage server", icon: "square.grid.2x2.fill", destination: .dashboard,
+                    subtitle: model.features.accountApprovals ? "Dashboard, metadata, account approvals" : "Dashboard, metadata")
+            }
+        }
+        Button {
+            signingOut = true
+            Task { await model.signOut(); signingOut = false }
+        } label: {
+            Label(model.isDemo ? "Leave preview" : "Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                .frame(maxWidth: .infinity)
+        }.buttonStyle(ZoroButtonStyle()).disabled(signingOut).accessibilityIdentifier("profile-sign-out")
+    }
+    #endif
+    /// The six Settings pages, in the same order on every TV and phone.
+    @ViewBuilder private var settingsRows: some View {
+        row("Account", icon: "person.fill", destination: .settings(.account), subtitle: "Photo, password, Quick Connect")
+        row("Home & display", icon: "display", destination: .settings(.display), subtitle: "Posters, previews, your teams")
+        row("Playback", icon: "play.circle.fill", destination: .settings(.playback), subtitle: "Quality, audio, skipping, chapters")
+        row("Subtitles", icon: "captions.bubble.fill", destination: .settings(.subtitles), subtitle: "Language and look")
+        row("Notifications", icon: "bell.fill", destination: .settings(.notifications), subtitle: "Email and push alerts")
+        row("Help & about", icon: "questionmark.circle", destination: .settings(.help), subtitle: "Support, privacy, storage, version")
+    }
+    /// A small caps label over a group of rows.
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased()).font(Theme.font(12, weight: .semibold)).tracking(1)
+                .foregroundStyle(Theme.muted).padding(.horizontal, 6).accessibilityAddTraits(.isHeader)
+            VStack(spacing: wide ? 8 : 0) { content() }
+        }
+    }
     @ViewBuilder private var dashboardRow: some View {
         #if os(iOS)
         row("Dashboard", icon: "square.grid.2x2.fill", destination: .dashboard,
@@ -922,7 +1102,7 @@ private struct DashboardDestination: View {
         #if os(iOS)
         DashboardWebView()
         #else
-        AdministrationOnPhoneView(title: "Dashboard")
+        TVManageServerView()
         #endif
     }
 }
@@ -940,13 +1120,46 @@ private struct AdministrationDestination: View {
 }
 
 #if os(tvOS)
+private struct TVManageServerView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 22) {
+                Text("Manage server").font(Theme.font(32, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
+                tool("Dashboard")
+                tool(AdministrationPage.metadata.title)
+                if model.features.accountApprovals {
+                    tool(AdministrationPage.accountApprovals.title)
+                }
+                Button("Done") { dismiss() }.buttonStyle(ZoroButtonStyle())
+            }
+            .padding(Theme.gutter)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Theme.background).foregroundStyle(Theme.text)
+        }
+        .onChange(of: model.generation) { _, _ in dismiss() }
+    }
+
+    private func tool(_ title: String) -> some View {
+        NavigationLink {
+            AdministrationOnPhoneView(title: title)
+        } label: {
+            Text(title)
+        }.buttonStyle(ZoroButtonStyle(primary: true))
+    }
+}
+
 private struct AdministrationOnPhoneView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
+    var message: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text(title).font(Theme.font(32, weight: .bold)).accessibilityAddTraits(.isHeader)
-            Text("Open Profile, then \(title), in Zorofin on your iPhone or iPad.")
+            Text(message ?? "Open Profile, then \(title), in Zorofin on your iPhone or iPad.")
                 .font(Theme.font(24)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
             Button("Done") { dismiss() }.buttonStyle(ZoroButtonStyle(primary: true))
         }.padding(Theme.gutter).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1006,7 +1219,17 @@ private struct ProfileQuickConnectView: View {
 private enum NativeSettingsPage: String, Identifiable {
     case account = "Account", display = "Display", playback = "Playback", subtitles = "Subtitles"
     case controls = "Controls", notifications = "Notification settings", storage = "Storage & app"
+    /// Support, privacy, problem reports, storage and version on one page.
+    case help = "Help & about"
     var id: String { rawValue }
+    /// Names as the grouped Settings list shows them on TVs and phones.
+    var title: String {
+        switch self {
+        case .display: "Home & display"
+        case .notifications: "Notifications"
+        default: rawValue
+        }
+    }
     var usesAccount: Bool { [.account,.playback,.subtitles].contains(self) }
 }
 
@@ -1026,6 +1249,7 @@ private struct NativeSettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     let page: NativeSettingsPage
     @State private var draft = NativePreferences()
     @State private var baseline: ViewerSettings?
@@ -1045,6 +1269,13 @@ private struct NativeSettingsView: View {
     @State private var confirmation: SettingsConfirmation?
     @State private var operation: Task<Void, Never>?
     @State private var pendingPhoto: Data?
+    /// Settings save as you go: a short pause after the last change.
+    @State private var autosave: Task<Void, Never>?
+    @State private var linked: SettingsLink?
+    private enum SettingsLink: String, Identifiable {
+        case quickConnect, teams, support, appSupport, privacy
+        var id: String { rawValue }
+    }
     #if DEBUG
     @State private var showPlayerPreview = false
     @State private var showLivePlayerPreview = false
@@ -1064,11 +1295,18 @@ private struct NativeSettingsView: View {
         guard let baseline else { return [:] }
         return configuration.filter { baseline.configuration[$0.key] != $0.value }
     }
-    private var dirty: Bool {
-        ready && (draft != model.preferences || !changes.isEmpty || pendingPhoto != nil ||
-            !currentPassword.isEmpty || !newPassword.isEmpty || !confirmationPassword.isEmpty || !email.isEmpty)
+    private var canSave: Bool { ready && (draft != savedPreferences || !changes.isEmpty) && !busy }
+    /// Typed but not yet applied: passwords, an email address or a new photo.
+    private var unsavedEntries: Bool {
+        pendingPhoto != nil || !currentPassword.isEmpty || !newPassword.isEmpty || !confirmationPassword.isEmpty || !email.isEmpty
     }
-    private var canSave: Bool { ready && (draft != model.preferences || !changes.isEmpty) && !busy }
+    /// The viewer's settings as shown: the server's card size is the starting
+    /// point until they pick their own (when the server doesn't set it for everyone).
+    private var savedPreferences: NativePreferences {
+        var value = model.preferences
+        if !model.cardSizeFromServer { value.posterScale = model.posterScale }
+        return value
+    }
     private var canEditAccount: Bool { baseline?.canEdit == true && !busy && !loadingAccount }
 
     var body: some View {
@@ -1094,6 +1332,7 @@ private struct NativeSettingsView: View {
                     case .controls: controlFields
                     case .notifications: notificationFields
                     case .storage: storageFields
+                    case .help: helpFields
                     }
                     if busy { ProgressView("Saving…") }
                 }
@@ -1102,43 +1341,44 @@ private struct NativeSettingsView: View {
             #if os(tvOS)
             // Keep the title left aligned and actions reachable above the form.
             .safeAreaInset(edge: .top, spacing: 16) {
+                // Changes save as you go; Menu leaves the page.
                 HStack(spacing: 20) {
-                    Text(page.rawValue).font(Theme.font(32, weight: .bold))
+                    Text(page.title).font(Theme.font(32, weight: .bold))
                         .foregroundStyle(Theme.text).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    if canSave || busy {
-                        Button("Save") { run { await save() } }.disabled(!canSave)
-                            .buttonStyle(ZoroButtonStyle(primary: true))
-                            .accessibilityIdentifier("settings-save")
-                    }
-                    Button("Done") { if dirty { confirmation = .discard } else { dismiss() } }
-                        .buttonStyle(ZoroButtonStyle()).disabled(busy)
                 }.padding(.horizontal, Theme.gutter).padding(.top, 24)
                     .background(Theme.background)
             }
             .toolbar(.hidden, for: .navigationBar)
             #else
-            .navigationTitle(page.rawValue).modifier(SettingsNavigationStyle())
+            .navigationTitle(page.title).modifier(SettingsNavigationStyle())
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { if dirty { confirmation = .discard } else { dismiss() } }.disabled(busy)
-                }
-                if canSave || busy {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") { run { await save() } }.disabled(!canSave)
-                            .accessibilityIdentifier("settings-save")
-                    }
+                // Changes save as you go; Done flushes the last one on the way out.
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { if unsavedEntries { confirmation = .discard } else { dismiss() } }.disabled(busy)
+                        .accessibilityIdentifier("settings-done")
                 }
             }
             #endif
         }.tint(Theme.jade).preferredColorScheme(.dark)
-            .interactiveDismissDisabled(dirty || busy)
+            .onChange(of: draft) { _, _ in scheduleAutosave() }
+            .onChange(of: configuration) { _, _ in scheduleAutosave() }
+            #if os(tvOS)
+            .fullScreenCover(item: $linked) { linkedView($0) }
+            #else
+            .sheet(item: $linked) { linkedView($0) }
+            .interactiveDismissDisabled(unsavedEntries || busy)
+            #endif
             #if DEBUG
             .fullScreenCover(isPresented: $showPlayerPreview) { PlayerDesignPreview(canDismiss: true) }
             .fullScreenCover(isPresented: $showLivePlayerPreview) { PlayerDesignPreview(canDismiss: true, isLive: true) }
             #endif
             .task { await load() }
-            .onDisappear { operation?.cancel(); clearSecrets() }
+            .onDisappear {
+                operation?.cancel(); clearSecrets()
+                // Leaving mid-pause still keeps the last change.
+                if autosave != nil { autosave?.cancel(); autosave = nil; if canSave { Task { await save(quietly: true) } } }
+            }
             .onChange(of: draft) { _, _ in status = nil }
             .onChange(of: scenePhase) { _, phase in if phase != .active { clearSecrets() } }
             .confirmationDialog(confirmation?.rawValue ?? "Confirm", isPresented: Binding(
@@ -1187,6 +1427,15 @@ private struct NativeSettingsView: View {
             #endif
     }
 
+    @ViewBuilder private func linkedView(_ link: SettingsLink) -> some View {
+        switch link {
+        case .quickConnect: ProfileQuickConnectView()
+        case .teams: YourTeamsView()
+        case .support: HomeUtilityView(utility: .support)
+        case .appSupport: PublicInformationView(page: .support)
+        case .privacy: PublicInformationView(page: .privacy)
+        }
+    }
     @ViewBuilder private var accountFields: some View {
         Section {
             HStack(spacing: 18) {
@@ -1214,12 +1463,20 @@ private struct NativeSettingsView: View {
                 .disabled(!canEditAccount || model.isDemo || newPassword.isEmpty || newPassword != confirmationPassword || (baseline?.hasPassword == true && currentPassword.isEmpty))
             Text("Other devices may need to sign in again after you change your password.").font(.footnote).foregroundStyle(Theme.muted)
         }.disabled(!canEditAccount)
+        Section("Other devices") {
+            Button("Quick Connect") { linked = .quickConnect }.accessibilityIdentifier("settings-quick-connect")
+            Text("Sign in a phone, tablet or computer with a six-digit code.").font(.footnote).foregroundStyle(Theme.muted)
+        }
         accountStatus
     }
-    private var displayFields: some View {
+    @ViewBuilder private var displayFields: some View {
         Section("On this device") {
-            SettingsPicker("Poster size", selection: $draft.posterScale) {
-                Text("Compact").tag(0.85); Text("Comfortable").tag(1.0); Text("Large").tag(1.2)
+            if model.cardSizeFromServer {
+                LabeledContent("Poster size", value: "Set by your server")
+            } else {
+                SettingsPicker("Poster size", selection: $draft.posterScale) {
+                    Text("Compact").tag(0.85); Text("Comfortable").tag(1.0); Text("Large").tag(1.2)
+                }
             }
             Toggle("Show titles under posters", isOn: $draft.showTitles)
             Toggle("Show watching progress", isOn: $draft.showProgress)
@@ -1238,11 +1495,21 @@ private struct NativeSettingsView: View {
             Toggle("Reduce motion", isOn: $draft.reduceMotion)
             Text("Your device’s accessibility preferences are always respected.").font(.footnote).foregroundStyle(Theme.muted)
         }.disabled(busy)
+        Section("Home") {
+            #if os(tvOS)
+            // Trailer previews play on TVs only.
+            Toggle("Autoplay trailer previews", isOn: Binding(get: { draft.autoplayPreviews != false }, set: { draft.autoplayPreviews = $0 }))
+            Text("Rest on a movie or show in a Home row to watch its trailer, muted. Play/Pause still plays a preview when this is off.")
+                .font(.footnote).foregroundStyle(Theme.muted)
+            #endif
+            Toggle("Show unread badge", isOn: $draft.showUnreadBadge)
+            Button("Your teams") { linked = .teams }.accessibilityIdentifier("settings-teams")
+        }.disabled(busy)
     }
     @ViewBuilder private var playbackFields: some View {
         Section("On this device") {
             SettingsPicker("Streaming quality", selection: $draft.bitrate) {
-                ForEach([2,4,8,12,20,40], id: \.self) { Text("\($0) Mbps").tag($0 * 1_000_000) }
+                ForEach([2,4,8,12,20,40,60,80,120], id: \.self) { Text("\($0) Mbps").tag($0 * 1_000_000) }
             }
             SettingsPicker("Default speed", selection: $draft.playbackSpeed) {
                 ForEach([0.5,0.75,1,1.25,1.5,2], id: \.self) { Text("\($0.formatted())×").tag($0) }
@@ -1255,6 +1522,8 @@ private struct NativeSettingsView: View {
             Toggle("Remember audio selections", isOn: bool("RememberAudioSelections", fallback: true))
             Toggle("Play the next episode automatically", isOn: bool("EnableNextEpisodeAutoPlay"))
         }.disabled(!canEditAccount)
+        // Controls fold into Playback on TVs and phones.
+        Section("In the player") { playerControls }.disabled(busy)
         accountStatus
     }
     @ViewBuilder private var subtitleFields: some View {
@@ -1299,6 +1568,16 @@ private struct NativeSettingsView: View {
     }
     private var controlFields: some View {
         Section("On this device") {
+            playerControls
+            // Only offered while this server collects them.
+            if model.features.playbackReports { playbackReportsToggle }
+        }.disabled(busy)
+    }
+    @ViewBuilder private var playbackReportsToggle: some View {
+        Toggle("Send playback problem reports to this server", isOn: Binding(get: { draft.sendPlaybackReports != false }, set: { draft.sendPlaybackReports = $0 }))
+        Text("When a title won't start or keeps buffering, the app tells your server owner the title, app version and what went wrong. Nothing leaves your server.").font(.footnote).foregroundStyle(Theme.muted)
+    }
+    @ViewBuilder private var playerControls: some View {
             SettingsPicker("Skip backward", selection: $draft.skipBack) {
                 ForEach([5,10,15,30,60], id: \.self) { Text("\($0) seconds").tag($0) }
             }
@@ -1311,10 +1590,25 @@ private struct NativeSettingsView: View {
             #endif
             Toggle("Pause when leaving the app", isOn: $draft.pauseInBackground)
             Text("Active Picture in Picture playback continues when you leave the app.").font(.footnote).foregroundStyle(Theme.muted)
-        }.disabled(busy)
+            Toggle("Show chapters", isOn: Binding(get: { draft.showChapters == true }, set: { draft.showChapters = $0 }))
+            Text("Chapter names and pictures in the player can give the story away. Off by default.").font(.footnote).foregroundStyle(Theme.muted)
+    }
+    /// Help, privacy, problem reports, storage and version on one page.
+    @ViewBuilder private var helpFields: some View {
+        Section("Help") {
+            if model.features.support { Button("Message your server owner") { linked = .support } }
+            Button("App Support") { linked = .appSupport }
+            Button("Privacy Policy") { linked = .privacy }
+            Button("Rate Zorofin") {
+                openURL(AppRating.url) { opened in
+                    if !opened { error = "The App Store could not open. Please try again later." }
+                }
+            }
+        }
+        if model.features.playbackReports { Section("Problem reports") { playbackReportsToggle }.disabled(busy) }
+        storageFields
     }
     @ViewBuilder private var notificationFields: some View {
-        Section("In the app") { Toggle("Show unread badge", isOn: $draft.showUnreadBadge).disabled(busy) }
         if let alerts = alertSettings {
             Section("Email alerts") {
                 if alerts.email.enabled { LabeledContent("Current address", value: alerts.email.maskedAddress) }
@@ -1346,7 +1640,7 @@ private struct NativeSettingsView: View {
             }
         } else if loadingAccount { ProgressView("Loading notification settings…") }
         else if !model.features.notificationSettings || model.isDemo {
-            Text("This server does not provide email or push alert settings. The unread badge applies to the app’s inbox.")
+            Text("This server does not provide email or push alert settings.")
                 .foregroundStyle(Theme.muted)
         }
     }
@@ -1412,11 +1706,12 @@ private struct NativeSettingsView: View {
     private func load() async {
         if !model.preferencesReady { await model.waitForSettings() }
         guard !Task.isCancelled else { return }
-        draft = model.preferences; ready = true; error = model.settingsError
+        draft = savedPreferences
+        ready = true; error = model.settingsError
         languages = [.init(id: "eng", name: "English"),.init(id: "spa", name: "Spanish"),.init(id: "fra", name: "French"),
             .init(id: "ara", name: "Arabic"),.init(id: "urd", name: "Urdu"),.init(id: "hin", name: "Hindi")]
         await reloadServer()
-        if page == .storage { cacheBytes = await model.client?.responseCache?.diskUsage() ?? 0 }
+        if page == .storage || page == .help { cacheBytes = await model.client?.responseCache?.diskUsage() ?? 0 }
     }
     private func reloadServer(force: Bool = false) async {
         guard page.usesAccount || page == .notifications else { return }
@@ -1444,9 +1739,21 @@ private struct NativeSettingsView: View {
             self.error = error.localizedDescription
         }
     }
-    private func save() async {
-        busy = true; error = nil; status = nil
-        defer { busy = false }
+    private func scheduleAutosave() {
+        guard ready, canSave else { return }
+        autosave?.cancel()
+        autosave = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, canSave else { return }
+            autosave = nil
+            await save(quietly: true)
+        }
+    }
+    /// `quietly` saves without disabling the form (focus stays put) or a status line.
+    private func save(quietly: Bool = false) async {
+        if !quietly { busy = true; status = nil }
+        error = nil
+        defer { if !quietly { busy = false } }
         let generation = model.generation
         do {
             if !changes.isEmpty, let baseline {
@@ -1462,7 +1769,7 @@ private struct NativeSettingsView: View {
             }
             try await model.savePreferences(draft)
             guard !Task.isCancelled, generation == model.generation else { return }
-            status = "Settings saved."
+            if !quietly { status = "Settings saved." }
         } catch {
             guard !Task.isCancelled, generation == model.generation else { return }
             self.error = error.localizedDescription

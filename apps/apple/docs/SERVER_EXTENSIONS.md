@@ -44,8 +44,12 @@ or hostname allowlists, and nothing contacts a different server.
 }
 ```
 
-Only explicitly enabled feature version 1 is supported. Missing/disabled and
-unknown-version features stay unavailable. The manifest contains no deployment
+Only explicitly enabled, implemented feature versions are supported. Requests
+and app Home rows accept versions 1 and 2 through their own route adapters;
+other features retain their existing version-1 checks. `homeSections` version 1
+is the companion web feed and never selects app Home rows. Missing/disabled and
+unknown-version features stay unavailable. See the shared
+app Home-row contract. The manifest contains no deployment
 addresses, account identity, signup links, endpoint overrides or executable code.
 Advertisement is not authorization: individual routes enforce their permissions;
 administration links additionally need a fresh current-viewer administrator policy.
@@ -53,8 +57,8 @@ administration links additionally need a fresh current-viewer administrator poli
 The support adapter requires a valid, enabled Jellyfin viewer and trusted browser
 origin (native requests have no Origin). Responses are private/no-store. It
 advertises the integrations in that installation; other implementations should
-advertise only their available modules. Inconclusive checks retry every 30 seconds
-in the foreground and on app activation. Transient failures retain already known
+advertise only their available modules. Capabilities refresh every 30 seconds in the foreground and on app activation,
+including after a conclusive check, so module/version changes reach Home. Transient failures retain already known
 features for that session; denial or invalid responses clear them.
 
 Extension calls carry the viewer's `X-Jellyfin-Token` and standard Jellyfin

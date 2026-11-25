@@ -59,8 +59,10 @@ private func client(_ transport: any HTTPTransport) -> JellyfinClient {
         #expect(query.count == 2)
         #expect(query.first?.name == "quality")
     }
-    @Test func pathsCannotInjectSegments() {
+    @Test func pathsCannotInjectSegments() throws {
         #expect(throws: ClientError.unsafeURL) { try server.endpoint(["Items", "../Users"]) }
+        #expect(throws: ClientError.unsafeURL) { try server.endpoint(["Items", ".."]) }
+        #expect(try server.endpoint(["Zorofin", "Web", "ui", "looks.json"]).path.hasSuffix("/Zorofin/Web/ui/looks.json"))
     }
 }
 
@@ -149,6 +151,99 @@ private func client(_ transport: any HTTPTransport) -> JellyfinClient {
         #expect(plan.url.path == "/jellyfin/Videos/movie/stream")
         #expect(plan.url.query?.contains("ApiKey=fixture-token") == true)
     }
+    private func hlsPlan(_ query: String, subtitle: Int = -1) throws -> PlaybackPlan {
+        let info = try info(#"{"Id":"source","SupportsTranscoding":true,"TranscodingSubProtocol":"hls","TranscodingUrl":"/jellyfin/Videos/movie/master.m3u8?\#(query)"}"#)
+        return try PlaybackPlan.make(info: info, itemID: "movie", client: client(StubTransport([])),
+                                     options: .init(subtitleIndex: subtitle))
+    }
+    @Test func remuxIsNotLabelledAsTranscoding() throws {
+        #expect(try hlsPlan("TranscodeReasons=ContainerNotSupported").deliveryDescription == "Remux (original video)")
+        #expect(try hlsPlan("TranscodeReasons=ContainerNotSupported,AudioCodecNotSupported").copiesVideo)
+        // Text subtitles in the manifest still copy the video; burned-in ones do not.
+        #expect(try hlsPlan("TranscodeReasons=ContainerNotSupported,SubtitleCodecNotSupported&SubtitleMethod=Hls", subtitle: 3).copiesVideo)
+        #expect(try !hlsPlan("TranscodeReasons=ContainerNotSupported,SubtitleCodecNotSupported&SubtitleMethod=Encode", subtitle: 3).copiesVideo)
+        #expect(try !hlsPlan("TranscodeReasons=ContainerNotSupported,SubtitleCodecNotSupported", subtitle: 3).copiesVideo)
+        #expect(try hlsPlan("TranscodeReasons=VideoCodecNotSupported").deliveryDescription == "Transcoding")
+        #expect(try !hlsPlan("TranscodeReasons=ContainerNotSupported,ContainerBitrateExceedsLimit").copiesVideo)
+        #expect(try !hlsPlan("PlaySessionId=x").copiesVideo)
+    }
+    @Test func manifestSubtitleSwitchKeepsThePlaySession() throws {
+        let plan = try hlsPlan("TranscodeReasons=ContainerNotSupported&SubtitleMethod=Hls", subtitle: 3)
+        let off = plan.selectingSubtitle(-1)
+        #expect(off.options.subtitleIndex == -1 && off.sessionID == plan.sessionID && off.url == plan.url)
+        #expect(off.report(positionTicks: 1, paused: false, canSeek: true)["SubtitleStreamIndex"] == .int(-1))
+    }
+    @Test func manifestSubtitleMatchUsesUniqueTextTracks() throws {
+        let streams = try Wire.decoder().decode([MediaStream].self, from: Data(#"""
+        [{"Index":2,"Type":"Subtitle","Codec":"subrip","DisplayTitle":"English - SUBRIP - External"},
+         {"Index":3,"Type":"Subtitle","Codec":"subrip","DisplayTitle":"English - SUBRIP"},
+         {"Index":4,"Type":"Subtitle","Codec":"PGSSUB","DisplayTitle":"English - PGSSUB"},
+         {"Index":5,"Type":"Subtitle","Codec":"ass","DisplayTitle":"Signs"},
+         {"Index":6,"Type":"Subtitle","Codec":"ass","DisplayTitle":"Signs"}]
+        """#.utf8))
+        let names = ["English - SUBRIP - External", "English - SUBRIP", "Signs", "Signs"]
+        #expect(ManifestSubtitleMatch.choice(for: -1, streams: streams, optionNames: names) == .off)
+        #expect(ManifestSubtitleMatch.choice(for: 3, streams: streams, optionNames: names) == .option(1))
+        #expect(ManifestSubtitleMatch.choice(for: 2, streams: streams, optionNames: names) == .option(0))
+        // Image subtitles need a burn-in stream; ambiguous names renegotiate.
+        #expect(ManifestSubtitleMatch.choice(for: 4, streams: streams, optionNames: names + ["English - PGSSUB"]) == nil)
+        #expect(ManifestSubtitleMatch.choice(for: 5, streams: streams, optionNames: names) == nil)
+        #expect(ManifestSubtitleMatch.choice(for: 9, streams: streams, optionNames: names) == nil)
+    }
+    @Test func remuxNegotiationPreservesSelectedSourceAndHLSDownload() async throws {
+        // A remux-enabled, video-transcoding-disabled viewer can receive HLS
+        // with SupportsDirectStream=false after successful profile selection.
+        let response = #"""
+        {"PlaySessionId":"play","MediaSources":[{"Id":"chosen-source","Container":"mkv","SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingSubProtocol":"hls","TranscodingUrl":"/jellyfin/Videos/movie/master.m3u8?api_key=old&TranscodeReasons=ContainerNotSupported"}]}
+        """#
+        let transport = StubTransport([(200, response)])
+        let current = client(transport)
+        let options = PlaybackOptions(bitrate: 8_000_000)
+        let info = try await current.playbackInfo(itemID: "movie", options: options, sourceID: "chosen-source")
+        let requests = await transport.requests
+        #expect(requests.count == 1)
+        let request = try #require(requests.first)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/jellyfin/Items/movie/PlaybackInfo")
+        #expect(request.value(forHTTPHeaderField: "Authorization")?.contains("fixture-token") == true)
+        #expect(request.url?.absoluteString.contains("fixture-token") == false)
+        let data = try #require(request.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(body["MediaSourceId"] as? String == "chosen-source")
+        #expect(body["EnableDirectStream"] as? Bool == true)
+        #expect(body["EnableDirectPlay"] as? Bool == true)
+        #expect(body["AllowVideoStreamCopy"] as? Bool == true)
+        #expect(body["MaxStreamingBitrate"] as? Int == 8_000_000)
+        let profile = try #require(body["DeviceProfile"] as? [String: Any])
+        let conversions = try #require(profile["TranscodingProfiles"] as? [[String: Any]])
+        #expect(!conversions.isEmpty && conversions.allSatisfy { $0["Protocol"] as? String == "hls" })
+        #expect(info.mediaSources?.first?.supportsDirectStream == false)
+        let plan = try PlaybackPlan.make(info: info, itemID: "movie", client: current, options: options)
+        let download = try DownloadPlan.make(info: info, itemID: "movie", client: current, options: options)
+        #expect(plan.sourceID == "chosen-source" && plan.method == "Transcode")
+        #expect(plan.url.path == "/jellyfin/Videos/movie/master.m3u8")
+        #expect(download.method == .stream && download.url == plan.url)
+        let query = URLComponents(url: plan.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(query.contains(.init(name: "ApiKey", value: "fixture-token")))
+        #expect(!query.contains { $0.name == "api_key" })
+    }
+    @Test func acceptsTheServerHLSPlanForARemuxOnlyViewer() throws {
+        let info = try info(#"{"Id":"source","SupportsTranscoding":false,"SupportsDirectStream":true,"TranscodingUrl":"/jellyfin/Videos/movie/master.m3u8?TranscodeReasons=ContainerNotSupported"}"#)
+        let plan = try PlaybackPlan.make(info: info, itemID: "movie", client: client(StubTransport([])), options: .init())
+        #expect(plan.url.path.hasSuffix("/master.m3u8"))
+        #expect(plan.copiesVideo)
+    }
+    @Test(arguments: [true, false])
+    func remuxPermissionDoesNotMakeHTTPConversionPlayableOrDownloadable(_ supportsTranscoding: Bool) throws {
+        let info = try info(#"{"Id":"source","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":\#(supportsTranscoding),"TranscodingSubProtocol":"http","TranscodingUrl":"/jellyfin/Videos/movie/stream?TranscodeReasons=ContainerNotSupported"}"#)
+        let current = client(StubTransport([]))
+        #expect(throws: ClientError.unsupportedPlayback) {
+            try PlaybackPlan.make(info: info, itemID: "movie", client: current, options: .init())
+        }
+        #expect(throws: ClientError.unsupportedPlayback) {
+            try DownloadPlan.make(info: info, itemID: "movie", client: current, options: .init())
+        }
+    }
     @Test func discoversSourceBeforeNegotiatingTrackSelection() async throws {
         let transport = StubTransport([
             (200, "{\"PlaySessionId\":\"discovery\",\"MediaSources\":[{\"Id\":\"different-source\"}]}"),
@@ -172,6 +267,8 @@ private func client(_ transport: any HTTPTransport) -> JellyfinClient {
         #expect(body["MediaSourceId"] as? String == "chosen-version")
         #expect(body["AudioStreamIndex"] as? Int == 2)
         #expect(body["SubtitleStreamIndex"] as? Int == 3)
+        #expect(body["EnableDirectStream"] as? Bool == true)
+        #expect(body["EnableDirectPlay"] as? Bool == false)
     }
     @Test func liveChannelIgnoresPlaceholderDetailSource() async throws {
         let channel = try Wire.decoder().decode(MediaItem.self, from: Data(#"{"Id":"channel","Name":"Live channel","Type":"TvChannel","MediaSources":[{"Id":"placeholder-file-source","Protocol":"File"}]}"#.utf8))
@@ -185,6 +282,7 @@ private func client(_ transport: any HTTPTransport) -> JellyfinClient {
         let body = try #require(JSONSerialization.jsonObject(with: requests[1].httpBody!) as? [String: Any])
         #expect(body["MediaSourceId"] as? String == "current-tuner-source")
         #expect(body["AutoOpenLiveStream"] as? Bool == false)
+        #expect(body["EnableDirectStream"] as? Bool == true)
     }
     @Test func movieDetailKeepsItsChosenVersion() async throws {
         let movie = try Wire.decoder().decode(MediaItem.self, from: Data(#"{"Id":"movie","Name":"Movie","Type":"Movie","MediaSources":[{"Id":"chosen-version"}]}"#.utf8))
@@ -293,6 +391,36 @@ private func client(_ transport: any HTTPTransport) -> JellyfinClient {
         #expect(PlayerPreparation.timeout(method: "Transcode", isLive: true, startSeconds: 10) == .seconds(30))
         #expect(PlayerPreparation.timeout(method: "DirectPlay", isLive: false, startSeconds: 1553) == .seconds(30))
         #expect(PlayerPreparation.timeout(method: "Transcode", isLive: false, startSeconds: .nan) == .seconds(30))
+    }
+    @Test func transientStopRetriesKeepTheFinalPositionAndAccount() async throws {
+        let transport = StubTransport([(503, ""), (502, ""), (204, "")])
+        try await client(transport).reportPlayback("stop", payload: ["ItemId": .string("episode"), "PositionTicks": .int(3600000000)])
+        let requests = await transport.requests
+        #expect(requests.count == 3)
+        #expect(Set(requests.compactMap(\.httpBody)).count == 1)
+        #expect(requests.allSatisfy { $0.url?.absoluteString == "https://media.example/jellyfin/Sessions/Playing/Stopped" })
+        #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization")?.contains("fixture-token") == true })
+    }
+    @Test func exhaustedStopRetriesRemainAFailure() async {
+        let transport = StubTransport([(503, ""), (503, ""), (503, "")])
+        await #expect(throws: ClientError.unavailable(503)) {
+            try await client(transport).reportPlayback("stop", payload: [:])
+        }
+        #expect(await transport.requests.count == 3)
+    }
+    @Test(arguments: [401, 403, 400, 500]) func stopDoesNotRetryPermanentFailures(_ status: Int) async {
+        let transport = StubTransport([(status, "")])
+        await #expect(throws: (any Error).self) {
+            try await client(transport).reportPlayback("stop", payload: [:])
+        }
+        #expect(await transport.requests.count == 1)
+    }
+    @Test func progressDoesNotRetryServerFailure() async {
+        let transport = StubTransport([(503, "")])
+        await #expect(throws: ClientError.unavailable(503)) {
+            try await client(transport).reportPlayback("progress", payload: [:])
+        }
+        #expect(await transport.requests.count == 1)
     }
     @Test func timeConversionRejectsNonFiniteValues() {
         #expect(MediaTime.ticks(seconds: .nan) == 0)

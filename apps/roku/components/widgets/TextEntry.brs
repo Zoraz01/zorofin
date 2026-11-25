@@ -4,6 +4,9 @@ sub init()
     m.top.findNode("titleLabel").font = ZFont(44, "bold")
     m.top.findNode("messageLabel").font = ZFont(26)
     m.keyboard.textEditBox.maxTextLength = 256
+    setDomain("generic")
+    width = m.keyboard.boundingRect().width
+    if width > 0 then m.keyboard.translation = [Int((1920 - width) / 2), 300]
     m.actions.observeField("selected", "onAction")
     onDoneText()
 end sub
@@ -20,6 +23,17 @@ end sub
 
 sub onSecure()
     m.keyboard.textEditBox.secureMode = m.top.secure
+    if m.top.secure then setDomain("password") else setDomain("generic")
+end sub
+
+' DynamicKeyboard calls it "domain" (Roku OS 15.3 has no keyboardDomain);
+' the password domain turns off voice entry echo and suggestions.
+sub setDomain(value as string)
+    if m.keyboard.hasField("domain") then
+        m.keyboard.domain = value
+    else if m.keyboard.hasField("keyboardDomain") then
+        m.keyboard.keyboardDomain = value
+    end if
 end sub
 
 sub onDoneText()

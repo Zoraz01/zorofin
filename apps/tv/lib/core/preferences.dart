@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'player_extras.dart';
+import 'server_looks.dart';
+
 /// Text subtitle styling (Apple `SubtitleAppearance`). Null in
 /// [DevicePreferences] means the system caption appearance.
 @immutable
@@ -77,7 +80,7 @@ class DevicePreferences {
     this.posterScale = 1.0,
     this.showTitles = true,
     this.showProgress = true,
-    this.showRatings = false,
+    this.showRatings = true,
     this.showQualityBadges = true,
     this.hideAvailableRequests = false,
     this.reduceMotion = false,
@@ -86,10 +89,13 @@ class DevicePreferences {
     this.playbackSpeed = 1.0,
     this.showUnreadBadge = true,
     this.pauseInBackground = true,
+    this.autoplayPreviews = true,
+    this.showChapters = false,
+    this.sendPlaybackReports = true,
     this.subtitleAppearance,
   });
 
-  static const bitrates = [2, 4, 8, 12, 20, 40];
+  static const bitrates = [2, 4, 8, 12, 20, 40, 60, 80, 120];
   static const posterScales = [0.85, 1.0, 1.2];
   static const skipIntervals = [5, 10, 15, 30, 60];
   static const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
@@ -109,6 +115,17 @@ class DevicePreferences {
 
   /// Pauses playback when the TV switches to another app or input.
   final bool pauseInBackground;
+
+  /// TV Home: rest on a movie or show to play its trailer muted.
+  final bool autoplayPreviews;
+
+  /// Chapter names, marks and pictures in the player. Off unless the viewer
+  /// turns them on: they can give the story away.
+  final bool showChapters;
+
+  /// Tell this server when a title won't start, stalls or needs a fallback.
+  /// Only sent while the server collects them; off here always wins.
+  final bool sendPlaybackReports;
   final SubtitleAppearance? subtitleAppearance;
 
   /// Maximum streaming bitrate in bits per second.
@@ -136,6 +153,9 @@ class DevicePreferences {
     double? playbackSpeed,
     bool? showUnreadBadge,
     bool? pauseInBackground,
+    bool? autoplayPreviews,
+    bool? showChapters,
+    bool? sendPlaybackReports,
     SubtitleAppearance? Function()? subtitleAppearance,
   }) => DevicePreferences(
     bitrateMbps: bitrateMbps ?? this.bitrateMbps,
@@ -151,6 +171,9 @@ class DevicePreferences {
     playbackSpeed: playbackSpeed ?? this.playbackSpeed,
     showUnreadBadge: showUnreadBadge ?? this.showUnreadBadge,
     pauseInBackground: pauseInBackground ?? this.pauseInBackground,
+    autoplayPreviews: autoplayPreviews ?? this.autoplayPreviews,
+    showChapters: showChapters ?? this.showChapters,
+    sendPlaybackReports: sendPlaybackReports ?? this.sendPlaybackReports,
     subtitleAppearance: subtitleAppearance == null
         ? this.subtitleAppearance
         : subtitleAppearance(),
@@ -167,7 +190,7 @@ class DevicePreferences {
       posterScale: number('posterScale', 1),
       showTitles: read('showTitles', true),
       showProgress: read('showProgress', true),
-      showRatings: read('showRatings', false),
+      showRatings: read('showRatings', true),
       showQualityBadges: read('showQualityBadges', true),
       hideAvailableRequests: read('hideAvailableRequests', false),
       reduceMotion: read('reduceMotion', false),
@@ -176,6 +199,9 @@ class DevicePreferences {
       playbackSpeed: number('playbackSpeed', 1),
       showUnreadBadge: read('showUnreadBadge', true),
       pauseInBackground: read('pauseInBackground', true),
+      autoplayPreviews: read('autoplayPreviews', true),
+      showChapters: read('showChapters', false),
+      sendPlaybackReports: read('sendPlaybackReports', true),
       subtitleAppearance: SubtitleAppearance.fromJson(
         json['subtitleAppearance'],
       ),
@@ -197,6 +223,9 @@ class DevicePreferences {
     'playbackSpeed': playbackSpeed,
     'showUnreadBadge': showUnreadBadge,
     'pauseInBackground': pauseInBackground,
+    'autoplayPreviews': autoplayPreviews,
+    'showChapters': showChapters,
+    'sendPlaybackReports': sendPlaybackReports,
     'subtitleAppearance': ?subtitleAppearance?.toJson(),
   };
 
@@ -215,12 +244,29 @@ class Preferences extends ChangeNotifier {
   Preferences(this._prefs);
 
   static const _prefix = 'zorofin.prefs.v2.';
+  static const _looksPrefix = 'zorofin.looks.v1.';
 
   final SharedPreferences _prefs;
   String _scope = 'preview';
   DevicePreferences _value = const DevicePreferences();
+  bool _saved = false;
+  ServerLooks? _looks;
 
-  DevicePreferences get value => _value;
+  /// The viewer's preferences with the server's looks applied: its card size
+  /// wins when the server sets the same look for every viewer, and is the
+  /// starting point until the viewer saves their own otherwise.
+  DevicePreferences get value {
+    final looks = _looks;
+    if (looks == null || (!looks.enforced && _saved)) return _value;
+    return _value.copyWith(posterScale: looks.posterScale);
+  }
+
+  /// The server's looks for this account, when it has them.
+  ServerLooks? get looks => _looks;
+
+  /// True while the server picks the card size (Display shows "Set by your
+  /// server" instead of the picker).
+  bool get cardSizeFromServer => _looks?.enforced == true;
 
   int get bitrate => _value.bitrate;
   int get skipBack => _value.skipBack;
@@ -241,7 +287,35 @@ class Preferences extends ChangeNotifier {
       } catch (_) {}
     }
     _value = loaded;
+    _saved = text != null;
+    _looks = _cachedLooks(scope);
+    serverAccent.value = _looks?.accent;
     notifyListeners();
+  }
+
+  ServerLooks? _cachedLooks(String scope) {
+    final text = _prefs.getString('$_looksPrefix$scope');
+    if (text == null) return null;
+    try {
+      return ServerLooks.fromJson(jsonDecode(text));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Applies the server's looks (null: the server has none) and keeps them
+  /// for the next start, so the first frame already matches.
+  Future<void> useLooks(String scope, ServerLooks? looks) async {
+    if (scope != _scope) return;
+    final changed = looks != _looks;
+    _looks = looks;
+    serverAccent.value = looks?.accent;
+    if (looks == null) {
+      await _prefs.remove('$_looksPrefix$scope');
+    } else {
+      await _prefs.setString('$_looksPrefix$scope', jsonEncode(looks.toJson()));
+    }
+    if (changed) notifyListeners();
   }
 
   Future<void> save(DevicePreferences value) async {
@@ -253,17 +327,45 @@ class Preferences extends ChangeNotifier {
       throw StateError('Preferences were not saved');
     }
     _value = value;
+    _saved = true;
     notifyListeners();
   }
 
   Future<void> reset() async {
     await _prefs.remove('$_prefix$_scope');
     _value = const DevicePreferences();
+    _saved = false;
     notifyListeners();
   }
 
+  static const _tracksPrefix = 'zorofin.tracks.v1.';
+
+  /// Track languages and timing last chosen for a show or movie
+  /// ([TrackMemory.keyFor]), for this account on this device.
+  TrackMemory? trackMemory(String key) {
+    final text = _prefs.getString('$_tracksPrefix$_scope.$key');
+    if (text == null) return null;
+    try {
+      return TrackMemory.fromJson(jsonDecode(text) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> rememberTracks(String key, TrackMemory memory) async {
+    final json = memory.toJson();
+    if (json.isEmpty) {
+      await _prefs.remove('$_tracksPrefix$_scope.$key');
+    } else {
+      await _prefs.setString('$_tracksPrefix$_scope.$key', jsonEncode(json));
+    }
+  }
+
   /// Removes saved preferences for an account that was forgotten.
-  Future<void> forget(String scope) => _prefs.remove('$_prefix$scope');
+  Future<void> forget(String scope) async {
+    await _prefs.remove('$_prefix$scope');
+    await _prefs.remove('$_looksPrefix$scope');
+  }
 
   static Preferences of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PreferencesScope>()!.notifier!;

@@ -24,7 +24,7 @@ sub init()
     m.qcTimer.observeField("fire", "pollQuickConnect")
 
     m.serverActions.buttons = [{ id: "connect", text: "Continue", primary: true }]
-    m.signInActions.buttons = [{ id: "signin", text: "Sign in", primary: true }, { id: "change", text: "Change server" }]
+    m.signInActions.buttons = [{ id: "signin", text: "Sign in", primary: true }, { id: "rokuEmail", text: "Use Roku email" }, { id: "change", text: "Change server" }]
     m.serverField.observeField("selected", "editServer")
     m.userField.observeField("selected", "editUser")
     m.passField.observeField("selected", "editPassword")
@@ -219,11 +219,44 @@ sub onSignInAction(event as object)
         m.top.findNode("subtitle").translation = [360, 280]
         return
     end if
+    if event.getData() = "rokuEmail" then
+        requestRokuEmail()
+        return
+    end if
     if m.userField.value = "" then
         editUser()
         return
     end if
     signIn()
+end sub
+
+' Roku's Request for Information: the viewer can share the email on their
+' Roku account as the username, for servers that sign in by email. Nothing
+' is shared without the viewer's choice in Roku's own dialog.
+sub requestRokuEmail()
+    info = CreateObject("roSGNode", "ContentNode")
+    info.addFields({ context: "signin" })
+    store = CreateObject("roSGNode", "ChannelStore")
+    store.requestedUserData = "email"
+    store.requestedUserDataInfo = info
+    store.observeField("userData", "onRokuEmail")
+    m.store = store
+    store.command = "getUserData"
+end sub
+
+sub onRokuEmail()
+    data = invalid
+    if m.store <> invalid then data = m.store.userData
+    m.store = invalid
+    email = ""
+    if data <> invalid then email = ZStr(data.email).trim()
+    if email <> "" then
+        m.userField.value = email
+        m.passField.value = ""
+        editPassword()
+    else
+        restoreFocus()
+    end if
 end sub
 
 sub signIn()

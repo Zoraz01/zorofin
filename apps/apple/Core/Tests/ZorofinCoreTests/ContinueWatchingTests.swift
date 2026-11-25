@@ -53,8 +53,36 @@ private actor ContinueWatchingTransport: HTTPTransport {
         let movie = MediaItem(id: "movie", name: "Movie", userData: .init(playbackPositionTicks: 100))
         let feed = ContinueWatchingFeed(resume: [unfinished, movie], nextUp: [activityEpisode("first"),
             activityEpisode("second"), activityEpisode("other", series: "other-show")])
-        #expect(feed.items.map(\.id) == ["first", "movie", "other"])
+        #expect(feed.items.map(\.id) == ["first", "other", "movie"])
         #expect(feed.items[0].resumeTicks == 120_000_000)
+    }
+    @Test func seasonPremiereLeadsOlderResumesInServerOrder() {
+        var premiere = activityEpisode("s4e1", series: "recent-show")
+        premiere.parentIndexNumber = 4; premiere.indexNumber = 1
+        let older = (0..<20).map { MediaItem(id: "old-\($0)", name: "Older title \($0)",
+            userData: .init(playbackPositionTicks: 100)) }
+        let next = [premiere, activityEpisode("other", series: "other-show")]
+        let feed = ContinueWatchingFeed(resume: older, nextUp: next)
+        #expect(feed.items.map(\.id) == ["s4e1", "other"] + older.map(\.id))
+        #expect(feed.items[0].parentIndexNumber == 4 && feed.items[0].indexNumber == 1)
+        #expect(feed.items[0].resumeTicks == 0)
+        #expect(ContinueWatchingFeed(resume: older, nextUp: next, limit: 1).items == [premiere])
+    }
+    @Test func resumeSubstitutionPreservesServerRankAndExactEpisodePosition() {
+        let older = activityEpisode("older", series: "older-show", position: 10)
+        let resumed = activityEpisode("resumed", series: "current-show", position: 120_000_000)
+        let feed = ContinueWatchingFeed(resume: [older, resumed], nextUp: [
+            activityEpisode("premiere", series: "recent-show"),
+            activityEpisode("resumed", series: "current-show"),
+            activityEpisode("following", series: "current-show"), older])
+        #expect(feed.items.map(\.id) == ["premiere", "resumed", "older"])
+        #expect(feed.items[1].resumeTicks == 120_000_000)
+    }
+    @Test func malformedResumeCannotHideAValidNextEpisode() {
+        var malformed = activityEpisode("broken", position: 100)
+        malformed.name = ""
+        let next = activityEpisode("next")
+        #expect(ContinueWatchingFeed(resume: [malformed], nextUp: [next]).items == [next])
     }
     @Test func missingSeriesMetadataDoesNotCollapseUnrelatedEpisodes() {
         let feed = ContinueWatchingFeed(resume: [], nextUp: [activityEpisode("one", series: nil),

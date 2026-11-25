@@ -2,8 +2,20 @@
 ' time for the rows on screen (Apple guideChannels / guidePrograms).
 
 sub init()
+    m.top.findNode("previewLine").color = ZAccent()
     m.offset = ZGuideLocalOffset()
     m.controls = m.top.findNode("controls")
+    m.modes = m.top.findNode("modes")
+    m.browse = m.top.findNode("browse")
+    m.browseStatus = m.top.findNode("browseStatus")
+    m.browseStatus.font = ZFont(24)
+    m.sports = m.top.findNode("sports")
+    m.onNow = m.top.findNode("onNow")
+    m.showGuide = false
+    m.loadedBrowseAt = 0
+    m.modes.observeField("selected", "onMode")
+    m.sports.observeField("itemSelected", "onBrowseSelected")
+    m.onNow.observeField("itemSelected", "onBrowseSelected")
     m.grid = m.top.findNode("grid")
     m.status = m.top.findNode("status")
     m.strip = m.top.findNode("strip")
@@ -38,10 +50,96 @@ sub init()
     m.streamsTimer = m.top.findNode("streamsTimer")
     m.streamsTimer.observeField("fire", "loadStreams")
     m.top.observeField("visible", "onVisible")
-    buildControls()
-    layout()
-    load()
+    showMode(false)
     onVisible()
+end sub
+
+sub onMode(event as object)
+    showMode(event.getData() = "guide")
+end sub
+
+sub showMode(guide as boolean)
+    hadFocus = m.top.isInFocusChain()
+    m.showGuide = guide
+    programStyle = "primary"
+    guideStyle = "secondary"
+    if guide then
+        programStyle = "secondary"
+        guideStyle = "primary"
+    end if
+    m.modes.buttons = [
+        { id: "programs", text: "Programs", style: programStyle },
+        { id: "guide", text: "Guide", style: guideStyle }
+    ]
+    m.controls.visible = guide
+    m.browse.visible = not guide
+    m.status.visible = guide
+    if guide then
+        buildControls()
+        applyFilter()
+        if m.all.count() = 0 then load()
+        m.modes.callFunc("focusButton", "guide")
+    else
+        m.grid.visible = false
+        m.preview.visible = false
+        loadBrowse()
+        m.modes.callFunc("focusButton", "programs")
+    end if
+    if hadFocus then m.modes.setFocus(true)
+    layout()
+end sub
+
+sub loadBrowse()
+    if m.browseTask <> invalid or m.showGuide or not m.top.visible then return
+    if m.loadedBrowseAt > 0 and ZNowSeconds() - m.loadedBrowseAt < 60 then return
+    if not m.sports.visible and not m.onNow.visible then m.browseStatus.text = "Loading live programs…"
+    task = CreateObject("roSGNode", "JellyfinTask")
+    task.request = { cmd: "liveNow", programs: true, sports: ZNum(m.global.features.sportsEvents, 0) = 1 }
+    task.observeField("response", "onBrowse")
+    m.browseTask = task
+    m.loadedBrowseAt = ZNowSeconds()
+    task.control = "RUN"
+end sub
+
+sub onBrowse(event as object)
+    result = event.getData()
+    rows = m.browseTask.content
+    m.browseTask = invalid
+    if result = invalid or not result.ok or rows = invalid then
+        if result <> invalid and result.error = "unauthorized" then m.top.sessionExpired = true
+        if not m.sports.visible and not m.onNow.visible then m.browseStatus.text = "Live programs unavailable. Open Guide for channels."
+        return
+    end if
+    sports = rows.getChild(0)
+    updateBrowseShelf(m.sports, sports)
+    ' Owner rule (Nov 24): no "On now" row in any app; Live TV browsing shows
+    ' Sports & live events, and the Guide has every channel.
+    updateBrowseShelf(m.onNow, invalid)
+    m.browseStatus.text = ""
+    if not m.sports.visible and not m.onNow.visible then m.browseStatus.text = "No sports or live events right now. Open Guide for channels."
+    layout()
+end sub
+
+sub updateBrowseShelf(shelf as object, row as dynamic)
+    hasCards = row <> invalid and row.getChildCount() > 0
+    if hasCards then
+        index = shelf.focusIndex
+        ' Shelf takes ownership of the row's content node.
+        if row.getParent() <> invalid then row.getParent().removeChild(row)
+        shelf.content = row
+        if index > 0 then shelf.jumpTo = ZMin(index, row.getChildCount() - 1)
+    else if shelf.isInFocusChain() then
+        m.modes.setFocus(true)
+    end if
+    shelf.visible = hasCards
+end sub
+
+sub onBrowseSelected(event as object)
+    item = event.getData()
+    if item = invalid or item.live = invalid then return
+    now = ZNowSeconds()
+    if item.live.start > now or item.live.finish <= now then return
+    m.top.navigate = { to: "player", id: item.id, live: true }
 end sub
 
 ' MARK: Controls
@@ -172,7 +270,7 @@ sub applyFilter()
     m.grid.callFunc("focusChannel", focused)
     buildControls()
     m.controls.callFunc("focusButton", m.controls.focusedId)
-    showsGrid = list.count() > 0
+    showsGrid = m.showGuide and list.count() > 0
     m.grid.visible = showsGrid
     m.preview.visible = showsGrid
     if showsGrid then
@@ -185,13 +283,14 @@ sub applyFilter()
         m.status.text = "No favorite channels yet." + Chr(10) + "Favorite channels from their details to find them here."
     end if
     if not showsGrid and m.grid.isInFocusChain() then m.controls.setFocus(true)
-    if showsGrid and m.top.isInFocusChain() and not m.controls.isInFocusChain() and not m.strip.isInFocusChain() and m.dialog = invalid then m.grid.setFocus(true)
+    if showsGrid and m.top.isInFocusChain() and not m.controls.isInFocusChain() and not m.strip.isInFocusChain() and not m.modes.isInFocusChain() and m.dialog = invalid then m.grid.setFocus(true)
     ensurePrograms()
 end sub
 
 ' Requests listings for channels on screen (and the next few) that have not
 ' been asked for in this window, 40 at a time.
 sub ensurePrograms()
+    if not m.showGuide or not m.top.visible then return
     channels = m.grid.channels
     if channels = invalid or channels.count() = 0 then return
     first = ZMax(0, m.grid.topIndex - 5)
@@ -241,6 +340,10 @@ sub onPrograms(event as object)
 end sub
 
 sub onClock()
+    if not m.showGuide then
+        loadBrowse()
+        return
+    end if
     now = ZNowSeconds()
     ws = m.grid.windowStart
     if m.follows and now >= ws + 1800 then
@@ -414,6 +517,8 @@ sub restoreFocus()
         m.dialog.focusIn = true
     else if m.strip.isInFocusChain() and m.strip.visible then
         return
+    else if not m.showGuide then
+        m.modes.setFocus(true)
     else if m.grid.visible and m.grid.channels <> invalid and m.grid.channels.count() > 0 then
         m.grid.setFocus(true)
     else
@@ -425,7 +530,7 @@ end sub
 
 ' Polls every 15 s while this screen is showing and the server offers it.
 sub onVisible()
-    if m.top.visible and ZNum(m.global.features.liveTvStreams, 0) = 1 then
+    if m.top.visible and ZLtsRoute(m.global.features) <> "" then
         loadStreams()
         m.streamsTimer.control = "start"
     else
@@ -449,8 +554,9 @@ sub onStreams(event as object)
     status = invalid
     if r.ok then status = r.status
     m.streamStatus = status
+    m.strip.focusable = status <> invalid and status.legacy <> true and status.streams.count() > 0
     hadFocus = m.strip.isInFocusChain()
-    if status = invalid or status.streams.count() = 0 then
+    if status = invalid or status.legacy = true then
         m.strip.status = {}
         m.strip.visible = false
     else
@@ -459,14 +565,29 @@ sub onStreams(event as object)
     end if
     layout()
     paintPreview()
-    if hadFocus and not m.strip.visible then restoreFocus()
+    if hadFocus and (not m.strip.visible or not m.strip.focusable) then
+        m.controls.setFocus(true)
+    end if
 end sub
 
 ' Controls at 140; the streams strip (when in use) and the 112 px preview
 ' below; the grid fills the rest of the screen.
 sub layout()
     y = 224
+    if m.showGuide then y = 296
+    m.strip.translation = [96, y]
     if m.strip.visible then y = y + Int(m.strip.height) + 24
+    if not m.showGuide then
+        m.sports.translation = [0, 0]
+        offset = 0
+        if m.sports.visible then offset = Int(m.sports.height) + 14
+        m.onNow.translation = [0, offset]
+        if m.onNow.isInFocusChain() and y + offset + m.onNow.height > 1050 then
+            y = 1050 - offset - m.onNow.height
+        end if
+        m.browse.translation = [0, y]
+        return
+    end if
     m.preview.translation = [96, y]
     y = y + 112 + 16
     m.grid.translation = [96, y]
@@ -483,8 +604,46 @@ end sub
 
 function onKeyEvent(key as string, press as boolean) as boolean
     if not press then return false
+    if key = "back" and m.showGuide and m.dialog = invalid then
+        showMode(false)
+        return true
+    end if
+    if key = "down" and m.modes.isInFocusChain() then
+        if m.showGuide then
+            m.controls.setFocus(true)
+        else if m.strip.visible and m.strip.focusable then
+            m.strip.setFocus(true)
+        else if m.sports.visible then
+            m.sports.setFocus(true)
+        else if m.onNow.visible then
+            m.onNow.setFocus(true)
+        end if
+        layout()
+        return true
+    end if
+    if not m.showGuide then
+        if key = "up" and m.onNow.isInFocusChain() and m.sports.visible then
+            m.sports.setFocus(true)
+        else if key = "up" and (m.sports.isInFocusChain() or m.onNow.isInFocusChain()) and m.strip.visible and m.strip.focusable then
+            m.strip.setFocus(true)
+        else if key = "up" and (m.strip.isInFocusChain() or m.sports.isInFocusChain() or m.onNow.isInFocusChain()) then
+            m.modes.setFocus(true)
+        else if key = "down" and m.strip.isInFocusChain() and m.sports.visible then
+            m.sports.setFocus(true)
+        else if key = "down" and (m.strip.isInFocusChain() or m.sports.isInFocusChain()) and m.onNow.visible then
+            m.onNow.setFocus(true)
+        else
+            return false
+        end if
+        layout()
+        return true
+    end if
+    if key = "up" and m.controls.isInFocusChain() then
+        m.modes.setFocus(true)
+        return true
+    end if
     if key = "up" and m.grid.isInFocusChain() then
-        if m.strip.visible then m.strip.setFocus(true) else m.controls.setFocus(true)
+        if m.strip.visible and m.strip.focusable then m.strip.setFocus(true) else m.controls.setFocus(true)
         return true
     end if
     if key = "up" and m.strip.isInFocusChain() then
@@ -492,7 +651,7 @@ function onKeyEvent(key as string, press as boolean) as boolean
         return true
     end if
     if key = "down" and m.controls.isInFocusChain() then
-        if m.strip.visible then
+        if m.strip.visible and m.strip.focusable then
             m.strip.setFocus(true)
         else if m.grid.visible then
             m.grid.setFocus(true)

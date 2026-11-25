@@ -21,7 +21,12 @@ fi
 node tool/package.js
 # Digest auth is what the Roku developer web server accepts. The password goes
 # through a curl config on stdin so it never shows in the process list.
-printf 'user = "rokudev:%s"\n' "$password" | curl --silent --show-error --fail --digest --config - \
+page="$(printf 'user = "rokudev:%s"\n' "$password" | curl --silent --show-error --fail --digest --config - \
   -F "mysubmit=Install" -F "archive=@out/zorofin-roku.zip" \
-  "http://$ip/plugin_install" | grep -o '<font color="red">[^<]*' | sed 's/<font color="red">//' || true
+  "http://$ip/plugin_install")"
+printf '%s' "$page" | grep -o '<font color="red">[^<]*' | sed 's/<font color="red">//' || true
+if ! printf '%s' "$page" | grep -Eq 'Install Success|Identical to previous version'; then
+  echo "Roku did not confirm installation; stopping before packaging." >&2
+  exit 1
+fi
 echo "Installed on $ip. Logs: telnet $ip 8085"

@@ -5,7 +5,9 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/catalog.dart';
+import 'core/notification_reads.dart';
 import 'core/errors.dart';
+import 'core/plugin_extras.dart';
 import 'core/requests.dart';
 import 'core/server_extras.dart';
 import 'core/session_store.dart';
@@ -114,11 +116,14 @@ class NotificationHistoryStore {
   /// Call only after a complete availability check. The first snapshot is
   /// history, so an existing library doesn't arrive as a wall of unread items.
   Future<NotificationHistory> receiveRequests(
-    List<RequestAvailabilityNotice> notices,
-  ) async {
+    List<RequestAvailabilityNotice> notices, {
+    bool initializeSnapshot = true,
+  }) async {
     final state = load();
     if (!state.requestsInitialized) {
-      state.readRequestIds.addAll(notices.map((n) => n.id));
+      if (initializeSnapshot) {
+        state.readRequestIds.addAll(notices.map((n) => n.id));
+      }
       state.requestsInitialized = true;
     }
     final incoming = notices.map((n) => n.id).toSet();
@@ -185,6 +190,9 @@ class ExtrasState extends ChangeNotifier {
   bool _disposed = false;
 
   ServerFeatures features = const ServerFeatures();
+
+  /// Calendar and Catch Up, when the operator turned them on in the plugin.
+  PluginExtras pluginExtras = PluginExtras.none;
   bool featuresChecked = false;
   String? featureError;
 
@@ -209,7 +217,22 @@ class ExtrasState extends ChangeNotifier {
   String? ticketId;
 
   bool get isPreview => catalog.isPreview;
+
+  /// Catch Up's skipped titles for this account, on this device.
+  CatchUpSkips? get catchUpSkips {
+    final session = catalog.client?.session;
+    if (session == null) return null;
+    return CatchUpSkips(
+      read: _storage.getStringList,
+      write: (key, value) => unawaited(_storage.setStringList(key, value)),
+      server: session.server.storageKey,
+      viewerId: session.viewer.id,
+    );
+  }
+
   bool get requestsEnabled => features.requests && requestsBuildEnabled;
+  NotificationReadState? accountNotificationReads;
+
   bool get hasNotifications => features.notifications || requestsEnabled;
   bool get loadingNotifications => loadingReplies || loadingRequestNotices;
 
@@ -225,7 +248,8 @@ class ExtrasState extends ChangeNotifier {
     return _requestService ??= RequestSubmissionService(
       client,
       RequestJournal(
-        _storage,
+        read: _storage.getString,
+        write: _storage.setString,
         server: session.server.storageKey,
         viewerId: session.viewer.id,
       ),
@@ -249,10 +273,28 @@ class ExtrasState extends ChangeNotifier {
     _changed();
   }
 
+  bool isRequestRead(int id) =>
+      requestReadIds.contains(id) ||
+      (features.notificationReads &&
+          accountNotificationReads?.requests.contains(id) == true);
+  bool isReplyRead(SupportReply reply) =>
+      seenReplyKeys.contains(reply.notificationKey) ||
+      (features.notificationReads &&
+          !reply.isAnnouncement &&
+          accountNotificationReads?.replies.contains(reply.accountReadKey) ==
+              true);
   List<RequestAvailabilityNotice> get unreadRequestNotices =>
-      requestNotices.where((n) => !requestReadIds.contains(n.id)).toList();
+      requestNotices.where((n) => !isRequestRead(n.id)).toList();
   List<SupportReply> get unreadReplies =>
-      replies.where((r) => !seenReplyKeys.contains(r.notificationKey)).toList();
+      replies.where((r) => !isReplyRead(r)).toList();
+  List<SupportReply> get readReplies {
+    final seen = <String>{};
+    return [
+      ...replies.where(isReplyRead),
+      ...hiddenReplies,
+    ].where((r) => seen.add(r.notificationKey)).toList();
+  }
+
   int get unreadCount => unreadReplies.length + unreadRequestNotices.length;
 
   SupportReport get supportReport => SupportReport(
@@ -302,13 +344,26 @@ class ExtrasState extends ChangeNotifier {
     if (hasNotifications) await refreshNotifications();
   }
 
+  bool _checkingFeatures = false;
+
   Future<void> checkFeatures() async {
     final client = catalog.client;
-    if (client == null || isPreview) return;
+    if (client == null || isPreview || _disposed || _checkingFeatures) return;
+    _checkingFeatures = true;
     try {
       final result = await client.discoverFeatures();
       if (_disposed) return;
       features = result;
+      if (!features.notificationReads) accountNotificationReads = null;
+      // Optional; a failure keeps what was last known.
+      try {
+        pluginExtras = await client.pluginExtras();
+      } on ClientError catch (e) {
+        if (e.kind == ClientErrorKind.unauthorized) {
+          pluginExtras = PluginExtras.none;
+        }
+      } catch (_) {}
+      if (_disposed) return;
       if (!features.notifications) {
         replies = [];
         hiddenReplies = [];
@@ -331,6 +386,7 @@ class ExtrasState extends ChangeNotifier {
             ClientErrorKind.invalidResponse,
           ].contains(e.kind)) {
         features = const ServerFeatures();
+        pluginExtras = PluginExtras.none;
         replies = [];
         hiddenReplies = [];
         requestNotices = [];
@@ -338,11 +394,24 @@ class ExtrasState extends ChangeNotifier {
       featureError =
           'Server extras could not be checked. Your library is still available.';
     }
+    _checkingFeatures = false;
     featuresChecked = true;
     _changed();
   }
 
   Future<void> refreshNotifications({bool force = false}) async {
+    final client = catalog.client;
+    if (features.notificationReads && !isPreview && client != null) {
+      NotificationReadState? remote;
+      try {
+        remote = await client.notificationReads();
+      } catch (_) {}
+      if (_disposed) return;
+      accountNotificationReads = remote;
+    } else {
+      accountNotificationReads = null;
+    }
+    _changed();
     await Future.wait([
       _refreshReplies(force: force),
       _refreshRequestNotices(force: force),
@@ -371,10 +440,12 @@ class ExtrasState extends ChangeNotifier {
       final saved = history.load();
       hiddenReplies = saved.hiddenReplies;
       seenReplyKeys.addAll(saved.seenReplyKeys);
-      final result = await client.supportReplies();
+      final result = await client.inboxMessages();
       if (_disposed || !features.notifications) return;
-      replies = result;
-      replyError = null;
+      replies = result.keeping(replies);
+      replyError = result.partial
+          ? 'Some messages could not be refreshed.'
+          : null;
     } catch (e) {
       if (_disposed) return;
       if (e is ClientError &&
@@ -383,7 +454,7 @@ class ExtrasState extends ChangeNotifier {
         replies = [];
         hiddenReplies = [];
       }
-      replyError = 'Replies could not be refreshed.';
+      replyError = 'Messages could not be refreshed.';
     } finally {
       loadingReplies = false;
       _changed();
@@ -414,18 +485,49 @@ class ExtrasState extends ChangeNotifier {
       if (requestNotices.isEmpty) requestNotices = saved.requests;
       // Cached ready items already have a history entry; pending requests are
       // rechecked and only a real transition adds an item.
+      final account = features.notificationReads
+          ? accountNotificationReads
+          : null;
       final result = await client.requestAvailabilityNotifications(
-        readIds: {
-          ...saved.requests.map((n) => n.id),
-          if (saved.requestsInitialized) ...saved.readRequestIds,
-        },
+        readIds: account == null
+            ? {
+                ...saved.requests.map((n) => n.id),
+                if (saved.requestsInitialized) ...saved.readRequestIds,
+              }
+            : <int>{},
       );
       if (_disposed || !requestsEnabled) return;
-      final updated = await history.receiveRequests(result.notices);
+      final updated = await history.receiveRequests(
+        result.notices,
+        initializeSnapshot: account?.initialized != true,
+      );
+      if (_disposed) return;
       requestReadIds.addAll(updated.readRequestIds);
       requestNotices = updated.requests;
       hasOlderRequestNotices = result.hasOlder;
       requestNoticeError = null;
+      if (account != null && features.notificationReads) {
+        final ready = result.notices.map((n) => n.id).toSet();
+        final migration = account.initialized
+            ? updated.readRequestIds
+                  .intersection(ready)
+                  .difference(account.requests)
+            : ready;
+        if (!account.initialized || migration.isNotEmpty) {
+          try {
+            final synced = await client.markNotificationReads(
+              requests: migration.toList(),
+              initialize: !account.initialized,
+            );
+            if (_disposed || !features.notificationReads) return;
+            accountNotificationReads =
+                (accountNotificationReads ?? const NotificationReadState())
+                    .merging(synced);
+          } catch (_) {
+            /* Local history survives; the next complete refresh retries. */
+          }
+        }
+      }
     } catch (e) {
       if (_disposed) return;
       if (e is ClientError &&
@@ -442,7 +544,9 @@ class ExtrasState extends ChangeNotifier {
   }
 
   Future<void> markRequestRead(RequestAvailabilityNotice notice) async {
-    if (requestReadIds.contains(notice.id)) return;
+    if (requestReadIds.contains(notice.id) && !features.notificationReads) {
+      return;
+    }
     final history = _history;
     if (isPreview || history == null) {
       requestReadIds.add(notice.id);
@@ -450,8 +554,27 @@ class ExtrasState extends ChangeNotifier {
       return;
     }
     try {
-      requestReadIds.addAll(await history.seeRequest(notice.id));
+      final savedIds = await history.seeRequest(notice.id);
+      if (_disposed) return;
+      requestReadIds.addAll(savedIds);
       requestNoticeError = null;
+      _changed();
+      final client = catalog.client;
+      if (features.notificationReads &&
+          accountNotificationReads?.requests.contains(notice.id) != true &&
+          client != null) {
+        try {
+          final synced = await client.markNotificationReads(
+            requests: [notice.id],
+          );
+          if (_disposed || !features.notificationReads) return;
+          accountNotificationReads =
+              (accountNotificationReads ?? const NotificationReadState())
+                  .merging(synced);
+        } catch (_) {
+          /* Keep local read; a later sighting retries the POST. */
+        }
+      }
     } catch (_) {
       requestNoticeError =
           'This update could not be marked as read. Please try again.';
@@ -460,7 +583,10 @@ class ExtrasState extends ChangeNotifier {
   }
 
   Future<void> markReplyRead(SupportReply reply) async {
-    if (seenReplyKeys.contains(reply.notificationKey)) return;
+    if (seenReplyKeys.contains(reply.notificationKey) &&
+        !features.notificationReads) {
+      return;
+    }
     final history = _history;
     if (isPreview || history == null) {
       seenReplyKeys.add(reply.notificationKey);
@@ -474,11 +600,30 @@ class ExtrasState extends ChangeNotifier {
     }
     try {
       final saved = await history.seeReply(reply);
+      if (_disposed) return;
       seenReplyKeys.addAll(saved.seenReplyKeys);
       hiddenReplies = saved.hiddenReplies;
       replyError = null;
+      _changed();
+      final client = catalog.client;
+      if (features.notificationReads &&
+          !reply.isAnnouncement &&
+          accountNotificationReads?.replies.contains(reply.accountReadKey) !=
+              true &&
+          client != null) {
+        try {
+          final synced = await client.markNotificationReads(replies: [reply]);
+          if (_disposed || !features.notificationReads) return;
+          accountNotificationReads =
+              (accountNotificationReads ?? const NotificationReadState())
+                  .merging(synced);
+        } catch (_) {
+          /* Keep local read; a later sighting retries the POST. */
+        }
+      }
     } catch (_) {
-      replyError = 'This reply could not be marked as read. Please try again.';
+      replyError =
+          'This message could not be marked as read. Please try again.';
     }
     _changed();
   }

@@ -1,29 +1,37 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
 import 'errors.dart';
 import 'jellyfin_client.dart';
+import 'live_scores.dart';
 import 'media_quality.dart';
 import 'models.dart';
+import 'server_extras.dart';
 
 /// Small reproducible generator for per-visit layout choices (Apple
 /// `HomeRandom`, SplitMix64). Never used for security.
 class HomeRandom {
   HomeRandom([int? seed])
-    : _state =
-          seed ?? Random().nextInt(1 << 32) << 32 | Random().nextInt(1 << 32);
+    : _state = seed == null
+          ? (BigInt.from(Random().nextInt(0x100000000)) << 32) |
+                BigInt.from(Random().nextInt(0x100000000))
+          : BigInt.from(seed).toUnsigned(64);
 
-  int _state;
+  BigInt _state;
+  static final _increment = BigInt.parse('9E3779B97F4A7C15', radix: 16);
+  static final _mix1 = BigInt.parse('BF58476D1CE4E5B9', radix: 16);
+  static final _mix2 = BigInt.parse('94D049BB133111EB', radix: 16);
 
-  int next() {
-    _state += 0x9E3779B97F4A7C15;
+  BigInt next() {
+    _state = (_state + _increment).toUnsigned(64);
     var value = _state;
-    value = (value ^ (value >>> 30)) * 0xBF58476D1CE4E5B9;
-    value = (value ^ (value >>> 27)) * 0x94D049BB133111EB;
-    return value ^ (value >>> 31);
+    value = ((value ^ (value >> 30)) * _mix1).toUnsigned(64);
+    value = ((value ^ (value >> 27)) * _mix2).toUnsigned(64);
+    return value ^ (value >> 31);
   }
 
-  int nextInt(int max) => (next() >>> 1) % max;
+  int nextInt(int max) => ((next() >> 1) % BigInt.from(max)).toInt();
 
   void shuffle<T>(List<T> list) {
     for (var i = list.length - 1; i > 0; i--) {
@@ -128,8 +136,8 @@ class HomeRowOrder {
   }
 }
 
-/// Resume points and next episodes as one shelf; a show with an unfinished
-/// episode keeps that one (Apple `ContinueWatchingFeed`).
+/// Server-ranked Next Up first, using matching resume records at that rank;
+/// remaining resume titles follow (Apple `ContinueWatchingFeed`).
 List<MediaItem> continueWatching(
   List<MediaItem> resume,
   List<MediaItem> nextUp, {
@@ -139,15 +147,43 @@ List<MediaItem> continueWatching(
   final series = <String>{};
   final selected = <MediaItem>[];
   final cap = limit.clamp(0, 40);
+  String? showID(MediaItem item) {
+    final show = item.isEpisode ? item.seriesId?.trim() : null;
+    return show == null || show.isEmpty ? null : show;
+  }
+
+  final resumable = resume
+      .where(
+        (i) =>
+            i.id.isNotEmpty &&
+            i.name.isNotEmpty &&
+            (i.type == 'Movie' || i.isEpisode),
+      )
+      .toList();
+  final resumeByID = <String, MediaItem>{},
+      resumeBySeries = <String, MediaItem>{};
+  for (final item in resumable.where((i) => i.isEpisode)) {
+    resumeByID.putIfAbsent(item.id, () => item);
+    final show = showID(item);
+    if (show != null) resumeBySeries.putIfAbsent(show, () => item);
+  }
+  // Jellyfin supplies cross-season selection and viewing-history order.
   final candidates = [
-    ...resume.where((i) => i.type == 'Movie' || i.isEpisode),
-    ...nextUp.where((i) => i.isEpisode && i.userData?.played != true),
+    for (final item in nextUp.where(
+      (i) =>
+          i.id.isNotEmpty &&
+          i.name.isNotEmpty &&
+          i.isEpisode &&
+          i.userData?.played != true,
+    ))
+      resumeByID[item.id] ?? resumeBySeries[showID(item)] ?? item,
+    ...resumable,
   ];
   for (final item in candidates) {
     if (selected.length >= cap) break;
     if (item.id.isEmpty || item.name.isEmpty || ids.contains(item.id)) continue;
-    final show = item.isEpisode ? item.seriesId?.trim() : null;
-    if (show != null && show.isNotEmpty && series.contains(show)) continue;
+    final show = showID(item);
+    if (show != null && series.contains(show)) continue;
     ids.add(item.id);
     if (show != null && show.isNotEmpty) series.add(show);
     selected.add(item);
@@ -205,6 +241,37 @@ List<MediaItem> searchRecommendations(List<MediaItem> items, {int limit = 24}) {
 // MARK: Home rows
 
 /// One card in a personal Home row.
+class HomeGame {
+  const HomeGame._(this.teams, this.paths);
+  final List<String> teams, paths;
+  String get title => teams.join(' vs ');
+  static final _path = RegExp(
+    r'Zorofin/Web/ui/live-tv-logos/art/sports-[a-f0-9]{24}-[a-f0-9]{8}\.(png|jpg)',
+  );
+  static HomeGame? read(dynamic teams, dynamic paths) {
+    if (teams is! List ||
+        paths is! List ||
+        teams.length != 2 ||
+        paths.length != 2) {
+      return null;
+    }
+    if (teams.any(
+      (t) => t is! String || t.trim().isEmpty || t.runes.length > 80,
+    )) {
+      return null;
+    }
+    if (paths.any(
+      (p) => p is! String || _path.matchAsPrefix(p)?.end != p.length,
+    )) {
+      return null;
+    }
+    return HomeGame._(
+      List.unmodifiable(teams.cast<String>()),
+      List.unmodifiable(paths.cast<String>()),
+    );
+  }
+}
+
 class HomeRowCard {
   const HomeRowCard({
     required this.id,
@@ -213,6 +280,7 @@ class HomeRowCard {
     this.badges = const [],
     this.startsAt,
     this.endsAt,
+    this.game,
   });
 
   factory HomeRowCard.fromJson(Map<String, dynamic> json) => HomeRowCard(
@@ -225,6 +293,7 @@ class HomeRowCard {
     ],
     startsAt: json['startsAt'] as String?,
     endsAt: json['endsAt'] as String?,
+    game: HomeGame.read(json['matchup'], json['crests']),
   );
 
   final String id;
@@ -233,6 +302,7 @@ class HomeRowCard {
   final List<String> badges;
   final String? startsAt;
   final String? endsAt;
+  final HomeGame? game;
 
   static const _formats = {
     '4K',
@@ -262,6 +332,7 @@ class HomeRowCard {
     badges: badges,
     startsAt: startsAt,
     endsAt: endsAt,
+    game: game,
   );
 }
 
@@ -316,6 +387,7 @@ const homeRowOptions = [
   ('curated', 'Seasonal / curated picks'),
   ('popular', 'Popular on Zorofin this week'),
   ('sports', 'Your teams / starting soon'),
+  ('for-you', 'Recommended for you'),
 ];
 
 /// Followed team names: up to 12, each 3 to 64 characters.
@@ -339,12 +411,9 @@ abstract final class ClientHomeRows {
   static const shortMovieMinutes = 90;
   static const recentDays = 14;
   static const sportsWindow = Duration(hours: 12);
-
-  /// A followed team's game joins the row this long before it starts.
-  static const sportsSoon = Duration(hours: 1);
   static const cardLimit = 20;
 
-  /// Rows in the contract's order. A client row wins unless it failed and
+  /// Legacy v1 rows in contract order. A client row wins unless it failed and
   /// the server still provided one; the server supplies requests and popular.
   static List<HomeFeedRow> merge(
     List<HomeFeedRow> client,
@@ -492,15 +561,12 @@ abstract final class ClientHomeRows {
     });
   }
 
-  /// Games for the viewer's teams that are on now or start within the hour.
-  /// No teams, no row: generic sports channels never fill it.
   static List<HomeRowCard> sports(
     List<LiveProgram> programs, {
     required List<MediaItem> channels,
     required List<String> teams,
     required DateTime now,
   }) {
-    if (teams.isEmpty) return const [];
     final byId = {for (final c in channels.reversed) c.id: c};
     final seen = <String>{};
     final picks = <(HomeRowCard, DateTime)>[];
@@ -518,13 +584,14 @@ abstract final class ClientHomeRows {
           start == null ||
           end == null ||
           !end.isAfter(now) ||
-          start.isAfter(now.add(sportsSoon)) ||
+          start.isAfter(now.add(sportsWindow)) ||
           !start.isAfter(now.subtract(sportsWindow)) ||
           channel == null ||
           id == null ||
           id.isEmpty ||
           !seen.add(id) ||
-          !teamMatches('${p.name} ${p.overview ?? ''}', teams)) {
+          (teams.isNotEmpty &&
+              !teamMatches('${p.name} ${p.overview ?? ''}', teams))) {
         continue;
       }
       picks.add((
@@ -832,12 +899,13 @@ abstract final class SeasonalThemes {
 }
 
 /// FNV-1a 64-bit, compared as unsigned through the sign bit.
-int stableHashInt(String text) {
-  var hash = 0xcbf29ce484222325;
+BigInt stableHashInt(String text) {
+  var hash = BigInt.parse('cbf29ce484222325', radix: 16);
+  final prime = BigInt.from(0x100000001b3);
   for (final byte in utf8.encode(text)) {
-    hash = (hash ^ byte) * 0x100000001b3;
+    hash = ((hash ^ BigInt.from(byte)) * prime).toUnsigned(64);
   }
-  return hash ^ (1 << 63);
+  return (hash ^ (BigInt.one << 63)).toSigned(64);
 }
 
 /// Advances by server results; stops servers that ignore startIndex.
@@ -893,13 +961,17 @@ class _Lane {
   final bool unplayed;
   final String sort;
   final cursor = LibraryPageCursor();
+  final pending = <MediaItem>[];
+  int pages = 0;
 }
 
-/// Endless Home rows after the fixed shelves (Apple `DiscoveryFeed`): genre,
-/// decade and rating lanes in a random order per visit, with "Because you
-/// watched" rows mixed in.
+/// Finite, varied Home discovery shared by every Flutter and DOM client.
+/// Each category appears once per account/Home visit, with substantial shelves.
 class DiscoveryFeed {
   DiscoveryFeed({int? seed}) : _random = HomeRandom(seed);
+
+  final Set<String> _shown = {};
+  final Set<String> _shownTitles = {};
 
   final HomeRandom _random;
   bool hasMore = true;
@@ -908,11 +980,10 @@ class DiscoveryFeed {
   bool _initialized = false;
   int _serial = 0;
   int _ordinary = 0;
-  final List<List<String>> _recent = [];
 
   Future<void> _prepare(JellyfinClient client) async {
     final results = await Future.wait([
-      _optional(client.discoveryGenres),
+      _optional(client.discoveryMovieGenres),
       _optional(client.discoveryHistory),
     ]);
     final genres = results[0], history = results[1];
@@ -976,6 +1047,20 @@ class DiscoveryFeed {
       ..add(_Lane('More movies to explore', 'Movie', sort: 'SortName'))
       ..add(_Lane('More shows to explore', 'Series', sort: 'SortName'));
     _random.shuffle(_lanes);
+    final rated = _lanes.firstWhere((l) => l.minimumRating != null);
+    final movies = _lanes
+        .where((l) => l.type == 'Movie' && l != rated)
+        .toList();
+    final shows = _lanes.where((l) => l.type == 'Series').toList();
+    _lanes = [rated];
+    // Movie genres come from the actual movie library. Keep shows in the mix
+    // without letting empty show/genre combinations dominate the first rows.
+    while (movies.isNotEmpty || shows.isNotEmpty) {
+      for (var i = 0; i < 3 && movies.isNotEmpty; i++) {
+        _lanes.add(movies.removeAt(0));
+      }
+      if (shows.isNotEmpty) _lanes.add(shows.removeAt(0));
+    }
     _initialized = true;
   }
 
@@ -988,10 +1073,11 @@ class DiscoveryFeed {
     final result = <DiscoveryRow>[];
     var requests = 0;
     while (result.length < 2 && requests < 8 && _lanes.isNotEmpty) {
-      final blocked = {...excluding, ..._recent.expand((r) => r)};
+      final blocked = {...excluding, ..._shown};
       final String title;
       final ItemPage page;
       String? seedId;
+      _Lane? category;
       if (_ordinary >= 5 && _seeds.isNotEmpty) {
         final seed = _seeds.removeAt(0);
         page = await client.discoverySimilar(seed.$1);
@@ -999,25 +1085,48 @@ class DiscoveryFeed {
         title = 'Because you watched ${seed.$2}';
       } else {
         final lane = _lanes.removeAt(0);
-        page = await client._discoveryItems(lane);
+        try {
+          page = await client._discoveryItems(lane);
+        } catch (_) {
+          _lanes.insert(0, lane);
+          rethrow;
+        }
         lane.cursor.accept(page, 24);
-        if (lane.cursor.hasMore) _lanes.add(lane);
+        category = lane;
+        lane.pages++;
         title = lane.title;
       }
       requests++;
       final seen = {...blocked, ?seedId};
       final items = [
-        for (final i in page.items)
+        for (final i in [...?category?.pending, ...page.items])
           if ((i.type == 'Movie' || i.isSeries) &&
+              (category == null || i.type == category.type) &&
+              (category?.minimumRating == null ||
+                  ((i.communityRating ?? 0).isFinite &&
+                      (i.communityRating ?? 0) >= 7)) &&
               i.id.isNotEmpty &&
               seen.add(i.id))
             i,
       ];
-      if (items.isEmpty) continue;
+      if (items.length < 6) {
+        if (category != null && category.cursor.hasMore && category.pages < 4) {
+          category.pending
+            ..clear()
+            ..addAll(items);
+          _lanes.insert(0, category);
+        }
+        continue;
+      }
+      final titleKey = title
+          .trim()
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .toLowerCase();
+      if (!_shownTitles.add(titleKey)) continue;
+      if (items.length > 20) items.removeRange(20, items.length);
+      _shown.addAll(items.map((i) => i.id));
       _serial++;
       result.add(DiscoveryRow('discovery-$_serial', title, items));
-      _recent.add(items.map((i) => i.id).toList());
-      if (_recent.length > 6) _recent.removeAt(0);
       _ordinary = seedId != null ? 0 : _ordinary + 1;
     }
     hasMore = _lanes.isNotEmpty;
@@ -1122,6 +1231,39 @@ extension HomeReads on JellyfinClient {
       'includeItemTypes': 'Movie,Series',
       'sortBy': 'SortName',
       'enableImages': 'false',
+    },
+  );
+
+  Future<ItemPage> discoveryMovieGenres() => request(
+    ItemPage.fromJson,
+    ['Genres'],
+    query: {
+      ..._discoveryQuery(),
+      'includeItemTypes': 'Movie',
+      'limit': '100',
+      'sortBy': 'SortName',
+      'enableImages': 'false',
+    },
+  );
+
+  /// Ordinary viewer-scoped Jellyfin collections; no companion is required.
+  Future<ItemPage> collectionPage({String? parentId, int start = 0}) => request(
+    ItemPage.fromJson,
+    ['Items'],
+    query: {
+      ..._viewer(),
+      'includeItemTypes': parentId == null ? 'BoxSet' : 'Movie,Series,BoxSet',
+      'recursive': parentId == null ? 'true' : 'false',
+      'parentId': ?parentId,
+      'startIndex': '${start.clamp(0, 1000000)}',
+      'limit': '48',
+      'sortBy': 'SortName',
+      'sortOrder': 'Ascending',
+      'enableTotalRecordCount': 'true',
+      'fields': 'Overview,Genres,MediaStreams',
+      'enableUserData': 'true',
+      'excludeLocationTypes': 'Virtual',
+      'isPlaceHolder': 'false',
     },
   );
 
@@ -1311,7 +1453,7 @@ extension HomeReads on JellyfinClient {
           'isSports': 'true',
           'minEndDate': now.toUtc().toIso8601String(),
           'maxStartDate': now
-              .add(ClientHomeRows.sportsSoon)
+              .add(ClientHomeRows.sportsWindow)
               .toUtc()
               .toIso8601String(),
           'sortBy': 'StartDate',
@@ -1344,11 +1486,18 @@ extension HomeReads on JellyfinClient {
     DateTime? now,
   }) async {
     final at = now ?? DateTime.now();
+    ClientError? sessionFailure;
     Future<(T?, bool)> attempt<T>(Future<T> Function() body) async {
       try {
         return (await body(), true);
       } on ClientError catch (e) {
-        if (e.kind == ClientErrorKind.unauthorized) rethrow;
+        if (const [
+          ClientErrorKind.unauthorized,
+          ClientErrorKind.missingSession,
+          ClientErrorKind.unsafeUrl,
+        ].contains(e.kind)) {
+          sessionFailure = e;
+        }
         return (null, false);
       } catch (_) {
         return (null, false);
@@ -1360,6 +1509,11 @@ extension HomeReads on JellyfinClient {
     final sportsFuture = attempt(() => homeSports(teams, at));
     final movies = await moviesFuture;
     final curated = await attempt(() => homeCurated(movies.$1 ?? const [], at));
+
+    // Observe all parallel source results before propagating a session error.
+    // Otherwise a second failed read can become an unhandled future.
+    final episodes = await episodesFuture, sports = await sportsFuture;
+    if (sessionFailure != null) throw sessionFailure!;
 
     HomeFeedRow row(
       String id,
@@ -1395,7 +1549,7 @@ extension HomeReads on JellyfinClient {
       row(
         'new-episodes',
         'New episodes for you',
-        await episodesFuture,
+        episodes,
         empty:
             'Favorite a show with the heart button to follow it. New unwatched episodes will appear here.',
       ),
@@ -1420,41 +1574,132 @@ extension HomeReads on JellyfinClient {
       row(
         'sports',
         'Your teams / starting soon',
-        await sportsFuture,
+        sports,
         empty: teams.isEmpty
-            ? 'Follow your teams to see their games here.'
-            : 'None of your teams are on now or starting soon.',
+            ? 'No upcoming sports are listed.'
+            : 'No broadcasts for your teams are listed in the next 12 hours.',
       ),
     ];
   }
 
-  /// The optional server feed (requests and popular rows).
-  Future<List<HomeFeedRow>> homeFeed() async {
+  /// Optional errors never gate the core library. A denied module is not a
+  /// rejected Jellyfin session; unsafe/missing sessions still fail closed.
+  Future<({List<HomeFeedRow> rows, List<String> teams, Object? serverError})>
+  loadHomeRows({
+    HomeRowsContract? contract,
+    List<String> fallbackTeams = const [],
+    // Flutter screens keep their rebuild-on-load behavior; the LG bridge
+    // passes false and asks for a rebuild only when the viewer changed things.
+    bool fresh = true,
+  }) async {
+    void checkScope(Object error) {
+      if (error is ClientError &&
+          const [
+            ClientErrorKind.missingSession,
+            ClientErrorKind.unsafeUrl,
+          ].contains(error.kind)) {
+        throw error;
+      }
+    }
+
+    Object? failure;
+    if (contract == HomeRowsContract.plugin) {
+      try {
+        final feed = await _homeFeed(HomeRowsContract.plugin, fresh: fresh);
+        return (rows: feed.rows, teams: feed.teams, serverError: null);
+      } catch (e) {
+        checkScope(e);
+        failure = e;
+      }
+    }
+    // Attach the error handler before local reads to avoid unhandled futures.
+    final remote = contract == HomeRowsContract.legacy
+        ? homeFeed(
+            contract: HomeRowsContract.legacy,
+          ).then<Object?>((rows) => rows).catchError((Object e) => e)
+        : Future<Object?>.value();
+    var teams = fallbackTeams;
+    try {
+      teams = await homeTeams(
+        serverFallback: contract == HomeRowsContract.legacy,
+      );
+    } catch (e) {
+      checkScope(e);
+    }
+    final local = await clientHomeRows(teams);
+    final result = await remote;
+    if (result != null && result is! List<HomeFeedRow>) {
+      checkScope(result);
+      failure = result;
+    }
+    return (
+      rows: ClientHomeRows.merge(
+        local,
+        result is List<HomeFeedRow> ? result : null,
+      ),
+      teams: teams,
+      serverError: failure,
+    );
+  }
+
+  Future<List<HomeFeedRow>> homeFeed({
+    HomeRowsContract contract = HomeRowsContract.legacy,
+    bool fresh = true,
+  }) async => (await _homeFeed(contract, fresh: fresh)).rows;
+
+  Future<({List<HomeFeedRow> rows, List<String> teams})> _homeFeed(
+    HomeRowsContract contract, {
+    bool fresh = true,
+  }) async {
+    // The server reuses a viewer's Home for a minute. Only ask it to rebuild
+    // after the viewer changed their rows or teams, or asked to refresh.
     final json = await requestJson(
-      ['support', 'home', 'rows'],
+      contract.path,
+      query: contract == HomeRowsContract.plugin
+          ? {if (fresh) 'fresh': 'true', 'taste': 'true'}
+          : const {},
       extensionToken: true,
       expectedStatus: 200,
-    );
+    ).timeout(const Duration(seconds: 5));
     try {
       final map = json as Map<String, dynamic>;
       if (map['schemaVersion'] != 1) throw const FormatException();
+      final prefs = map['preferences'] as Map;
+      final teams = (prefs['teams'] as List).cast<String>();
+      if (!validTeams(teams) ||
+          prefs['hiddenRows'] is! List ||
+          !(prefs['hiddenRows'] as List).every(
+            (id) => homeRowOptions.any((o) => o.$1 == id),
+          ) ||
+          !const [30, 60, 90, 120, 180].contains(prefs['minutes']) ||
+          !const [
+            'automatic',
+            'halloween',
+            'eid',
+            'comfort',
+            'movie-night',
+          ].contains(prefs['theme']) ||
+          map['generatedAt'] is! String) {
+        throw const FormatException();
+      }
       final rows = [
         for (final r in map['rows'] as List)
           HomeFeedRow.fromJson(r as Map<String, dynamic>),
       ];
       final known = homeRowOptions.map((o) => o.$1).toSet();
-      if (rows.length > 7 ||
+      if (rows.length > 8 ||
           rows.map((r) => r.id).toSet().length != rows.length ||
           rows.any(
             (r) =>
                 !known.contains(r.id) ||
                 !const ['ready', 'empty', 'unavailable'].contains(r.state) ||
                 r.cards.length > 20 ||
+                (r.state != 'ready' && r.cards.isNotEmpty) ||
                 r.cards.map((c) => c.id).toSet().length != r.cards.length,
           )) {
         throw const FormatException();
       }
-      return rows;
+      return (rows: rows, teams: teams);
     } catch (_) {
       throw const ClientError(ClientErrorKind.invalidResponse);
     }
@@ -1608,6 +1853,9 @@ extension HomeReads on JellyfinClient {
 
   /// Every channel with what it is airing now; at most 4,000 channels.
   Future<LiveTvSnapshot> liveTvSnapshot() async {
+    if (session?.viewer.canAccessLiveTV == false) {
+      return LiveTvSnapshot([], DateTime.now());
+    }
     final cursor = LibraryPageCursor();
     final channels = <MediaItem>[];
     for (var i = 0; i < 20; i++) {
@@ -1715,6 +1963,12 @@ enum LiveSport {
 
   static LiveSport? parse(Object? value) =>
       values.where((s) => s.name == value).firstOrNull;
+}
+
+/// Guide-text helpers shared with the Live now scores (live_scores.dart).
+abstract final class LiveText {
+  static String normalized(String text) => _LiveRules.normalized(text);
+  static List<String>? teams(String text) => _LiveRules.teams(text);
 }
 
 abstract final class _LiveRules {
@@ -1847,6 +2101,11 @@ class LiveEvent {
   final String evidence;
   LiveEventArtwork? artwork;
 
+  /// From the companion's Live now feed (live_scores.dart): a score when the
+  /// server shows scores, and whether either team is a server favorite.
+  LiveScore? score;
+  bool favoriteTeam = false;
+
   String get id => channel.id;
 
   bool isCurrent(DateTime now) => !start.isAfter(now) && now.isBefore(end);
@@ -1857,7 +2116,11 @@ class LiveEvent {
         1.0,
       );
 
-  static List<LiveEvent> select(List<MediaItem> channels, DateTime now) {
+  static List<LiveEvent> select(
+    List<MediaItem> channels,
+    DateTime now, {
+    bool deduplicateSimulcasts = true,
+  }) {
     final events = <LiveEvent>[];
     for (final channel in channels) {
       final p = channel.currentProgram;
@@ -1938,7 +2201,8 @@ class LiveEvent {
     return [
       for (final e in events)
         if (channelIds.add(e.id) &&
-            (e.matchup == null ||
+            (!deduplicateSimulcasts ||
+                e.matchup == null ||
                 seen.add(
                   '${e.sport}-${_LiveRules.normalized(e.title)}-${e.start.millisecondsSinceEpoch}-${e.end.millisecondsSinceEpoch}',
                 )))
@@ -1951,7 +2215,6 @@ class LiveEvent {
   List<LiveArtworkSource> get artworkSources {
     final sources = <LiveArtworkSource>[];
     final image = artwork?.image;
-    if (image != null) sources.add(LiveArtworkSource.catalogue(image));
     final p = channel.currentProgram;
     final id = p?.id;
     if (p != null && id != null && id.isNotEmpty && id != channel.id) {
@@ -1972,6 +2235,7 @@ class LiveEvent {
         }
       }
     }
+    if (image != null) sources.add(LiveArtworkSource.catalogue(image));
     final logos = artwork?.logos ?? const [];
     if (logos.length == 2) sources.add(LiveArtworkSource.crests(logos));
     return sources;
@@ -2192,4 +2456,138 @@ extension on LiveEvent {
       competition = context.trim();
     }
   }
+}
+
+/// Card metadata for the programme browser, never a guessed live fixture.
+class LiveProgramArtSource {
+  const LiveProgramArtSource(this.itemId, this.kind, this.tag, this.isProgram);
+  final String itemId, kind, tag;
+  final bool isProgram;
+}
+
+abstract final class LiveProgramListing {
+  static bool isCurrent(MediaItem channel, DateTime now) =>
+      channel.currentProgram?.isAiring(now) == true;
+  static bool isLive(MediaItem channel, DateTime now) {
+    final p = channel.currentProgram;
+    return p != null &&
+        p.isAiring(now) &&
+        p.isLive == true &&
+        p.isRepeat != true &&
+        p.end!.difference(p.start!).inSeconds <= 43200 &&
+        LiveText.normalized(p.name) != LiveText.normalized(channel.name) &&
+        !_LiveRules.placeholder.hasMatch(p.name);
+  }
+
+  static final _sportsChannel = RegExp(
+    r'\b(sports?|espn|nba|nfl|nhl|mlb|bein|eurosport)\b',
+    caseSensitive: false,
+  );
+  static bool isSports(MediaItem channel) =>
+      channel.currentProgram?.isSports == true ||
+      [
+        ...?channel.currentProgram?.genres,
+        ...channel.genres,
+      ].any((g) => const ['sport', 'sports'].contains(g.toLowerCase())) ||
+      _sportsChannel.hasMatch(channel.name);
+  static List<LiveProgramArtSource> artwork(MediaItem channel) {
+    final tags = {
+          ...channel.imageTags.values,
+          ...channel.backdropImageTags,
+          ...channel.parentBackdropImageTags,
+        },
+        result = <LiveProgramArtSource>[];
+    final p = channel.currentProgram, id = p?.id;
+    if (p != null && id != null && id.isNotEmpty && id != channel.id) {
+      for (final (kind, tag) in [
+        ('Thumb', p.imageTags['Thumb']),
+        (
+          'Backdrop',
+          p.backdropImageTags.firstOrNull ?? p.imageTags['Backdrop'],
+        ),
+        ('Primary', p.imageTags['Primary']),
+      ]) {
+        if (tag != null && tag.isNotEmpty && !tags.contains(tag)) {
+          result.add(LiveProgramArtSource(id, kind, tag, true));
+        }
+      }
+    }
+    for (final (kind, tag) in [
+      ('Backdrop', channel.backdropImageTags.firstOrNull),
+      ('Primary', channel.imageTags['Primary']),
+    ]) {
+      if (tag != null && tag.isNotEmpty) {
+        result.add(LiveProgramArtSource(channel.id, kind, tag, false));
+      }
+    }
+    return result;
+  }
+}
+
+/// The one context line a Home card shows instead of its year, matching the
+/// Apple apps: a short movie's length, or the row's own badge ("#1", "New
+/// episode"). Scheduled live cards keep their own subtitle and time.
+String? homeCardLabel(HomeRowCard card, String rowId) {
+  if (card.startsAt != null) return null;
+  if (rowId == 'short-movies' && card.subtitle.isNotEmpty) return card.subtitle;
+  final context = card.contextBadges;
+  return context.isEmpty ? null : context.first;
+}
+
+/// True for a roughly 16:9 picture; logos and portraits are not event art
+/// (same rule as the web's Live TV pages and the Apple apps).
+bool isWideGuidePicture(num width, num height) =>
+    width > 0 && height > 0 && width / height >= 1.6 && width / height <= 1.95;
+
+/// Width and height read from a PNG, JPEG or WebP header, without decoding.
+(int, int)? encodedImageSize(List<int> b) {
+  int be16(int i) => (b[i] << 8) | b[i + 1];
+  int be32(int i) => (be16(i) << 16) | be16(i + 2);
+  int le16(int i) => b[i] | (b[i + 1] << 8);
+  try {
+    if (b.length >= 24 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E) {
+      return (be32(16), be32(20));
+    }
+    if (b.length >= 4 && b[0] == 0xFF && b[1] == 0xD8) {
+      var i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] != 0xFF) return null;
+        final marker = b[i + 1];
+        if (marker == 0xD8 ||
+            marker == 0x01 ||
+            (marker >= 0xD0 && marker <= 0xD7)) {
+          i += 2;
+          continue;
+        }
+        final isFrame =
+            marker >= 0xC0 &&
+            marker <= 0xCF &&
+            marker != 0xC4 &&
+            marker != 0xC8 &&
+            marker != 0xCC;
+        if (isFrame) return (be16(i + 7), be16(i + 5));
+        i += 2 + be16(i + 2);
+      }
+      return null;
+    }
+    if (b.length >= 30 &&
+        String.fromCharCodes(b.sublist(0, 4)) == 'RIFF' &&
+        String.fromCharCodes(b.sublist(8, 12)) == 'WEBP') {
+      switch (String.fromCharCodes(b.sublist(12, 16))) {
+        case 'VP8 ':
+          return (le16(26) & 0x3FFF, le16(28) & 0x3FFF);
+        case 'VP8L':
+          final bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+          return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1);
+        case 'VP8X':
+          return (
+            1 + (b[24] | (b[25] << 8) | (b[26] << 16)),
+            1 + (b[27] | (b[28] << 8) | (b[29] << 16)),
+          );
+      }
+    }
+  } on RangeError {
+    return null;
+  }
+  return null;
 }

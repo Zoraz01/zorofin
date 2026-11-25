@@ -8,7 +8,11 @@ struct DownloadsView: View {
     @Environment(AppModel.self) private var model
     private var downloads: DownloadManager { DownloadManager.shared }
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var confirmRemoveAll = false
+    @State private var editing = false
+    @State private var selectedIDs = Set<String>()
+    @State private var confirmRemoveSelected = false
 
     var body: some View {
         let records = downloads.records
@@ -19,8 +23,14 @@ struct DownloadsView: View {
                         .font(Theme.font(15)).frame(minHeight: Theme.target)
                 }.buttonStyle(ZoroButtonStyle()).foregroundStyle(Theme.muted)
                     .accessibilityIdentifier("downloads-back")
-                Text("Downloads").font(Theme.font(30, weight: .bold, relativeTo: .title))
-                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    Text("Downloads").font(Theme.font(30, weight: .bold, relativeTo: .title)).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    if !records.isEmpty {
+                        Button(editing ? "Done" : "Edit") { editing.toggle(); selectedIDs.removeAll() }
+                            .buttonStyle(ZoroButtonStyle()).accessibilityIdentifier("downloads-edit")
+                    }
+                }
                 if !downloads.isOnline {
                     Label("You're offline. Your downloads still play.", systemImage: "wifi.slash")
                         .font(Theme.font(15, weight: .medium)).foregroundStyle(Theme.jade)
@@ -36,12 +46,24 @@ struct DownloadsView: View {
                     StatusView(title: "No downloads yet",
                                detail: "Tap the download button on a movie or episode to watch it without a connection.",
                                icon: "arrow.down.circle")
+                    Button("Browse titles to download") { dismiss(); model.pendingBrowseDownloads = true }
+                        .buttonStyle(ZoroButtonStyle(primary: true)).accessibilityIdentifier("downloads-browse")
                 } else {
                     ForEach(DownloadGroup.groups(records)) { group in
                         VStack(alignment: .leading, spacing: 12) {
                             if group.isSeries { SectionTitle(title: group.title) }
-                            ForEach(group.records) { record in DownloadRow(record: record) }
+                            ForEach(group.records) { record in
+                                DownloadRow(record: record, selected: selectedIDs.contains(record.id), onSelect: editing ? {
+                                    if selectedIDs.contains(record.id) { selectedIDs.remove(record.id) }
+                                    else { selectedIDs.insert(record.id) }
+                                } : nil)
+                            }
                         }
+                    }
+                    if editing {
+                        Button("Remove selected (\(selectedIDs.count))", role: .destructive) { confirmRemoveSelected = true }
+                            .buttonStyle(ZoroButtonStyle()).disabled(selectedIDs.isEmpty)
+                            .accessibilityIdentifier("downloads-remove-selected")
                     }
                     Button(role: .destructive) { confirmRemoveAll = true } label: {
                         Label("Remove all downloads", systemImage: "trash").frame(maxWidth: .infinity)
@@ -55,8 +77,19 @@ struct DownloadsView: View {
             .confirmationDialog("Remove all downloads?", isPresented: $confirmRemoveAll, titleVisibility: .visible) {
                 Button("Remove all", role: .destructive) { downloads.removeAll() }
             } message: { Text("Downloaded titles are deleted from this device. Your library on the server is not affected.") }
+            .confirmationDialog("Remove selected downloads?", isPresented: $confirmRemoveSelected, titleVisibility: .visible) {
+                Button("Remove selected", role: .destructive) {
+                    let visible = Set(downloads.records.map(\.id))
+                    for id in selectedIDs.intersection(visible) { downloads.remove(id) }
+                    selectedIDs.removeAll()
+                }
+            } message: { Text("Selected copies are removed from this device and active downloads are cancelled. Your server library is unchanged.") }
+            .onChange(of: model.generation) { _, _ in selectedIDs.removeAll(); editing = false; confirmRemoveSelected = false }
             .accessibilityIdentifier("downloads-screen")
             .modifier(HideNavigationBar())
+            .task(id: "\(model.generation)-\(scenePhase == .active)") {
+                if scenePhase == .active { await downloads.refreshDownloadPermission() }
+            }
     }
 
     private var storage: some View {
@@ -85,13 +118,22 @@ struct DownloadsView: View {
 private struct DownloadRow: View {
     @Environment(AppModel.self) private var model
     let record: DownloadRecord
+    var selected = false
+    var onSelect: (() -> Void)? = nil
     @State private var confirmRemove = false
     private var downloads: DownloadManager { DownloadManager.shared }
     private var landscape: Bool { record.item.isEpisode }
 
     var body: some View {
-        HStack(spacing: 14) {
-            Button { play() } label: {
+        HStack(spacing: 12) {
+            if let onSelect {
+                Button(action: onSelect) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? Theme.jade : Theme.muted).frame(width: Theme.target, height: Theme.target)
+                }.buttonStyle(.plain).accessibilityLabel((selected ? "Deselect " : "Select ") + record.item.displayTitle)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Button { if let onSelect { onSelect() } else { play() } } label: {
                 HStack(spacing: 14) {
                     artwork
                     VStack(alignment: .leading, spacing: 5) {
@@ -100,28 +142,27 @@ private struct DownloadRow: View {
                         status
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!record.isPlayable)
-                .accessibilityHint(record.isPlayable ? "Plays the downloaded copy" : "")
-            Menu {
-                if record.status == .failed {
-                    Button { downloads.retry(record.id) } label: { Label("Try again", systemImage: "arrow.clockwise") }
-                }
-                if record.isPlayable {
-                    Button { play() } label: { Label("Play", systemImage: "play.fill") }
-                }
-                Button(role: .destructive) { confirmRemove = true } label: {
-                    Label(record.status.isActive ? "Cancel download" : "Remove download", systemImage: record.status.isActive ? "xmark" : "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis").frame(width: Theme.target, height: Theme.target)
-            }.accessibilityLabel("Options for \(record.item.displayTitle)")
+            }.buttonStyle(.plain).disabled(onSelect == nil && !record.isPlayable)
+                .accessibilityHint(onSelect != nil ? "Changes selection" : record.isPlayable ? "Plays the downloaded copy" : "")
+            if onSelect == nil {
+                Menu {
+                    if record.status == .failed {
+                        Button { retryDownload(record.id, model: model) } label: { Label("Try again", systemImage: "arrow.clockwise") }
+                            .disabled(!downloads.canRequestDownload)
+                    }
+                    if record.isPlayable { Button { play() } label: { Label("Play", systemImage: "play.fill") } }
+                    Button(role: .destructive) { confirmRemove = true } label: {
+                        Label(record.status.isActive ? "Cancel download" : "Remove download", systemImage: record.status.isActive ? "xmark" : "trash")
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: Theme.target, height: Theme.target) }
+                    .accessibilityLabel("Options for \(record.item.displayTitle)")
+            }
         }.foregroundStyle(Theme.text)
             .confirmationDialog(record.status.isActive ? "Cancel this download?" : "Remove this download?",
                                 isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button(record.status.isActive ? "Cancel download" : "Remove", role: .destructive) { downloads.remove(record.id) }
             }
     }
-
     private var artwork: some View {
         ZStack {
             if let image = downloads.artwork(for: record) { Image(uiImage: image).resizable().scaledToFill() }
@@ -130,7 +171,7 @@ private struct DownloadRow: View {
                 Image(systemName: "play.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
                     .frame(width: 34, height: 34).background(.black.opacity(0.55), in: Circle())
             }
-        }.frame(width: landscape ? 128 : 72, height: landscape ? 72 : 108)
+        }.frame(width: landscape ? (onSelect == nil ? 128 : 96) : 72, height: landscape ? (onSelect == nil ? 72 : 54) : 108)
             .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
     }
 
@@ -174,6 +215,7 @@ private struct DownloadRow: View {
 /// The download control on a movie or episode page.
 struct DownloadButton: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
     let item: MediaItem
     let audioIndex: Int?
     let subtitleIndex: Int
@@ -201,15 +243,19 @@ struct DownloadButton: View {
                 Button(role: .destructive) { confirmRemove = true } label: { Label("Remove download", systemImage: "trash") }
             case .failed?:
                 Text(record?.failure ?? "The download stopped.")
-                Button { if let record { downloads.retry(record.id) } } label: { Label("Try again", systemImage: "arrow.clockwise") }
+                Button { if let record { retryDownload(record.id, model: model) } } label: { Label("Try again", systemImage: "arrow.clockwise") }
+                    .disabled(!downloads.canRequestDownload)
                 Button(role: .destructive) { confirmRemove = true } label: { Label("Remove", systemImage: "trash") }
             }
         } label: {
             icon(record)
-        }.buttonStyle(DetailIconStyle()).disabled(model.isDemo && record == nil)
+        }.buttonStyle(DetailIconStyle()).disabled(record == nil && (model.isDemo || !downloads.canRequestDownload))
             .accessibilityLabel(accessibilityLabel(record))
             .help(accessibilityLabel(record))
             .accessibilityIdentifier("detail-download")
+            .task(id: "\(model.generation)-\(scenePhase == .active)") {
+                if scenePhase == .active { await downloads.refreshDownloadPermission() }
+            }
             .confirmationDialog(record?.status.isActive == true ? "Cancel this download?" : "Remove this download?",
                                 isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button(record?.status.isActive == true ? "Cancel download" : "Remove", role: .destructive) {
@@ -239,7 +285,7 @@ struct DownloadButton: View {
 
     private func accessibilityLabel(_ record: DownloadRecord?) -> String {
         switch record?.status {
-        case .none: "Download"
+        case .none: downloads.canRequestDownload ? "Download" : "Downloads unavailable"
         case .queued?: "Download waiting"
         case .downloading?: "Downloading, \(Int(((record?.progress ?? 0) * 100).rounded())) percent"
         case .completed?: "Downloaded"
@@ -259,7 +305,21 @@ struct DownloadButton: View {
             model.message = "This preview contains fictional titles. Connect your server to download your library."
             return
         }
-        downloads.download(item, quality: quality, audioIndex: audioIndex, subtitleIndex: subtitleIndex)
+        let generation = model.generation
+        Task {
+            do { try await downloads.download(item, quality: quality, audioIndex: audioIndex, subtitleIndex: subtitleIndex) }
+            catch is CancellationError { }
+            catch { if generation == model.generation { model.message = error.localizedDescription } }
+        }
+    }
+}
+
+@MainActor private func retryDownload(_ id: String, model: AppModel) {
+    let generation = model.generation
+    Task {
+        do { try await DownloadManager.shared.retry(id) }
+        catch is CancellationError { }
+        catch { if generation == model.generation { model.message = error.localizedDescription } }
     }
 }
 

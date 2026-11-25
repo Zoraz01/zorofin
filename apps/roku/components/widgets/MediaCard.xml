@@ -26,7 +26,14 @@
       <Group id="lift">
         <Rectangle id="placeholder" color="0x1B211EFF" />
         <Label id="fallback" horizAlign="center" vertAlign="center" wrap="true" maxLines="3" color="0xBBC5BDFF" />
-        <Poster id="art" loadDisplayMode="scaleToFit" />
+        <Poster id="art" loadDisplayMode="scaleToZoom" />
+        <!-- Your teams game: shown only once both crests have loaded -->
+        <Group id="game" visible="false">
+          <Poster id="gameBack" uri="pkg:/images/game_backdrop.png" />
+          <Poster id="crestA" loadDisplayMode="scaleToFit" />
+          <Label id="versus" text="VS" color="0xFFFFFFB3" horizAlign="center" vertAlign="center" />
+          <Poster id="crestB" loadDisplayMode="scaleToFit" />
+        </Group>
         <Poster id="corners" uri="pkg:/images/corners.9.png" />
         <Rectangle id="progressFill" color="0x72E79BFF" height="4" visible="false" />
         <Group id="ratingGroup" visible="false">
@@ -35,11 +42,12 @@
         </Group>
         <Poster id="badgePill" uri="pkg:/images/badge.9.png" blendColor="0x000000D1" height="26" visible="false" />
         <Label id="badgeText" color="0xFFFFFFFF" height="26" horizAlign="center" vertAlign="center" visible="false" />
-        <Rectangle id="liveDot" visible="false" color="0xE5484DFF" width="14" height="14" />
+        <Rectangle id="liveDot" visible="false" color="0xFF453AFF" width="14" height="14" />
         <Poster id="ring" uri="pkg:/images/card_ring.9.png" opacity="0" />
       </Group>
       <Label id="title" color="0xF5F7F5FF" maxLines="1" />
       <Label id="caption" color="0xBBC5BDFF" maxLines="1" />
+      <Label id="gameStatus" color="0x72E79BFF" maxLines="1" visible="false" />
     </Group>
   </children>
 </component>

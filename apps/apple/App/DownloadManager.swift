@@ -22,13 +22,19 @@ import ZorofinCore
     private(set) var isOnline = true
     private(set) var accountKey: String?
     private(set) var freeBytes: Int64?
+    private(set) var downloadPermission: Bool?
+    var canRequestDownload: Bool { isOnline && downloadPermission == true }
+
+    @ObservationIgnored private var accountRevision = UUID()
+    @ObservationIgnored private var permissionRequest = UUID()
+    @ObservationIgnored private var permissionTask: Task<Bool, Error>?
 
     @ObservationIgnored private var client: JellyfinClient?
     @ObservationIgnored private let bridge = DownloadSessionBridge()
     @ObservationIgnored private var fileSession: URLSession!
     @ObservationIgnored private var streamSession: AVAssetDownloadURLSession!
     @ObservationIgnored private var tasks: [String: URLSessionTask] = [:]
-    @ObservationIgnored private var preparing: Set<String> = []
+    @ObservationIgnored private var preparing: [String: UUID] = [:]
     @ObservationIgnored private var restored = false
     @ObservationIgnored private var progressTask: Task<Void, Never>?
     @ObservationIgnored private var syncing = false
@@ -60,10 +66,48 @@ import ZorofinCore
     // MARK: Account
 
     func configure(client: JellyfinClient?) {
+        accountRevision = UUID()
+        permissionRequest = UUID()
+        permissionTask?.cancel(); permissionTask = nil
+        downloadPermission = nil
+        preparing.removeAll()
         self.client = client
         accountKey = client?.session.map { DownloadAccount.key(server: $0.server, viewerID: $0.viewer.id) }
         pump()
-        Task { await syncPendingProgress() }
+        Task { await refreshDownloadPermission(); await syncPendingProgress() }
+    }
+
+    /// Display state is only a hint. Every admission and queued start rechecks
+    /// the current server; concurrent checks share an in-flight request only.
+    func refreshDownloadPermission() async {
+        _ = try? await checkDownloadPermission()
+    }
+
+    private func checkDownloadPermission() async throws -> Bool {
+        guard isOnline, let client, accountKey != nil else {
+            downloadPermission = nil
+            throw ClientError.network
+        }
+        let revision = accountRevision
+        let task: Task<Bool, Error>
+        if let pending = permissionTask { task = pending }
+        else {
+            permissionRequest = UUID()
+            downloadPermission = nil
+            task = Task { try await client.contentDownloadPermission() }
+            permissionTask = task
+        }
+        let request = permissionRequest
+        defer { if permissionRequest == request { permissionTask = nil } }
+        do {
+            let allowed = try await task.value
+            guard revision == accountRevision, request == permissionRequest else { throw CancellationError() }
+            downloadPermission = allowed
+            return allowed
+        } catch {
+            if revision == accountRevision, request == permissionRequest { downloadPermission = nil }
+            throw error
+        }
     }
 
     var records: [DownloadRecord] {
@@ -82,8 +126,11 @@ import ZorofinCore
 
     // MARK: Starting and removing
 
-    func download(_ item: MediaItem, quality: DownloadQuality, audioIndex: Int?, subtitleIndex: Int) {
-        guard item.isDownloadable, let accountKey else { return }
+    func download(_ item: MediaItem, quality: DownloadQuality, audioIndex: Int?, subtitleIndex: Int) async throws {
+        guard item.isDownloadable, let accountKey else { throw ClientError.unsupportedPlayback }
+        let revision = accountRevision
+        guard try await checkDownloadPermission() else { throw ClientError.forbidden }
+        guard revision == accountRevision, self.accountKey == accountKey else { throw CancellationError() }
         if let existing = catalog.record(accountKey: accountKey, itemID: item.id), existing.status != .failed { return }
         // "Automatic" subtitles mean the viewer's server default; a saved copy
         // cannot change tracks later, so keep it simple and burn in nothing.
@@ -94,7 +141,13 @@ import ZorofinCore
         pump()
     }
 
-    func retry(_ id: String) {
+    func retry(_ id: String) async throws {
+        guard let record = catalog.record(id), record.accountKey == accountKey, record.status == .failed else { return }
+        let revision = accountRevision
+        guard try await checkDownloadPermission() else { throw ClientError.forbidden }
+        guard revision == accountRevision, record.accountKey == accountKey,
+              let current = catalog.record(id), current.createdAt == record.createdAt,
+              current.status == .failed else { throw CancellationError() }
         catalog.update(id) { record in
             record.status = .queued; record.failure = nil; record.progress = 0; record.bytesWritten = 0
         }
@@ -104,7 +157,7 @@ import ZorofinCore
 
     func remove(_ id: String) {
         guard let record = catalog.remove(id) else { return }
-        preparing.remove(id)
+        preparing.removeValue(forKey: id)
         tasks.removeValue(forKey: id)?.cancel()
         deleteFiles(of: record)
         if record.method == .stream, record.status.isActive, let session = record.playSessionID, let client {
@@ -123,6 +176,7 @@ import ZorofinCore
     func removeAll(server: ServerAddress, viewerID: String) {
         let key = DownloadAccount.key(server: server, viewerID: viewerID)
         for record in catalog.records(accountKey: key) {
+            preparing.removeValue(forKey: record.id)
             tasks.removeValue(forKey: record.id)?.cancel()
             deleteFiles(of: record)
         }
@@ -174,24 +228,38 @@ import ZorofinCore
 
     private func pump() {
         guard restored, isOnline, let client, let accountKey else { return }
-        let active = catalog.records.filter { $0.status == .downloading || preparing.contains($0.id) }
+        let active = catalog.records.filter { $0.status == .downloading || preparing[$0.id] != nil }
         var slots = Self.maxActive - active.count
         var streamSlots = Self.maxActiveStreams - active.filter { $0.method == .stream }.count
-        for record in catalog.records(accountKey: accountKey).reversed() where record.status == .queued && !preparing.contains(record.id) {
+        for record in catalog.records(accountKey: accountKey).reversed() where record.status == .queued && preparing[record.id] == nil {
             guard slots > 0 else { return }
             // An undecided method may become a transcode; keep one free slot for it.
             guard streamSlots > 0 || record.method == .file else { continue }
             slots -= 1; streamSlots -= 1
-            preparing.insert(record.id)
-            Task { await start(record, client: client) }
+            let token = UUID(), revision = accountRevision
+            preparing[record.id] = token
+            Task { await start(record, token: token, revision: revision, client: client) }
         }
     }
 
-    private func start(_ record: DownloadRecord, client: JellyfinClient) async {
-        defer { preparing.remove(record.id) }
+    private func startIsCurrent(_ record: DownloadRecord, token: UUID, revision: UUID) -> Bool {
+        revision == accountRevision && record.accountKey == accountKey && preparing[record.id] == token
+            && catalog.record(record.id)?.createdAt == record.createdAt
+            && catalog.record(record.id)?.status == .queued
+    }
+
+    private func start(_ record: DownloadRecord, token: UUID, revision: UUID, client: JellyfinClient) async {
+        defer {
+            if preparing[record.id] == token { preparing.removeValue(forKey: record.id) }
+            pump()
+        }
         do {
+            guard startIsCurrent(record, token: token, revision: revision) else { return }
+            guard try await checkDownloadPermission() else { throw ClientError.forbidden }
+            guard startIsCurrent(record, token: token, revision: revision) else { return }
             var item = record.item
             if item.mediaSources?.first == nil { item = try await client.item(item.id, fresh: true) }
+            guard startIsCurrent(record, token: token, revision: revision) else { return }
             let options = PlaybackOptions(bitrate: record.quality.bitrate, audioIndex: record.audioIndex,
                                           subtitleIndex: record.subtitleIndex)
             let info = try await client.playbackInfo(for: item, options: options)
@@ -201,11 +269,15 @@ import ZorofinCore
             if let estimate, let freeBytes, estimate > freeBytes {
                 throw DownloadFailure.storage
             }
-            guard catalog.record(record.id) != nil else {
+            guard startIsCurrent(record, token: token, revision: revision) else {
                 if plan.method == .stream { try? await client.stopEncoding(playSessionID: plan.playSessionID) }
                 return
             }
-            let artwork = await saveArtwork(for: item, accountKey: record.accountKey, client: client)
+            let artwork = await saveArtwork(for: item, record: record, token: token, revision: revision, client: client)
+            guard startIsCurrent(record, token: token, revision: revision) else {
+                if plan.method == .stream { try? await client.stopEncoding(playSessionID: plan.playSessionID) }
+                return
+            }
             catalog.update(record.id) { saved in
                 saved.item = item
                 saved.method = plan.method
@@ -232,16 +304,17 @@ import ZorofinCore
             save()
             watchProgress()
         } catch {
-            fail(record.id, error)
+            if startIsCurrent(record, token: token, revision: revision) { fail(record.id, error) }
         }
-        pump()
     }
 
-    private func saveArtwork(for item: MediaItem, accountKey: String, client: JellyfinClient) async -> String? {
+    private func saveArtwork(for item: MediaItem, record: DownloadRecord, token: UUID, revision: UUID,
+                             client: JellyfinClient) async -> String? {
         let tag = item.imageTags?["Primary"]
         guard tag != nil || item.isEpisode,
               let data = try? await client.image(itemID: item.id, kind: "Primary", tag: tag, width: 720) else { return nil }
-        let relative = Self.folder(accountKey: accountKey) + "/" + Self.safeName(item.id) + ".jpg"
+        guard startIsCurrent(record, token: token, revision: revision) else { return nil }
+        let relative = Self.folder(accountKey: record.accountKey) + "/" + Self.safeName(item.id) + ".jpg"
         let url = Self.home.appendingPathComponent(relative)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -331,7 +404,11 @@ import ZorofinCore
         isOnline = online
         if online {
             pump()
-            Task { await syncPendingProgress() }
+            Task { await refreshDownloadPermission(); await syncPendingProgress() }
+        } else {
+            permissionRequest = UUID()
+            permissionTask?.cancel(); permissionTask = nil
+            downloadPermission = nil
         }
     }
 

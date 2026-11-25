@@ -42,9 +42,10 @@ class _SignInScreenState extends State<SignInScreen> {
   late final _user = TextEditingController(text: widget.username);
   final _password = TextEditingController();
   bool _busy = false;
+  late bool _passwordMode = widget.username.isNotEmpty;
   String? _error;
   String? _quickCode;
-  bool _remember = true;
+  late bool _remember = widget.state.supportsPersistentSignIn;
 
   /// Bumped to cancel a running sign-in or Quick Connect wait.
   int _operation = 0;
@@ -187,9 +188,27 @@ class _SignInScreenState extends State<SignInScreen> {
                 const SizedBox(height: 22),
                 Text('Sign in', style: Zoro.font(40, weight: FontWeight.w700)),
                 const SizedBox(height: 8),
-                Text(
-                  'Use an account on this server.',
-                  style: Zoro.font(24, color: Zoro.muted),
+                const SizedBox(height: 22),
+                Wrap(
+                  spacing: 16,
+                  children: [
+                    ZoroButton(
+                      label: 'Quick Connect',
+                      primary: !_passwordMode,
+                      onPressed: () {
+                        _cancel();
+                        setState(() => _passwordMode = false);
+                      },
+                    ),
+                    ZoroButton(
+                      label: 'Username & password',
+                      primary: _passwordMode,
+                      onPressed: () {
+                        _cancel();
+                        setState(() => _passwordMode = true);
+                      },
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 22),
                 if (code != null)
@@ -228,7 +247,7 @@ class _SignInScreenState extends State<SignInScreen> {
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            const SizedBox.square(
+                            SizedBox.square(
                               dimension: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 3,
@@ -248,30 +267,16 @@ class _SignInScreenState extends State<SignInScreen> {
                       ],
                     ),
                   )
-                else ...[
+                else if (!_passwordMode)
                   ZoroButton(
-                    label: 'Use Quick Connect',
+                    label: 'Get sign-in code',
                     icon: Icons.link_rounded,
                     primary: true,
                     expand: true,
-                    autofocus: widget.username.isEmpty,
+                    autofocus: true,
                     onPressed: _quickConnect,
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      const Expanded(child: Divider(color: Zoro.border)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'or sign in',
-                          style: Zoro.font(16, color: Zoro.muted),
-                        ),
-                      ),
-                      const Expanded(child: Divider(color: Zoro.border)),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
+                  )
+                else ...[
                   TvTextField(
                     controller: _user,
                     enabled: !_busy,
@@ -299,12 +304,18 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                SettingsToggle(
-                  title: 'Keep this account on this device',
-                  value: _remember,
-                  enabled: !_busy,
-                  onChanged: (v) => setState(() => _remember = v),
-                ),
+                if (widget.state.supportsPersistentSignIn)
+                  SettingsToggle(
+                    title: 'Keep this account on this device',
+                    value: _remember,
+                    enabled: !_busy,
+                    onChanged: (v) => setState(() => _remember = v),
+                  )
+                else
+                  Text(
+                    'Sign-in lasts until you close the app.',
+                    style: Zoro.font(20, color: Zoro.muted),
+                  ),
                 if (_error != null) ...[
                   const SizedBox(height: 16),
                   Text(

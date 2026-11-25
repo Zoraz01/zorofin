@@ -5,11 +5,11 @@ import '../../core/playback.dart';
 import '../theme.dart';
 import '../widgets/focusable.dart';
 import '../widgets/tv_text_field.dart';
+import 'player_extras_ui.dart';
 
 /// Compact options card over the playing video (Apple tvOS
 /// `PlayerOptionsSurface`): a small rounded panel in the bottom-right corner,
-/// above the transport bar, with a title, a close button that takes focus
-/// first, and content that sizes to fit and scrolls past the maximum height.
+/// above the transport bar, with a title and current-choice focus, and content that sizes to fit and scrolls past the maximum height.
 /// [wide] suits channel lists; [fullWidth] suits the episode browser.
 class PlayerOptionsSurface extends StatefulWidget {
   const PlayerOptionsSurface({
@@ -20,6 +20,8 @@ class PlayerOptionsSurface extends StatefulWidget {
     this.footer,
     this.wide = false,
     this.fullWidth = false,
+    this.focusClose = false,
+    this.liveSchedule = false,
   });
 
   final String title;
@@ -28,6 +30,8 @@ class PlayerOptionsSurface extends StatefulWidget {
   final Widget? footer;
   final bool wide;
   final bool fullWidth;
+  final bool focusClose;
+  final bool liveSchedule;
 
   /// Space kept clear under the card for the transport bar and option
   /// buttons, on the 1080p design canvas.
@@ -41,14 +45,6 @@ class _PlayerOptionsSurfaceState extends State<PlayerOptionsSurface> {
   final _close = FocusNode(debugLabel: 'player-options-close');
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _close.requestFocus();
-    });
-  }
-
-  @override
   void dispose() {
     _close.dispose();
     super.dispose();
@@ -56,122 +52,143 @@ class _PlayerOptionsSurfaceState extends State<PlayerOptionsSurface> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const bottom = PlayerOptionsSurface.controlsClearance;
-        final available = constraints.maxWidth - 96;
-        final width = widget.fullWidth
-            ? available
-            : (widget.wide ? 1180.0 : 560.0).clamp(0.0, available);
-        final height =
-            (widget.fullWidth ? 460.0 : (widget.wide ? 560.0 : 600.0)).clamp(
-              180.0,
-              (constraints.maxHeight - bottom - 48).clamp(
-                180.0,
-                double.infinity,
-              ),
-            );
-        const radius = BorderRadius.all(Radius.circular(26));
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.onClose,
-                child: const ColoredBox(color: Color(0x1F000000)),
-              ),
-            ),
-            Positioned(
-              right: widget.fullWidth ? 48 : 64,
-              bottom: bottom,
-              width: width,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: height),
-                decoration: BoxDecoration(
-                  color: const Color(0xF0222925),
-                  borderRadius: radius,
-                  border: Border.all(color: const Color(0x29FFFFFF)),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x59000000),
-                      blurRadius: 48,
-                      offset: Offset(0, 12),
+    return FocusScope(
+      autofocus: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const bottom = PlayerOptionsSurface.controlsClearance;
+          final available = constraints.maxWidth - 96;
+          final width = widget.fullWidth
+              ? available
+              : (widget.liveSchedule
+                        ? 680.0
+                        : widget.wide
+                        ? 1180.0
+                        : 560.0)
+                    .clamp(0.0, available);
+          final height =
+              (widget.fullWidth
+                      ? 460.0
+                      : (widget.liveSchedule
+                            ? constraints.maxHeight - bottom - 48
+                            : widget.wide
+                            ? 560.0
+                            : 600.0))
+                  .clamp(
+                    180.0,
+                    (constraints.maxHeight - bottom - 48).clamp(
+                      180.0,
+                      double.infinity,
                     ),
-                  ],
+                  );
+          const radius = BorderRadius.all(Radius.circular(26));
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onClose,
+                  child: const ColoredBox(color: Color(0x1F000000)),
                 ),
-                child: ClipRRect(
-                  borderRadius: radius,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
-                        child: FocusTraversalGroup(
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  widget.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Zoro.font(26, weight: FontWeight.w600),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Focusable(
-                                focusNode: _close,
-                                semanticLabel: 'Return to playback',
-                                onPressed: widget.onClose,
-                                builder: (context, focused) =>
-                                    AnimatedContainer(
-                                      duration: Zoro.focusDuration,
-                                      width: 52,
-                                      height: 52,
-                                      decoration: BoxDecoration(
-                                        color: focused
-                                            ? Zoro.text
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Icon(
-                                        Icons.close_rounded,
-                                        size: 24,
-                                        color: focused
-                                            ? Zoro.background
-                                            : Zoro.text,
-                                      ),
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const Divider(
-                        height: 1,
-                        thickness: 1,
-                        color: Color(0x1FFFFFFF),
-                      ),
-                      Flexible(
-                        child: FocusTraversalGroup(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [widget.child, ?widget.footer],
-                            ),
-                          ),
-                        ),
+              ),
+              Positioned(
+                right: widget.fullWidth ? 48 : 64,
+                bottom: bottom,
+                width: width,
+                child: Container(
+                  constraints: BoxConstraints(maxHeight: height),
+                  decoration: BoxDecoration(
+                    color: const Color(0xF0222925),
+                    borderRadius: radius,
+                    border: Border.all(color: const Color(0x29FFFFFF)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x59000000),
+                        blurRadius: 48,
+                        offset: Offset(0, 12),
                       ),
                     ],
                   ),
+                  child: ClipRRect(
+                    borderRadius: radius,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+                          child: FocusTraversalGroup(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Zoro.font(
+                                      26,
+                                      weight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Focusable(
+                                  focusNode: _close,
+                                  autofocus: widget.focusClose,
+                                  semanticLabel: 'Return to playback',
+                                  onPressed: widget.onClose,
+                                  builder: (context, focused) =>
+                                      AnimatedContainer(
+                                        duration: Zoro.focusDuration,
+                                        width: 52,
+                                        height: 52,
+                                        decoration: BoxDecoration(
+                                          color: focused
+                                              ? Zoro.text
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.close_rounded,
+                                          size: 24,
+                                          color: focused
+                                              ? Zoro.background
+                                              : Zoro.text,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Color(0x1FFFFFFF),
+                        ),
+                        Flexible(
+                          child: FocusTraversalGroup(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [widget.child, ?widget.footer],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ],
-        );
-      },
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -194,6 +211,7 @@ class PlayerOptionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Focusable(
+      autofocus: selected,
       onPressed: onPressed,
       semanticLabel: '$title${selected ? ', selected' : ''}',
       builder: (context, focused) {
@@ -272,11 +290,17 @@ class QualityChoices extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     this.isLive = false,
+    this.automatic = false,
+    this.ceiling = 40000000,
+    this.onAuto,
   });
 
   final int selected;
   final ValueChanged<int> onSelect;
   final bool isLive;
+  final bool automatic;
+  final int ceiling;
+  final VoidCallback? onAuto;
 
   @override
   Widget build(BuildContext context) {
@@ -291,10 +315,16 @@ class QualityChoices extends StatelessWidget {
         FocusTraversalGroup(
           child: Column(
             children: [
-              for (final mbps in const [40, 20, 12, 8, 4, 2])
+              if (onAuto != null)
+                PlayerOptionRow(
+                  title: 'Auto · up to ${ceiling ~/ 1000000} Mbps',
+                  selected: automatic,
+                  onPressed: onAuto!,
+                ),
+              for (final mbps in const [120, 80, 60, 40, 20, 12, 8, 4, 2])
                 PlayerOptionRow(
                   title: '$mbps Mbps',
-                  selected: selected == mbps * 1000000,
+                  selected: !automatic && selected == mbps * 1000000,
                   onPressed: () => onSelect(mbps * 1000000),
                 ),
             ],
@@ -315,8 +345,17 @@ class TrackChoices extends StatefulWidget {
     required this.onAudio,
     required this.onSubtitles,
     this.isLive = false,
+    this.subtitleOffset = Duration.zero,
+    this.onSubtitleOffset,
+    this.audioOffset = Duration.zero,
+    this.onAudioOffset,
   });
 
+  /// Timing controls; null where this player can't shift that track.
+  final Duration subtitleOffset;
+  final ValueChanged<Duration>? onSubtitleOffset;
+  final Duration audioOffset;
+  final ValueChanged<Duration>? onAudioOffset;
   final List<MediaStream> streams;
   final PlaybackOptions options;
   final ValueChanged<int?> onAudio;
@@ -473,7 +512,9 @@ class _TrackChoicesState extends State<TrackChoices> {
           style: Zoro.font(28, weight: FontWeight.w600),
         ),
         const SizedBox(height: 14),
-        FocusTraversalGroup(
+        FocusScope(
+          key: ValueKey(_subtitles),
+          autofocus: true,
           child: Column(
             children: _subtitles
                 ? [
@@ -489,6 +530,15 @@ class _TrackChoicesState extends State<TrackChoices> {
                         selected: options.subtitleIndex == s.index,
                         onPressed: () => widget.onSubtitles(s.index),
                       ),
+                    if (widget.onSubtitleOffset != null &&
+                        options.subtitleIndex >= 0) ...[
+                      const _TimingDivider(),
+                      TimingRow(
+                        title: 'Subtitle timing',
+                        value: widget.subtitleOffset,
+                        onChanged: widget.onSubtitleOffset!,
+                      ),
+                    ],
                   ]
                 : [
                     if (audio.length != 1)
@@ -506,12 +556,47 @@ class _TrackChoicesState extends State<TrackChoices> {
                             (audio.length == 1 && options.audioIndex == null),
                         onPressed: () => widget.onAudio(s.index),
                       ),
+                    if (widget.onAudioOffset != null) ...[
+                      const _TimingDivider(),
+                      TimingRow(
+                        title: 'Audio timing',
+                        value: widget.audioOffset,
+                        onChanged: widget.onAudioOffset!,
+                      ),
+                    ],
                   ],
           ),
         ),
       ],
     );
   }
+}
+
+class _TimingDivider extends StatelessWidget {
+  const _TimingDivider();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 10),
+    child: Divider(height: 1, color: Color(0x1FFFFFFF)),
+  );
+}
+
+/// "1080p · HEVC · EAC3 6 ch" for the source file's default tracks.
+String playbackSourceSummary(List<MediaStream> streams) {
+  final video = streams.where((s) => s.type == 'Video').firstOrNull;
+  final audio =
+      streams.where((s) => s.type == 'Audio' && s.isDefault).firstOrNull ??
+      streams.where((s) => s.type == 'Audio').firstOrNull;
+  return [
+    if (video?.height != null) '${video!.height}p',
+    ?video?.codec?.toUpperCase(),
+    if (audio != null)
+      [
+        audio.codec?.toUpperCase(),
+        if (audio.channels != null) '${audio.channels} ch',
+      ].nonNulls.join(' '),
+  ].where((s) => s.isNotEmpty).join(' · ');
 }
 
 /// Facts about the current stream (Apple `playbackInformation`).
@@ -640,6 +725,7 @@ class ChannelChoices extends StatefulWidget {
     required this.onRetry,
     this.now,
     this.next,
+    this.upcoming = const [],
     this.error,
   });
 
@@ -649,6 +735,7 @@ class ChannelChoices extends StatefulWidget {
   final List<MediaItem>? channels;
   final LiveProgram? now;
   final LiveProgram? next;
+  final List<LiveProgram> upcoming;
   final String? error;
   final ValueChanged<MediaItem> onSelect;
   final VoidCallback onRetry;
@@ -697,7 +784,21 @@ class _ChannelChoicesState extends State<ChannelChoices> {
           ),
           const SizedBox(height: 10),
         ],
-        if (next != null) ...[
+        if (widget.upcoming.isNotEmpty) ...[
+          Text(
+            'Upcoming on this channel',
+            style: Zoro.font(21, weight: FontWeight.w600),
+          ),
+          for (final program in widget.upcoming)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                '${clockLabel(program.start!)} · ${program.name}',
+                style: Zoro.font(20, color: Zoro.muted),
+              ),
+            ),
+          const SizedBox(height: 16),
+        ] else if (next != null) ...[
           Text('Next · ${next.name}', style: Zoro.font(21, color: Zoro.muted)),
           const SizedBox(height: 16),
         ],

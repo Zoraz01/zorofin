@@ -13,12 +13,18 @@ public struct NativePreferences: Codable, Equatable, Sendable {
     public var posterScale = 1.0
     public var showTitles = true
     public var showProgress = true
-    public var showRatings = false
+    public var showRatings = true
     // Optional keeps saved preferences from older builds decodable; nil means enabled.
     public var homeScreenPreviews: Bool?
     // Optional additions preserve existing preference files and their saved values.
     public var showQualityBadges: Bool?
     public var hideAvailableRequests: Bool?
+    /// Chapter names, marks and pictures in the player. Off unless the viewer
+    /// turns them on: they can give the story away.
+    public var showChapters: Bool?
+    /// Tell this server when a title won't start, stalls or has its quality
+    /// lowered. Only sent while the server collects them; off here always wins.
+    public var sendPlaybackReports: Bool?
     public var subtitleAppearance: SubtitleAppearance?
     public var reduceMotion = false
     public var pictureInPicture = true
@@ -27,9 +33,11 @@ public struct NativePreferences: Codable, Equatable, Sendable {
     public var skipForward = 30
     public var playbackSpeed = 1.0
     public var showUnreadBadge = true
+    /// Apple TV Home trailer previews start by themselves (nil means on).
+    public var autoplayPreviews: Bool?
     public init() {}
     public var isValid: Bool {
-        [2,4,8,12,20,40].map { $0 * 1_000_000 }.contains(bitrate) &&
+        [2,4,8,12,20,40,60,80,120].map { $0 * 1_000_000 }.contains(bitrate) &&
         [0.85,1.0,1.2].contains(posterScale) && [5,10,15,30,60].contains(skipBack) &&
         [5,10,15,30,60].contains(skipForward) && [0.5,0.75,1,1.25,1.5,2].contains(playbackSpeed) &&
         (subtitleAppearance?.isValid ?? true)
@@ -60,6 +68,13 @@ public actor NativePreferenceStore {
     }
     private func key(server: ServerAddress, viewerID: String) -> String {
         SHA256.hash(data: Data((server.storageKey + "\n" + viewerID).utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    /// Whether this viewer ever saved their own settings on this device.
+    public func hasSaved(server: ServerAddress, viewerID: String) -> Bool {
+        let key = key(server: server, viewerID: viewerID)
+        if let defaults { return defaults.data(forKey: Self.prefix + key) != nil }
+        guard let root else { return false }
+        return FileManager.default.fileExists(atPath: root.appendingPathComponent(key + ".json").path)
     }
     public func load(server: ServerAddress, viewerID: String) throws -> NativePreferences {
         let key = key(server: server, viewerID: viewerID)
@@ -164,7 +179,7 @@ public struct ViewerSettings: Sendable, Equatable {
         result.subtitleIndex = selected?.index ?? -1
         return result
     }
-    private static func sameLanguage(_ first: String?, _ second: String) -> Bool {
+    static func sameLanguage(_ first: String?, _ second: String) -> Bool {
         func normalized(_ value: String) -> String {
             let base = value.lowercased().split(separator: "-").first.map(String.init) ?? ""
             return ["en":"eng", "es":"spa", "fr":"fra", "fre":"fra", "de":"deu", "ger":"deu",

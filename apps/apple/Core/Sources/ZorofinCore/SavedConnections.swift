@@ -35,6 +35,15 @@ public struct SavedConnections: Codable, Sendable {
     public init() {}
 
     public var activeAccount: SavedAccount? { accounts.first { $0.id == activeID } }
+
+    /// The sign-in to reopen at cold launch. A personal device (iPhone/iPad)
+    /// reopens the last account. A shared device (Apple TV) asks "Who's
+    /// watching?" when its last server has more than one saved viewer.
+    public func launchSession(sharedDevice: Bool) -> Session? {
+        guard let active = activeAccount, let session = active.session else { return nil }
+        if sharedDevice && accounts.filter({ $0.server.storageKey == session.server.storageKey }).count > 1 { return nil }
+        return session
+    }
     public var servers: [SavedServer] {
         var result: [SavedServer] = []
         for account in accounts where !result.contains(where: { $0.id == account.server.storageKey }) {

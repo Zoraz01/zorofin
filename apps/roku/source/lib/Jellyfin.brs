@@ -105,7 +105,7 @@ end function
 ' Joins validated path components onto the base URL.
 ' Components must be plain identifiers, so nothing can escape the base path.
 function ZEndpoint(base as string, path as object, query = invalid as dynamic) as string
-    re = CreateObject("roRegex", "^[A-Za-z0-9_-]+$", "")
+    re = CreateObject("roRegex", "^[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*$", "")
     for each part in path
         if not re.isMatch(ZStr(part)) then return ""
     end for
@@ -189,4 +189,47 @@ function ZMediaUrl(base as string, reference as string, token as string) as stri
     end if
     kept.push("ApiKey=" + ZEscape(token))
     return pathPart + "?" + ZJoin(kept, "&")
+end function
+
+' MARK: Deep links (Roku certification: contentId + mediaType)
+
+' What a deep link's mediaType asks for: "play" (straight into playback),
+' "series" or "season" (play the smart bookmark), "item" (no type given:
+' go by the item) or "invalid" (an unknown type, which lands on Home).
+function ZDeepLinkAction(mediaType as dynamic) as string
+    t = LCase(ZStr(mediaType))
+    if t = "" then return "item"
+    if t = "movie" or t = "episode" or t = "shortformvideo" or t = "tvspecial" or t = "special" or t = "live" then return "play"
+    if t = "series" or t = "season" then return t
+    return "invalid"
+end function
+
+' A Jellyfin item id (32 hex digits, dashes allowed), lower case, or "".
+function ZDeepLinkId(contentId as dynamic) as string
+    id = LCase(CreateObject("roRegex", "-", "").replaceAll(ZStr(contentId).trim(), ""))
+    re = CreateObject("roRegex", "^[0-9a-f]{32}$", "")
+    if not re.isMatch(id) then return ""
+    return id
+end function
+
+' What a resolved item does: "play", "details" (a show or season with no
+' episode to play) or "" when a link can't open it (folders, people…).
+function ZDeepLinkTarget(itemType as dynamic) as string
+    t = ZStr(itemType)
+    if t = "Movie" or t = "Episode" or t = "Video" or t = "MusicVideo" or t = "TvChannel" then return "play"
+    if t = "Series" or t = "Season" then return "details"
+    return ""
+end function
+
+' The episode a series or season link plays (smart bookmark): the first one
+' in progress, else the first unwatched, else the first.
+function ZBookmarkEpisode(episodes as dynamic) as dynamic
+    if not ZIsArray(episodes) or episodes.count() = 0 then return invalid
+    for each e in episodes
+        if ZNum(ZGet(e, "UserData", "PlaybackPositionTicks"), 0) > 0 and ZGet(e, "UserData", "Played") <> true then return e
+    end for
+    for each e in episodes
+        if ZGet(e, "UserData", "Played") <> true then return e
+    end for
+    return episodes[0]
 end function
