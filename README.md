@@ -12,7 +12,7 @@ iPhone · iPad · Apple TV · Android TV · Google TV · Fire TV · LG webOS · 
 [App Store](https://apps.apple.com/us/app/zorofin/id6826013941) ·
 [Amazon Appstore](https://www.amazon.com/gp/product/B0HQBMFSRN) ·
 [Contributing](CONTRIBUTING.md) ·
-Discussions
+[Discussions](https://github.com/Zoraz01/zorofin/discussions)
 
 <img src="docs/images/apple-tv-home.jpg" alt="Zorofin Home on Apple TV, showing a featured title and Continue Watching" width="860">
 
@@ -90,7 +90,7 @@ throwaway Jellyfin with free Blender films if you want real playback.
 
 Bug reports, fixes and new ideas are welcome. Start with
 [CONTRIBUTING.md](CONTRIBUTING.md); issues labelled
-`good first issue`
+[`good first issue`](https://github.com/Zoraz01/zorofin/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 are a good place to begin. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md),
 and report security problems privately as described in [SECURITY.md](SECURITY.md).
 
